@@ -7,9 +7,9 @@ echo ""
 # ============================================
 # CONFIG - CHANGE THIS TO YOUR GITHUB REPO
 # ============================================
-GITHUB_USER="your-username"
+GITHUB_USER="MrAli88708"
 GITHUB_REPO="CloudMesh"
-GITHUB_BRANCH="main"
+GITHUB_BRANCH="main""
 
 # ============================================
 # PATHS

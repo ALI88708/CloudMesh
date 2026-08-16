@@ -8,7 +8,7 @@ echo.
 :: ============================================
 :: CONFIG - CHANGE THIS TO YOUR GITHUB REPO
 :: ============================================
-set GITHUB_USER=your-username
+set GITHUB_USER=MrAli88708
 set GITHUB_REPO=CloudMesh
 set GITHUB_BRANCH=main
 
