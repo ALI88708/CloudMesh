@@ -1,0 +1,14 @@
+.secret.key
+config.json
+config.enc
+backups/
+history/
+*.log
+__pycache__/
+.venv/
+venv/
+node_keys.json
+.node_keys.json
+service.pid
+service.log
+alerts.json

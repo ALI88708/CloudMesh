@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+
+# Data files
+.node_keys.json
+.schedule.json
+.notify.json
+.aliases.json
+.templates.json
+.cloudmesh_config.json
+.jobs/
+.profiles/
+*.log
+*.encrypted
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
