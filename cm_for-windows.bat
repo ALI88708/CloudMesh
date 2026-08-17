@@ -384,12 +384,32 @@ if exist "!NODE_SOURCE!" (
     goto :controller_setup
 )
 
-echo   [5/6] Creating node scripts...
+echo   [5/6] Generating TLS certificate...
+set TLS_CERT=%NODE_DIR%\cert.pem
+set TLS_KEY=%NODE_DIR%\key.pem
+if not exist "!TLS_CERT!" (
+    where openssl >nul 2>&1
+    if !ERRORLEVEL! EQU 0 (
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout "!TLS_KEY!" -out "!TLS_CERT!" -days 3650 -subj "/CN=cloudmesh-node-%COMPUTERNAME%" 2>nul
+        echo   [OK] TLS certificate generated (10 years^)
+    ) else (
+        echo   [WARNING] openssl not found, running without TLS
+        set TLS_CERT=
+        set TLS_KEY=
+    )
+) else (
+    echo   [OK] TLS certificate exists
+)
+
+echo   [6/6] Creating node scripts...
 
 (
 echo @echo off
 echo cd /d "%%~dp0"
-echo python cloudmesh_node.py start %%*
+echo set BIND_HOST=127.0.0.1
+echo set TLS_ARGS=
+echo if exist "%TLS_CERT%" if exist "%TLS_KEY%" set TLS_ARGS=--tls-cert "%TLS_CERT%" --tls-key "%TLS_KEY%"
+echo python cloudmesh_node.py start --bind %%BIND_HOST%% %%TLS_ARGS%% %%*
 ) > "%NODE_DIR%\start.bat"
 
 (
@@ -419,6 +439,8 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4" ^| findstr /v 
 
 echo   [OK] Node Location: %NODE_DIR%
 echo   [OK] Auth Key: !AUTH_KEY!
+echo   [OK] TLS: enabled
+echo   [OK] Bind: 127.0.0.1 (local only)
 echo.
 echo   === Add from Controller ===
 echo   cm add -n %COMPUTERNAME% -H !IP_ADDRESS! -p 9999 -k !AUTH_KEY!

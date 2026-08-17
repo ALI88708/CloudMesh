@@ -210,12 +210,41 @@ do_setup() {
         return
     fi
 
-    echo "[5/6] Creating node scripts..."
+    echo "[5/6] Generating TLS certificate..."
+    TLS_CERT="$NODE_DIR/cert.pem"
+    TLS_KEY="$NODE_DIR/key.pem"
+    if [ ! -f "$TLS_CERT" ]; then
+        if command -v openssl &> /dev/null; then
+            openssl req -x509 -newkey rsa:2048 -nodes \
+                -keyout "$TLS_KEY" -out "$TLS_CERT" \
+                -days 3650 -subj "/CN=cloudmesh-node-$(hostname)" 2>/dev/null
+            echo -e "${GREEN}[OK] TLS certificate generated (10 years)${NC}"
+        else
+            echo -e "${YELLOW}[WARNING] openssl not found, running without TLS${NC}"
+            TLS_CERT=""
+            TLS_KEY=""
+        fi
+    else
+        echo -e "${GREEN}[OK] TLS certificate exists${NC}"
+    fi
 
-    cat > "$NODE_DIR/start.sh" << 'SEOF'
+    echo "[6/6] Creating node scripts..."
+
+    cat > "$NODE_DIR/start.sh" << SEOF
 #!/bin/bash
-cd "$(dirname "$0")"
-python3 cloudmesh_node.py start "$@"
+cd "\$(dirname "\$0")"
+BIND_HOST="127.0.0.1"
+for arg in "\$@"; do
+    case "\$arg" in
+        --bind=*) BIND_HOST="\${arg#--bind=}" ;;
+        --bind) shift; BIND_HOST="\$1"; shift ;;
+    esac
+done
+TLS_ARGS=""
+if [ -f "$TLS_CERT" ] && [ -f "$TLS_KEY" ]; then
+    TLS_ARGS="--tls-cert $TLS_CERT --tls-key $TLS_KEY"
+fi
+python3 cloudmesh_node.py start --bind "\$BIND_HOST" \$TLS_ARGS "\$@"
 SEOF
     chmod +x "$NODE_DIR/start.sh"
 
@@ -234,16 +263,22 @@ SEOF
     chmod +x "$NODE_DIR/status.sh"
 
     if command -v systemctl &> /dev/null; then
+        TLS_CERT_FLAG=""
+        TLS_KEY_FLAG=""
+        if [ -f "$NODE_DIR/cert.pem" ] && [ -f "$NODE_DIR/key.pem" ]; then
+            TLS_CERT_FLAG="--tls-cert $NODE_DIR/cert.pem"
+            TLS_KEY_FLAG="--tls-key $NODE_DIR/key.pem"
+        fi
         sudo tee /etc/systemd/system/cloudmesh-node.service > /dev/null << SERVICEEOF
 [Unit]
-Description=CloudMesh Node
+Description=CloudMesh Node Agent
 After=network.target
 
 [Service]
 Type=simple
 User=$USER
 WorkingDirectory=$NODE_DIR
-ExecStart=$(which python3) $NODE_DIR/$NODE_SCRIPT start
+ExecStart=$(which python3) $NODE_DIR/$NODE_SCRIPT start --bind 127.0.0.1 $TLS_CERT_FLAG $TLS_KEY_FLAG
 Restart=always
 RestartSec=5
 
@@ -251,7 +286,7 @@ RestartSec=5
 WantedBy=multi-user.target
 SERVICEEOF
         sudo systemctl daemon-reload
-        echo -e "${GREEN}[OK] Systemd service created${NC}"
+        echo -e "${GREEN}[OK] Systemd service created (binds to 127.0.0.1)${NC}"
     fi
 
     echo -e "${GREEN}[OK] Node scripts created${NC}"
@@ -263,6 +298,8 @@ SERVICEEOF
 
     echo -e "${GREEN}  [OK] Node Location: $NODE_DIR${NC}"
     echo -e "${GREEN}  [OK] Auth Key: $AUTH_KEY${NC}"
+    echo -e "${GREEN}  [OK] TLS: $([ -f "$NODE_DIR/cert.pem" ] && echo "enabled" || echo "disabled")${NC}"
+    echo -e "${GREEN}  [OK] Bind: 127.0.0.1 (local only)${NC}"
     echo ""
     echo "  === Add from Controller ==="
     echo "  cm add -n $(hostname) -H $IP_ADDRESS -p 9999 -k $AUTH_KEY"

@@ -286,6 +286,14 @@ class CloudMeshAPI:
 
         if path == "/api/status":
             return {"status": "ok", "version": "1.0.0", "time": datetime.now().isoformat()}
+        elif path == "/api/health":
+            return {
+                "status": "healthy",
+                "uptime": "ok",
+                "version": "1.0.0",
+                "node_count": len(self.node_keys),
+                "api_key_set": bool(self.api_key),
+            }
         elif path == "/api/servers":
             servers = {}
             if self.server_mgr:
@@ -309,6 +317,10 @@ class CloudMeshAPI:
             cmd = params.get("cmd", [""])[0]
             if not cmd:
                 return {"error": "Missing cmd parameter"}
+            blocked = ["rm -rf /", "mkfs", "> /dev/sda", "dd if=/dev/zero", ":(){:|:&};:"]
+            for pattern in blocked:
+                if pattern in cmd:
+                    return {"error": f"Blocked dangerous command pattern: {pattern}"}
             if self.server_mgr and server in self.server_mgr.list_servers():
                 try:
                     r = self.server_mgr.execute(server, cmd)
@@ -316,6 +328,12 @@ class CloudMeshAPI:
                 except Exception as e:
                     return {"error": str(e)}
             return {"error": f"Server '{server}' not found"}
+        elif path == "/api/acl/users":
+            from core.acl import list_users
+            return {"users": list_users()}
+        elif path == "/api/acl/roles":
+            from core.acl import list_roles
+            return {"roles": list_roles()}
         return {"error": "Not found"}
 
     def start(self):

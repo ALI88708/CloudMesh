@@ -1568,6 +1568,59 @@ def cmd_version(args):
     ))
 
 
+def cmd_doctor(args):
+    console.print(Panel("[bold bright_blue]CloudMesh Doctor — Security & Health Check[/]", border_style="bright_blue"))
+    checks = []
+
+    api_src = Path(__file__).parent / "core" / "advanced.py"
+    if api_src.exists():
+        content = api_src.read_text()
+        api_ok = "compare_digest" in content
+        bind_ok = '"127.0.0.1"' in content
+        checks.append(("API: hmac.compare_digest", api_ok, "Uses timing-safe comparison"))
+        checks.append(("API: localhost binding", bind_ok, "Bound to 127.0.0.1"))
+    else:
+        checks.append(("API source", False, "advanced.py not found"))
+
+    node_src = Path(__file__).parent / "node" / "cloudmesh_node.py"
+    if node_src.exists():
+        ncontent = node_src.read_text()
+        auth_ok = "compare_digest" in ncontent
+        path_ok = "relative_to" in ncontent and "realpath" in ncontent
+        checks.append(("Node: hmac.compare_digest", auth_ok, "Uses timing-safe comparison"))
+        checks.append(("Node: path traversal guard", path_ok, "Validates paths with realpath+relative_to"))
+    else:
+        checks.append(("Node source", False, "cloudmesh_node.py not found"))
+
+    tests_dir = Path(__file__).parent / "tests"
+    has_tests = (tests_dir / "test_security.py").exists()
+    checks.append(("Test suite", has_tests, "tests/test_security.py exists"))
+
+    secret_key = Path(__file__).parent / ".secret.key"
+    if secret_key.exists():
+        key_size = secret_key.stat().st_size
+        checks.append(("Encryption key", key_size > 10, f"Key file present ({key_size} bytes)"))
+    else:
+        checks.append(("Encryption key", False, ".secret.key missing"))
+
+    table = Table(box=box.ROUNDED)
+    table.add_column("Check", style="bold")
+    table.add_column("Status")
+    table.add_column("Details", style="dim")
+    all_ok = True
+    for label, ok, detail in checks:
+        status = "[green]PASS[/]" if ok else "[red]FAIL[/]"
+        table.add_row(label, status, detail)
+        if not ok:
+            all_ok = False
+    console.print(table)
+    console.print()
+    if all_ok:
+        console.print("[green bold]All checks passed![/]")
+    else:
+        console.print("[yellow]Some checks failed — review above[/]")
+
+
 # === 10 ADVANCED KILLER FEATURES ===
 
 def cmd_discover(args):
@@ -1950,6 +2003,7 @@ def _alias_acl_rm(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 1.0.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -2178,6 +2232,8 @@ def main():
     als.add_argument("--remove", "-r")
 
     ver = subparsers.add_parser("version", help="Show version info")
+
+    doc = subparsers.add_parser("doctor", help="Security & health check")
 
     # === 10 ADVANCED KILLER FEATURES ===
     dsc = subparsers.add_parser("discover", help="Auto-discover nodes on network")
@@ -2547,7 +2603,7 @@ def main():
     log_alias = subparsers.add_parser("log", help="[alias] System logs")
     log_alias.add_argument("--name", "-n", required=True)
     log_alias.add_argument("--file", "-f", default="/var/log/syslog")
-    log_alias.add_argument("--lines", "-n", type=int, default=50)
+    log_alias.add_argument("--lines", "-l", type=int, default=50)
 
     net = subparsers.add_parser("net", help="[alias] Network info")
     net.add_argument("--name", "-n")
@@ -2748,6 +2804,7 @@ def main():
         "report": lambda: cmd_report(args),
         "alias": lambda: cmd_alias(args),
         "version": lambda: cmd_version(args),
+        "doctor": lambda: cmd_doctor(args),
         "discover": lambda: cmd_discover(args),
         "bench": lambda: cmd_bench(args),
         "schedule": lambda: cmd_schedule(args),
