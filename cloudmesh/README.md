@@ -520,6 +520,19 @@ ssh user@server "chmod +x /tmp/cm_for-linux.sh && /tmp/cm_for-linux.sh"
 | zypper | openSUSE |
 | apk | Alpine |
 
+### Linux Node Setup
+```bash
+# Install dependencies
+sudo apt install python3 python3-pip
+
+# Run the installer
+chmod +x cm_for-linux.sh
+./cm_for-linux.sh
+
+# Start the node
+~/.cloudmesh-node/start.sh
+```
+
 ---
 
 ## Requirements
