@@ -19,12 +19,11 @@ Monitor, manage, and distribute workloads from a single terminal.
 <br>
 
 ```
-  __  __           _        ____
- |  \/  | ___  ___| |__    / ___|___  _ __ ___
- | |\/| |/ _ \/ __| '_ \  | |   / _ \| '__/ _ \
- | |  | |  __/\__ \ | | | | |__| (_) | | |  __/
- |_|  |_|\___||___/_| |_|  \____\___/|_|  \___|
-
+ __  __           _        ____
+|  \/  | ___  ___| |__    / ___|___  _ __ ___
+| |\/| |/ _ \/ __| '_ \  | |   / _ \| '__/ _ \
+| |  | |  __/\__ \ | | | | |__| (_) | | |  __/
+|_|  |_|\___||___/_| |_|  \____\___/|_|  \___|
 ```
 
 **130+ commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **API auth**
@@ -40,8 +39,8 @@ Managing multiple servers shouldn't mean juggling 10 SSH windows. CloudMesh give
 | Problem | CloudMesh Solution |
 |---------|-------------------|
 | SSH into each server manually | `cm run "command"` - run on all servers at once |
-| No visibility into resource usage | `cm monitor` - live dashboard for all nodes |
-| GPU servers hard to manage | `cm node gpu` - GPU telemetry from any node |
+| No visibility into resource usage | `cm mon` - live dashboard for all nodes |
+| GPU servers hard to manage | `cm gpunode` - GPU telemetry from any node |
 | No way to distribute work | `cm slice` - auto-slice tasks across servers by resources |
 | Miss server alerts | `cm notify` - Telegram/Discord alerts |
 | Docker scattered across servers | `cm docker` - manage containers on any node |
@@ -58,16 +57,15 @@ Managing multiple servers shouldn't mean juggling 10 SSH windows. CloudMesh give
 
 ### Linux
 ```bash
-# Download and run - that's it
 curl -sL https://raw.githubusercontent.com/MrAli88708/CloudMesh/main/cm_for-linux.sh -o cm.sh
 chmod +x cm.sh && ./cm.sh
 ```
 
 ### First Steps
 ```bash
-cm --help              # See all 130+ commands
+cm --help              # Show all 130+ commands
 cm interactive         # Interactive TUI menu
-cm monitor --local     # Monitor this machine
+cm mon --local         # Monitor this machine
 cm discover 192.168.1  # Scan your network for nodes
 ```
 
@@ -94,292 +92,6 @@ cm discover 192.168.1  # Scan your network for nodes
 **Two ways to connect:**
 - **SSH** - For any server with SSH access
 - **TCP Node** - Lightweight agent (2MB) on any device
-
----
-
-## Features
-
-<details>
-<summary><b>Core - Server Management</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm server add` | Add server via SSH |
-| `cm server list` | List all servers |
-| `cm server test` | Test connection |
-| `cm server info` | Server details |
-| `cm run "cmd"` | Run command on all servers |
-| `cm monitor` | Real-time resource monitoring |
-| `cm dashboard` | Live dashboard |
-
-</details>
-
-<details>
-<summary><b>Cloud Nodes - Lightweight Agents</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm node add` | Add a node |
-| `cm node install` | Remote install via SSH |
-| `cm node monitor` | Monitor node resources |
-| `cm node gpu` | GPU telemetry |
-| `cm node exec` | Execute command on node |
-| `cm node job start` | Start async job |
-| `cm node job status` | Check job status |
-| `cm node dashboard` | Node overview |
-
-</details>
-
-<details>
-<summary><b>Docker Management</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm docker list-servers` | List servers with Docker |
-| `cm docker containers` | List containers on server |
-| `cm docker compose` | Run docker-compose on server |
-| `cm docker stats` | Container resource stats |
-| `cm docker images` | List Docker images |
-| `cm docker pull` | Pull image on server |
-| `cm docker exec` | Exec command in container |
-| `cm docker logs` | Container logs |
-| `cm docker cleanup` | Cleanup Docker resources |
-| `cm docker prune` | Prune everything |
-
-</details>
-
-<details>
-<summary><b>Firewall Manager</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm firewall list-rules` | List firewall rules |
-| `cm firewall add-rule` | Add firewall rule |
-| `cm firewall remove-rule` | Remove firewall rule |
-| `cm firewall status` | Firewall status |
-| `cm firewall check-port` | Check if port is open |
-| `cm firewall backup` | Backup rules to file |
-| `cm firewall load` | Load rules from file |
-
-</details>
-
-<details>
-<summary><b>SSL Certificate Monitor</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm ssl check` | Check SSL certificate |
-| `cm ssl check-all` | Check all domains |
-| `cm ssl domains` | List monitored domains |
-| `cm ssl add` | Add domain to monitor |
-| `cm ssl remove` | Remove domain |
-| `cm ssl history` | Expiry check history |
-| `cm ssl renew-check` | Check renewal status |
-
-</details>
-
-<details>
-<summary><b>Log Aggregation</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm logagg add-source` | Add log source |
-| `cm logagg sources` | List log sources |
-| `cm logagg search` | Search logs by pattern |
-| `cm logagg filter` | Filter by level |
-| `cm logagg subscribe` | Tail logs live |
-| `cm logagg stats` | Log statistics |
-| `cm logagg clear` | Clear log index |
-
-</details>
-
-<details>
-<summary><b>Resource History</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm reshistory snapshot` | Take resource snapshot |
-| `cm reshistory show` | Show history for server |
-| `cm reshistory summary` | Stats summary |
-| `cm reshistory clear` | Clear history |
-
-</details>
-
-<details>
-<summary><b>Network & Discovery</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm discover` | Scan subnet for nodes |
-| `cm ping` | Ping all servers |
-| `cm scan` | Scan subnet for ports |
-| `cm speed` | Network latency test |
-| `cm network` | Network interfaces |
-| `cm map` | Visual network overview |
-
-</details>
-
-<details>
-<summary><b>System Monitoring</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm monitor` | CPU/RAM/Disk live view |
-| `cm top` | Top processes |
-| `cm disk` | Disk usage per mount |
-| `cm uptime` | System uptime |
-| `cm who` | Logged-in users |
-| `cm logs` | System logs |
-| `cm gpu` | GPU stats |
-
-</details>
-
-<details>
-<summary><b>File Operations</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm transfer` | Upload/download files |
-| `cm sync` | Sync directories |
-| `cm autosync` | Auto-sync folders |
-| `cm find` | Search for files |
-| `cm slice` | Distribute files across servers |
-
-</details>
-
-<details>
-<summary><b>Custom Plugins</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm plugins list` | List installed plugins |
-| `cm plugins add` | Add custom plugin |
-| `cm plugins remove` | Remove plugin |
-| `cm plugins run` | Run plugin on servers |
-| `cm plugins import` | Import plugins from file |
-| `cm plugins export` | Export plugin to file |
-
-</details>
-
-<details>
-<summary><b>Multi-User ACL</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm acl users` | List users |
-| `cm acl add-user` | Add user with role |
-| `cm acl remove-user` | Remove user |
-| `cm acl set-role` | Change user role |
-| `cm acl enable` | Enable user |
-| `cm acl disable` | Disable user |
-| `cm acl roles` | List roles & permissions |
-| `cm acl add-role` | Create role |
-| `cm acl remove-role` | Delete role |
-
-</details>
-
-<details>
-<summary><b>Webhook Integrations</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm webhooks list` | List webhooks |
-| `cm webhooks add` | Add Discord/Slack/Telegram/custom |
-| `cm webhooks remove` | Remove webhook |
-| `cm webhooks test` | Test webhook |
-| `cm webhooks log` | Webhook delivery log |
-| `cm webhooks send` | Send custom message |
-
-</details>
-
-<details>
-<summary><b>Process Watcher</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm watcher list` | List watchers |
-| `cm watcher add` | Watch process on server |
-| `cm watcher remove` | Remove watcher |
-| `cm watcher check` | Check all watchers |
-| `cm watcher check-status` | Check process on server |
-| `cm watcher alerts` | View watcher alerts |
-
-</details>
-
-<details>
-<summary><b>Cost Estimator</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm cost instances` | List instance prices |
-| `cm cost estimate` | Estimate cost |
-| `cm cost compare` | Compare across providers |
-| `cm cost cheapest` | Find cheapest option |
-
-Supports: AWS, GCP, Azure, DigitalOcean
-
-</details>
-
-<details>
-<summary><b>SSH Tunnel Manager</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm tunnel list` | List tunnels |
-| `cm tunnel add` | Add tunnel |
-| `cm tunnel remove` | Remove tunnel |
-| `cm tunnel start` | Start tunnel |
-| `cm tunnel stop` | Stop tunnel |
-| `cm tunnel stop-all` | Stop all tunnels |
-| `cm tunnel status` | Tunnel status |
-| `cm tunnel quick` | Quick one-liner tunnel |
-
-</details>
-
-<details>
-<summary><b>Database Manager</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm database list` | List databases |
-| `cm database status` | Database status |
-| `cm database query` | Run SQL query |
-| `cm database backup` | Backup database |
-
-Supports: MySQL, PostgreSQL
-
-</details>
-
-<details>
-<summary><b>Advanced Features</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm bench` | CPU/RAM/Disk benchmark |
-| `cm schedule` | Recurring commands |
-| `cm notify` | Telegram/Discord alerts |
-| `cm api` | REST API (auth required) |
-| `cm audit` | Security audit |
-| `cm template` | Reusable command templates |
-| `cm profile` | Config profiles |
-| `cm alerts` | Threshold alerts |
-
-</details>
-
-<details>
-<summary><b>Utilities</b></summary>
-
-| Command | Description |
-|---------|-------------|
-| `cm encrypt`/`decrypt` | File encryption |
-| `cm export`/`import` | Config backup |
-| `cm cleanup` | Remove old files |
-| `cm report` | Usage report |
-| `cm alias` | Command shortcuts |
-| `cm version` | Version info |
-| `cm history` | Command history |
-
-</details>
 
 ---
 
@@ -529,10 +241,9 @@ cm test -n prod-server
 
 ### Monitor Everything
 ```bash
-cm monitor           # All servers
-cm monitor -n prod   # Specific server
-cm node gpu          # GPU usage on all nodes
-cm reshistory snapshot  # Take resource snapshot
+cm mon           # All servers
+cm mon -n prod   # Specific server
+cm gpunode       # GPU usage on all nodes
 ```
 
 ### Run Commands Everywhere
@@ -544,72 +255,48 @@ cm run "docker ps" -s "web,api"              # Specific servers
 
 ### Docker Management
 ```bash
-cm docker containers --server web-1          # List containers
-cm docker compose /path/to/docker-compose.yml --server web-1 -a up
-cm docker stats --server web-1              # Container stats
-cm docker exec web-1-container "ls -la"    # Run command in container
+cm dcls -s web-1                  # List containers
+cm dcstats -s web-1               # Container stats
+cm dcexec web-1-container "ls -la"  # Exec in container
 ```
 
 ### Firewall Management
 ```bash
-cm firewall add-rule --port 443 --proto tcp --action allow
-cm firewall check-port --port 22
-cm firewall backup --output fw_rules.json
+cm fwadd --port 443 --proto tcp --action allow
+cm fw                              # Check status
 ```
 
 ### SSL Monitoring
 ```bash
 cm ssl add example.com
-cm ssl check-all                           # Check all domains
-cm ssl history                             # Expiry history
+cm sslall                          # Check all domains
 ```
 
 ### Webhooks
 ```bash
 cm webhooks add --name alerts --url https://discord.com/api/webhooks/XXX --type discord
-cm webhooks send --name alerts "Server is down!" --event error
-```
-
-### Process Watcher
-```bash
-cm watcher add --name nginx --process nginx --server web-1 --alert-on stop
-cm watcher check                           # Check all watchers
-cm watcher alerts                          # View recent alerts
+cm whsend --name alerts "Server is down!" --event error
 ```
 
 ### Cost Estimation
 ```bash
-cm cost instances -p aws                   # List AWS instances
-cm cost estimate -p aws -i t3.medium --hours 730
-cm cost compare -i t3.medium              # Compare across providers
-cm cost cheapest --ram 8                   # Find cheapest 8GB option
+cm cost instances -p aws           # List AWS instances
+cm costest -p aws -i t3.medium    # Estimate cost
+cm cost compare -i t3.medium      # Compare providers
 ```
 
 ### SSH Tunnels
 ```bash
 cm tunnel quick --host 10.0.0.5 -l 5432 -r 5432    # Quick tunnel
-cm tunnel add --name db-tunnel --host 10.0.0.5 -l 3306 -r 3306
-cm tunnel start --name db-tunnel
+cm tunadd --name db-tunnel --host 10.0.0.5 -l 3306 -r 3306
+cm tunstart --name db-tunnel
 ```
 
 ### Database Management
 ```bash
-cm database list --server db-1 --type mysql -P root_password
-cm database query --server db-1 "SHOW PROCESSLIST"
-cm database backup --server db-1 --database myapp
-```
-
-### Custom Plugins
-```bash
-cm plugins add -n health-check -c "curl -s http://localhost/health"
-cm plugins run -n health-check -s web-1
-```
-
-### Multi-User ACL
-```bash
-cm acl add-user -u admin -p secret123 -r admin
-cm acl add-user -u viewer -p pass456 -r viewer
-cm acl roles
+cm dbstatus -s db-1 -t mysql -P root_password
+cm dbq -s db-1 "SHOW PROCESSLIST"
+cm dbbak -s db-1 -d myapp
 ```
 
 ### Auto-Discovery
@@ -686,7 +373,7 @@ chmod +x cm_for-linux.sh
 
 ### Remote (via SSH from Controller)
 ```bash
-cm node install -H SERVER_IP -u root -k ~/.ssh/id_rsa
+cm nodeinstall -H SERVER_IP -u root -k ~/.ssh/id_rsa
 ```
 
 ### Node Options
@@ -803,7 +490,7 @@ netstat -tlnp | grep 9999
 cat ~/.cloudmesh-node/.node_key
 
 # Re-add with correct key
-cm node add -n NAME -H HOST -p 9999 -k YOUR_KEY
+cm add -n NAME -H HOST -p 9999 -k YOUR_KEY
 ```
 </details>
 
@@ -848,7 +535,13 @@ MIT License - Free to use, modify, and distribute.
 
 <div align="center">
 
-**Made with passion by MRSX PRO**
+**Created & Developed by MRSX PRO**
+
+**GitHub:** [MrAli88708](https://github.com/MrAli88708)
+
+**Repository:** [CloudMesh](https://github.com/MrAli88708/CloudMesh)
+
+All rights reserved. This project is maintained by **MRSX PRO**.
 
 Star this repo if CloudMesh helps you! It motivates us to keep building.
 
