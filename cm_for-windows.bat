@@ -50,69 +50,93 @@ if %USE_LOCAL% EQU 0 (
     if not exist "%CLOUDMESH_DIR%\core" mkdir "%CLOUDMESH_DIR%\core"
     if not exist "%CLOUDMESH_DIR%\node" mkdir "%CLOUDMESH_DIR%\node"
 
-    :: Check for curl
-    curl --version >nul 2>&1
+    :: Check for curl.exe (use curl.exe not curl to avoid PowerShell alias)
+    curl.exe --version >nul 2>&1
     if %ERRORLEVEL% NEQ 0 (
-        echo [ERROR] curl not found. Please install curl or download manually.
-        echo [INFO] Manual download: https://github.com/%GITHUB_USER%/%GITHUB_REPO%/archive/refs/heads/%GITHUB_BRANCH%.zip
-        start https://github.com/%GITHUB_USER%/%GITHUB_REPO%/archive/refs/heads/%GITHUB_BRANCH%.zip
-        pause
-        exit /b 1
+        echo [INFO] curl.exe not found, trying PowerShell download...
+        goto :powershell_download
     )
 
     set BASE_URL=https://raw.githubusercontent.com/%GITHUB_USER%/%GITHUB_REPO%/%GITHUB_BRANCH%
 
     echo [1/12] Downloading main.py...
-    curl -sL "%BASE_URL%/cloudmesh/main.py" -o "%CLOUDMESH_DIR%\main.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\main.py" "%BASE_URL%/cloudmesh/main.py"
 
     echo [2/12] Downloading requirements.txt...
-    curl -sL "%BASE_URL%/requirements.txt" -o "%CLOUDMESH_DIR%\requirements.txt"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\requirements.txt" "%BASE_URL%/requirements.txt"
 
     echo [3/12] Downloading core/features.py...
-    curl -sL "%BASE_URL%/cloudmesh/core/features.py" -o "%CLOUDMESH_DIR%\core\features.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\features.py" "%BASE_URL%/cloudmesh/core/features.py"
 
     echo [4/12] Downloading core/advanced.py...
-    curl -sL "%BASE_URL%/cloudmesh/core/advanced.py" -o "%CLOUDMESH_DIR%\core\advanced.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\advanced.py" "%BASE_URL%/cloudmesh/core/advanced.py"
 
     echo [5/12] Downloading core/server.py...
-    curl -sL "%BASE_URL%/cloudmesh/core/server.py" -o "%CLOUDMESH_DIR%\core\server.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\server.py" "%BASE_URL%/cloudmesh/core/server.py"
 
     echo [6/12] Downloading core/monitor.py...
-    curl -sL "%BASE_URL%/cloudmesh/core/monitor.py" -o "%CLOUDMESH_DIR%\core\monitor.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\monitor.py" "%BASE_URL%/cloudmesh/core/monitor.py"
 
     echo [7/12] Downloading core/scheduler.py...
-    curl -sL "%BASE_URL%/cloudmesh/core/scheduler.py" -o "%CLOUDMESH_DIR%\core\scheduler.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\scheduler.py" "%BASE_URL%/cloudmesh/core/scheduler.py"
 
     echo [8/12] Downloading core/node_client.py...
-    curl -sL "%BASE_URL%/cloudmesh/core/node_client.py" -o "%CLOUDMESH_DIR%\core\node_client.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\node_client.py" "%BASE_URL%/cloudmesh/core/node_client.py"
 
     echo [9/12] Downloading core/gpu.py...
-    curl -sL "%BASE_URL%/cloudmesh/core/gpu.py" -o "%CLOUDMESH_DIR%\core\gpu.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\gpu.py" "%BASE_URL%/cloudmesh/core/gpu.py"
 
     echo [10/12] Downloading core/jobs.py...
-    curl -sL "%BASE_URL%/cloudmesh/core/jobs.py" -o "%CLOUDMESH_DIR%\core\jobs.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\jobs.py" "%BASE_URL%/cloudmesh/core/jobs.py"
 
     echo [11/12] Downloading remaining core files...
     for %%f in (security transfer sync deploy alerts groups dashboard tui service history cmdlog) do (
-        curl -sL "%BASE_URL%/cloudmesh/core/%%f.py" -o "%CLOUDMESH_DIR%\core\%%f.py" 2>nul
+        curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\core\%%f.py" "%BASE_URL%/cloudmesh/core/%%f.py" 2>nul
     )
 
     echo [12/12] Downloading node agent...
-    curl -sL "%BASE_URL%/cloudmesh/node/cloudmesh_node.py" -o "%CLOUDMESH_DIR%\node\cloudmesh_node.py"
-    curl -sL "%BASE_URL%/cloudmesh/node/node-install.sh" -o "%CLOUDMESH_DIR%\node\node-install.sh" 2>nul
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\node\cloudmesh_node.py" "%BASE_URL%/cloudmesh/node/cloudmesh_node.py"
+    curl.exe -L --connect-timeout 10 -s -o "%CLOUDMESH_DIR%\node\node-install.sh" "%BASE_URL%/cloudmesh/node/node-install.sh" 2>nul
 
     :: Verify download
+    if exist "%CLOUDMESH_DIR%\main.py" (
+        echo [OK] Download complete!
+        goto :download_done
+    )
+
+    :powershell_download
+    echo [INFO] Using PowerShell to download files...
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/%GITHUB_USER%/%GITHUB_REPO%/%GITHUB_BRANCH%/cloudmesh/main.py' -OutFile '%CLOUDMESH_DIR%\main.py' -UseBasicParsing"
+    
     if not exist "%CLOUDMESH_DIR%\main.py" (
         echo [ERROR] Download failed!
-        echo [INFO] Check your internet connection or GitHub repo settings.
+        echo [INFO] Check your internet connection.
+        pause
+        exit /b 1
+    )
+    
+    echo [INFO] Downloading remaining files with PowerShell...
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/%GITHUB_USER%/%GITHUB_REPO%/%GITHUB_BRANCH%/requirements.txt' -OutFile '%CLOUDMESH_DIR%\requirements.txt' -UseBasicParsing"
+    
+    for %%f in (features advanced server monitor scheduler node_client gpu jobs security transfer sync deploy alerts groups dashboard tui service history cmdlog) do (
+        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/%GITHUB_USER%/%GITHUB_REPO%/%GITHUB_BRANCH%/cloudmesh/core/%%f.py' -OutFile '%CLOUDMESH_DIR%\core\%%f.py' -UseBasicParsing" 2>nul
+    )
+    
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/%GITHUB_USER%/%GITHUB_REPO%/%GITHUB_BRANCH%/cloudmesh/node/cloudmesh_node.py' -OutFile '%CLOUDMESH_DIR%\node\cloudmesh_node.py' -UseBasicParsing"
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/%GITHUB_USER%/%GITHUB_REPO%/%GITHUB_BRANCH%/cloudmesh/node/node-install.sh' -OutFile '%CLOUDMESH_DIR%\node\node-install.sh' -UseBasicParsing" 2>nul
+
+    :: Final verify
+    if not exist "%CLOUDMESH_DIR%\main.py" (
+        echo [ERROR] Download failed!
+        echo [INFO] Check your internet connection.
         pause
         exit /b 1
     )
 
+    :download_done
     :: Create __init__.py for core
     echo. > "%CLOUDMESH_DIR%\core\__init__.py"
-
-    echo [OK] Download complete!
+    echo [OK] All files downloaded!
     echo.
 )
 
