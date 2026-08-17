@@ -127,6 +127,7 @@ echo.
 :: --- Check Python ---
 echo [1/6] Checking Python...
 
+:: Try multiple Python commands
 python --version >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     for /f "tokens=2" %%v in ('python --version 2^>^&1') do echo [OK] Python found: %%v
@@ -137,6 +138,28 @@ python3 --version >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     for /f "tokens=2" %%v in ('python3 --version 2^>^&1') do echo [OK] Python3 found: %%v
     goto :py_ok
+)
+
+py --version >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    for /f "tokens=2" %%v in ('py --version 2^>^&1') do echo [OK] Python (py) found: %%v
+    goto :py_ok
+)
+
+:: Check common install paths
+for %%p in (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+    "C:\Python312\python.exe"
+    "C:\Python311\python.exe"
+    "C:\Python310\python.exe"
+) do (
+    if exist %%p (
+        set "PATH=%%~dp0;%PATH%"
+        echo [OK] Python found: %%p
+        goto :py_ok
+    )
 )
 
 echo [INFO] Python not found. Installing...
@@ -155,7 +178,9 @@ if %ERRORLEVEL% EQU 0 (
     scoop install python
     goto :refresh_path
 )
-echo [INFO] Please download Python from: https://www.python.org/downloads/
+echo [ERROR] Python not found and cannot auto-install.
+echo [INFO] Please install Python manually from: https://www.python.org/downloads/
+echo [INFO] Make sure "Add Python to PATH" is checked!
 start https://www.python.org/downloads/
 pause
 exit /b 1
@@ -163,6 +188,17 @@ exit /b 1
 :refresh_path
 set PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python312\Scripts\
 set PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python312\
+set PATH=%PATH%;C:\Python312\
+set PATH=%PATH%;C:\Python312\Scripts\
+
+:: Verify Python works after install
+python --version >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Python installation failed. Please install manually.
+    start https://www.python.org/downloads/
+    pause
+    exit /b 1
+)
 
 :py_ok
 

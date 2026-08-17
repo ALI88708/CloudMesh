@@ -153,13 +153,29 @@ install_python() {
         sudo apk add --no-cache python3 py3-pip
     else
         echo "[ERROR] Cannot detect package manager."
+        echo "[INFO] Please install Python3 manually:"
+        echo "  Ubuntu/Debian:  sudo apt install python3 python3-pip python3-venv"
+        echo "  CentOS/RHEL:    sudo yum install python3 python3-pip"
+        echo "  Arch:           sudo pacman -S python python-pip"
         exit 1
     fi
 }
 
+# Try multiple Python commands
 if command -v python3 &> /dev/null; then
     PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
     echo "[OK] Python3 found: $PY_VERSION"
+elif command -v python &> /dev/null; then
+    PY_VERSION=$(python --version 2>&1 | awk '{print $2}')
+    echo "[OK] Python found: $PY_VERSION"
+    # Create python3 alias if only python exists
+    if ! command -v python3 &> /dev/null; then
+        PYTHON_PATH=$(which python)
+        sudo ln -sf "$PYTHON_PATH" /usr/local/bin/python3 2>/dev/null || true
+    fi
+elif command -v py &> /dev/null; then
+    PY_VERSION=$(py --version 2>&1 | awk '{print $2}')
+    echo "[OK] Python (py) found: $PY_VERSION"
 else
     install_python
     if ! command -v python3 &> /dev/null; then
