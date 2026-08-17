@@ -44,80 +44,51 @@ if [ "$USE_LOCAL" -eq 0 ]; then
     echo "[INFO] Downloading CloudMesh from GitHub..."
     echo ""
 
-    # Create install directory
     mkdir -p "$CLOUDMESH_DIR"
-    mkdir -p "$CLOUDMESH_DIR/core"
-    mkdir -p "$CLOUDMESH_DIR/node"
 
-    # Check for curl or wget
+    echo "[1/2] Downloading ZIP from GitHub..."
+    ZIP_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO/archive/refs/heads/$GITHUB_BRANCH.zip"
+    ZIP_FILE="/tmp/cloudmesh.zip"
+    EXTRACT_DIR="/tmp/cloudmesh_extract"
+
     if command -v curl &> /dev/null; then
-        DOWNLOADER="curl"
+        curl -L --connect-timeout 10 --retry 3 -s -o "$ZIP_FILE" "$ZIP_URL"
     elif command -v wget &> /dev/null; then
-        DOWNLOADER="wget"
+        wget -q --timeout=10 --tries=3 "$ZIP_URL" -O "$ZIP_FILE"
     else
         echo "[ERROR] Neither curl nor wget found!"
         echo "[INFO] Install with: sudo apt install curl"
         exit 1
     fi
 
-    BASE_URL="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH"
+    if [ ! -f "$ZIP_FILE" ] || [ ! -s "$ZIP_FILE" ]; then
+        echo "[ERROR] Download failed! Check your internet connection."
+        exit 1
+    fi
 
-    download_file() {
-        local url="$1"
-        local dest="$2"
-        if [ "$DOWNLOADER" = "curl" ]; then
-            curl -L --connect-timeout 10 --retry 3 -s -o "$dest" "$url"
-        else
-            wget -q --timeout=10 --tries=3 "$url" -O "$dest"
-        fi
-    }
+    echo "[2/2] Extracting files..."
+    rm -rf "$EXTRACT_DIR"
+    unzip -q -o "$ZIP_FILE" -d "$EXTRACT_DIR" 2>/dev/null
 
-    echo "[1/12] Downloading main.py..."
-    download_file "$BASE_URL/cloudmesh/main.py" "$CLOUDMESH_DIR/main.py"
+    # Find the extracted folder (CloudMesh-main or similar)
+    EXTRACTED=$(find "$EXTRACT_DIR" -maxdepth 1 -type d -name "CloudMesh*" | head -1)
 
-    echo "[2/12] Downloading requirements.txt..."
-    download_file "$BASE_URL/requirements.txt" "$CLOUDMESH_DIR/requirements.txt"
+    if [ -z "$EXTRACTED" ]; then
+        echo "[ERROR] Extract failed!"
+        exit 1
+    fi
 
-    echo "[3/12] Downloading core/features.py..."
-    download_file "$BASE_URL/cloudmesh/core/features.py" "$CLOUDMESH_DIR/core/features.py"
+    # Copy files
+    rm -rf "$CLOUDMESH_DIR"
+    cp -r "$EXTRACTED/cloudmesh" "$CLOUDMESH_DIR"
 
-    echo "[4/12] Downloading core/advanced.py..."
-    download_file "$BASE_URL/cloudmesh/core/advanced.py" "$CLOUDMESH_DIR/core/advanced.py"
+    # Cleanup
+    rm -rf "$EXTRACT_DIR"
+    rm -f "$ZIP_FILE"
 
-    echo "[5/12] Downloading core/server.py..."
-    download_file "$BASE_URL/cloudmesh/core/server.py" "$CLOUDMESH_DIR/core/server.py"
-
-    echo "[6/12] Downloading core/monitor.py..."
-    download_file "$BASE_URL/cloudmesh/core/monitor.py" "$CLOUDMESH_DIR/core/monitor.py"
-
-    echo "[7/12] Downloading core/scheduler.py..."
-    download_file "$BASE_URL/cloudmesh/core/scheduler.py" "$CLOUDMESH_DIR/core/scheduler.py"
-
-    echo "[8/12] Downloading core/node_client.py..."
-    download_file "$BASE_URL/cloudmesh/core/node_client.py" "$CLOUDMESH_DIR/core/node_client.py"
-
-    echo "[9/12] Downloading core/gpu.py..."
-    download_file "$BASE_URL/cloudmesh/core/gpu.py" "$CLOUDMESH_DIR/core/gpu.py"
-
-    echo "[10/12] Downloading core/jobs.py..."
-    download_file "$BASE_URL/cloudmesh/core/jobs.py" "$CLOUDMESH_DIR/core/jobs.py"
-
-    echo "[11/12] Downloading remaining core files..."
-    for f in security transfer sync deploy alerts groups dashboard tui service history cmdlog; do
-        download_file "$BASE_URL/cloudmesh/core/$f.py" "$CLOUDMESH_DIR/core/$f.py" 2>/dev/null
-    done
-
-    echo "[12/12] Downloading node agent..."
-    download_file "$BASE_URL/cloudmesh/node/cloudmesh_node.py" "$CLOUDMESH_DIR/node/$NODE_SCRIPT"
-    download_file "$BASE_URL/cloudmesh/node/node-install.sh" "$CLOUDMESH_DIR/node/node-install.sh" 2>/dev/null
-
-    # Create __init__.py
-    touch "$CLOUDMESH_DIR/core/__init__.py"
-
-    # Verify download
+    # Verify
     if [ ! -f "$CLOUDMESH_DIR/main.py" ]; then
         echo "[ERROR] Download failed!"
-        echo "[INFO] Check your internet connection."
         exit 1
     fi
 
