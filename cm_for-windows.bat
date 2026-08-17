@@ -1,12 +1,12 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 echo ============================================
 echo    CloudMesh Installer (Auto-Download)
 echo ============================================
 echo.
 
 :: ============================================
-:: CONFIG - CHANGE THIS TO YOUR GITHUB REPO
+:: CONFIG
 :: ============================================
 set GITHUB_USER=MrAli88708
 set GITHUB_REPO=CloudMesh
@@ -40,37 +40,74 @@ if exist "%LOCAL_SOURCE%\main.py" (
 :: ============================================
 :: STEP 2: Download from GitHub if needed
 :: ============================================
-if %USE_LOCAL% EQU 0 (
-    echo [INFO] Downloading CloudMesh from GitHub...
-    echo.
+if %USE_LOCAL% EQU 0 goto :do_download
+goto :skip_download
 
-    if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
-    if not exist "%CLOUDMESH_DIR%" mkdir "%CLOUDMESH_DIR%"
-    if not exist "%CLOUDMESH_DIR%\core" mkdir "%CLOUDMESH_DIR%\core"
-    if not exist "%CLOUDMESH_DIR%\node" mkdir "%CLOUDMESH_DIR%\node"
+:do_download
+echo [INFO] Downloading CloudMesh from GitHub...
+echo.
 
-    echo [1/2] Downloading ZIP from GitHub...
-    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ProgressPreference = 'SilentlyContinue'; $zipUrl = 'https://github.com/%GITHUB_USER%/%GITHUB_REPO%/archive/refs/heads/%GITHUB_BRANCH%.zip'; $zipFile = '%TEMP%\cloudmesh.zip'; Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile -UseBasicParsing; if (!(Test-Path $zipFile) -or (Get-Item $zipFile).Length -eq 0) { Write-Host '[ERROR] Download failed!'; exit 1 }"
+if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
+if not exist "%CLOUDMESH_DIR%" mkdir "%CLOUDMESH_DIR%"
+if not exist "%CLOUDMESH_DIR%\core" mkdir "%CLOUDMESH_DIR%\core"
+if not exist "%CLOUDMESH_DIR%\node" mkdir "%CLOUDMESH_DIR%\node"
 
-    if not exist "%TEMP%\cloudmesh.zip" (
-        echo [ERROR] Download failed! Check your internet connection.
-        pause
-        exit /b 1
-    )
+echo [1/2] Downloading ZIP from GitHub...
+echo [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 > "%TEMP%\cm_dl.ps1"
+echo $ProgressPreference = 'SilentlyContinue' >> "%TEMP%\cm_dl.ps1"
+echo $url = 'https://github.com/%GITHUB_USER%/%GITHUB_REPO%/archive/refs/heads/%GITHUB_BRANCH%.zip' >> "%TEMP%\cm_dl.ps1"
+echo $dest = Join-Path $env:TEMP 'cloudmesh.zip' >> "%TEMP%\cm_dl.ps1"
+echo try { >> "%TEMP%\cm_dl.ps1"
+echo   Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing >> "%TEMP%\cm_dl.ps1"
+echo   if (-not (Test-Path $dest) -or (Get-Item $dest).Length -eq 0) { throw 'empty' } >> "%TEMP%\cm_dl.ps1"
+echo } catch { >> "%TEMP%\cm_dl.ps1"
+echo   Write-Host '[ERROR] Download failed!' >> "%TEMP%\cm_dl.ps1"
+echo   exit 1 >> "%TEMP%\cm_dl.ps1"
+echo } >> "%TEMP%\cm_dl.ps1"
 
-    echo [2/2] Extracting files...
-    powershell -Command "$ProgressPreference = 'SilentlyContinue'; $zip = '%TEMP%\cloudmesh.zip'; $extract = '%TEMP%\cloudmesh_extract'; if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }; Expand-Archive -Path $zip -DestinationPath $extract -Force; $src = Get-ChildItem -Path $extract -Directory | Select-Object -First 1; if (!$src) { Write-Host '[ERROR] Extract failed!'; exit 1 }; Copy-Item -Path (Join-Path $src.FullName 'cloudmesh\*') -Destination '%CLOUDMESH_DIR%' -Recurse -Force; Copy-Item -Path (Join-Path $src.FullName 'cloudmesh\node\*') -Destination '%CLOUDMESH_DIR%\node' -Recurse -Force; Remove-Item -Recurse -Force $extract; Remove-Item -Force $zip"
-
-    if not exist "%CLOUDMESH_DIR%\main.py" (
-        echo [ERROR] Extract failed!
-        pause
-        exit /b 1
-    )
-
-    echo. > "%CLOUDMESH_DIR%\core\__init__.py"
-    echo [OK] Download complete!
-    echo.
+powershell -ExecutionPolicy Bypass -File "%TEMP%\cm_dl.ps1"
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Download failed! Check your internet connection.
+    pause
+    exit /b 1
 )
+
+if not exist "%TEMP%\cloudmesh.zip" (
+    echo [ERROR] Download failed! Check your internet connection.
+    pause
+    exit /b 1
+)
+
+echo [2/2] Extracting files...
+echo $ProgressPreference = 'SilentlyContinue' > "%TEMP%\cm_ex.ps1"
+echo $zip = Join-Path $env:TEMP 'cloudmesh.zip' >> "%TEMP%\cm_ex.ps1"
+echo $out = Join-Path $env:TEMP 'cloudmesh_extract' >> "%TEMP%\cm_ex.ps1"
+echo if (Test-Path $out) { Remove-Item -Recurse -Force $out } >> "%TEMP%\cm_ex.ps1"
+echo Expand-Archive -Path $zip -DestinationPath $out -Force >> "%TEMP%\cm_ex.ps1"
+echo $d = Get-ChildItem -Path $out -Directory ^| Select-Object -First 1 >> "%TEMP%\cm_ex.ps1"
+echo $cloudmeshDest = '%CLOUDMESH_DIR%' >> "%TEMP%\cm_ex.ps1"
+echo Copy-Item -Path (Join-Path $d.FullName 'cloudmesh\*') -Destination $cloudmeshDest -Recurse -Force >> "%TEMP%\cm_ex.ps1"
+echo $nodeDest = '%CLOUDMESH_DIR%\node' >> "%TEMP%\cm_ex.ps1"
+echo Copy-Item -Path (Join-Path $d.FullName 'cloudmesh\node\*') -Destination $nodeDest -Recurse -Force >> "%TEMP%\cm_ex.ps1"
+echo Remove-Item -Recurse -Force $out >> "%TEMP%\cm_ex.ps1"
+echo Remove-Item -Force $zip >> "%TEMP%\cm_ex.ps1"
+
+powershell -ExecutionPolicy Bypass -File "%TEMP%\cm_ex.ps1"
+
+del "%TEMP%\cm_dl.ps1" 2>nul
+del "%TEMP%\cm_ex.ps1" 2>nul
+
+if not exist "%CLOUDMESH_DIR%\main.py" (
+    echo [ERROR] Extract failed!
+    pause
+    exit /b 1
+)
+
+echo. > "%CLOUDMESH_DIR%\core\__init__.py"
+echo [OK] Download complete!
+echo.
+
+:skip_download
 
 :: ============================================
 :: STEP 3: Node Agent Installation
@@ -83,7 +120,6 @@ echo.
 :: --- Check Python ---
 echo [1/6] Checking Python...
 
-:: Try multiple Python commands
 python --version >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     for /f "tokens=2" %%v in ('python --version 2^>^&1') do echo [OK] Python found: %%v
@@ -147,7 +183,6 @@ set PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python312\
 set PATH=%PATH%;C:\Python312\
 set PATH=%PATH%;C:\Python312\Scripts\
 
-:: Verify Python works after install
 python --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Python installation failed. Please install manually.
@@ -210,6 +245,7 @@ set AUTH_KEY=N/A
 if exist "%NODE_DIR%\.node_key" (
     set /p AUTH_KEY=<"%NODE_DIR%\.node_key"
 )
+set IP_ADDRESS=YOUR_IP
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4" ^| findstr /v "127.0.0.1"') do (
     for /f "tokens=1" %%b in ("%%a") do set IP_ADDRESS=%%b
 )
@@ -236,7 +272,6 @@ echo    CloudMesh Controller Setup
 echo ============================================
 echo.
 
-:: Create venv
 if not exist "%VENV_PYTHON%" (
     echo [INFO] Creating virtual environment...
     python -m venv "%VENV_DIR%"
@@ -248,11 +283,10 @@ if not exist "%VENV_PYTHON%" (
 echo.
 
 :: ============================================
-:: STEP 5: Create cm shortcut (add to PATH)
+:: STEP 5: Create cm shortcut
 :: ============================================
 echo [INFO] Creating cm shortcut...
 
-:: Create cm.bat in WindowsApps (already in PATH)
 set CM_BAT=%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\cm.bat
 
 (
