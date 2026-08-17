@@ -1,11 +1,7 @@
 #!/bin/bash
-echo "============================================"
-echo "   CloudMesh Installer (Auto-Download)"
-echo "============================================"
-echo ""
 
 # ============================================
-# CONFIG - CHANGE THIS TO YOUR GITHUB REPO
+# CONFIG
 # ============================================
 GITHUB_USER="MrAli88708"
 GITHUB_REPO="CloudMesh"
@@ -21,32 +17,25 @@ VENV_DIR="$INSTALL_DIR/venv"
 NODE_SCRIPT="cloudmesh_node.py"
 
 # ============================================
-# STEP 1: Check if cloudmesh folder exists locally
+# Check if already installed
 # ============================================
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_SOURCE="$SCRIPT_DIR/cloudmesh"
-USE_LOCAL=0
-
-if [ -f "$LOCAL_SOURCE/main.py" ]; then
-    echo "[OK] Found local cloudmesh folder"
-    USE_LOCAL=1
-    CLOUDMESH_DIR="$LOCAL_SOURCE"
-else
-    echo "[INFO] Local cloudmesh folder not found"
-    echo "[INFO] Will download from GitHub..."
-    echo ""
+IS_INSTALLED=0
+if [ -f "$CLOUDMESH_DIR/main.py" ]; then
+    IS_INSTALLED=1
 fi
 
 # ============================================
-# STEP 2: Download from GitHub if needed
+# DOWNLOAD FUNCTION
 # ============================================
-if [ "$USE_LOCAL" -eq 0 ]; then
-    echo "[INFO] Downloading CloudMesh from GitHub..."
+download_from_github() {
+    echo "============================================"
+    echo "   Downloading from GitHub..."
+    echo "============================================"
     echo ""
 
     mkdir -p "$CLOUDMESH_DIR"
 
-    echo "[1/2] Downloading ZIP from GitHub..."
+    echo "[1/2] Downloading ZIP..."
     ZIP_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO/archive/refs/heads/$GITHUB_BRANCH.zip"
     ZIP_FILE="/tmp/cloudmesh.zip"
     EXTRACT_DIR="/tmp/cloudmesh_extract"
@@ -58,155 +47,172 @@ if [ "$USE_LOCAL" -eq 0 ]; then
     else
         echo "[ERROR] Neither curl nor wget found!"
         echo "[INFO] Install with: sudo apt install curl"
-        exit 1
+        return 1
     fi
 
     if [ ! -f "$ZIP_FILE" ] || [ ! -s "$ZIP_FILE" ]; then
         echo "[ERROR] Download failed! Check your internet connection."
-        exit 1
+        return 1
     fi
 
     echo "[2/2] Extracting files..."
     rm -rf "$EXTRACT_DIR"
     unzip -q -o "$ZIP_FILE" -d "$EXTRACT_DIR" 2>/dev/null
 
-    # Find the extracted folder (CloudMesh-main or similar)
     EXTRACTED=$(find "$EXTRACT_DIR" -maxdepth 1 -type d -name "CloudMesh*" | head -1)
 
     if [ -z "$EXTRACTED" ]; then
         echo "[ERROR] Extract failed!"
-        exit 1
+        rm -rf "$EXTRACT_DIR" "$ZIP_FILE"
+        return 1
     fi
 
-    # Copy files
     rm -rf "$CLOUDMESH_DIR"
     cp -r "$EXTRACTED/cloudmesh" "$CLOUDMESH_DIR"
 
-    # Cleanup
     rm -rf "$EXTRACT_DIR"
     rm -f "$ZIP_FILE"
 
-    # Verify
     if [ ! -f "$CLOUDMESH_DIR/main.py" ]; then
         echo "[ERROR] Download failed!"
-        exit 1
+        return 1
     fi
 
     echo "[OK] Download complete!"
     echo ""
-fi
-
-# ============================================
-# STEP 3: Node Agent Installation
-# ============================================
-echo "============================================"
-echo "   Installing CloudMesh Node..."
-echo "============================================"
-echo ""
-
-# --- Check Python ---
-echo "[1/6] Checking Python..."
-
-install_python() {
-    echo "[INFO] Python3 not found. Installing..."
-    if command -v apt &> /dev/null; then
-        sudo apt update -qq
-        sudo apt install -y -qq python3 python3-pip python3-venv
-    elif command -v yum &> /dev/null; then
-        sudo yum install -y python3 python3-pip
-    elif command -v dnf &> /dev/null; then
-        sudo dnf install -y python3 python3-pip
-    elif command -v pacman &> /dev/null; then
-        sudo pacman -Sy --noconfirm python python-pip
-    elif command -v zypper &> /dev/null; then
-        sudo zypper install -y python3 python3-pip
-    elif command -v apk &> /dev/null; then
-        sudo apk add --no-cache python3 py3-pip
-    else
-        echo "[ERROR] Cannot detect package manager."
-        echo "[INFO] Please install Python3 manually:"
-        echo "  Ubuntu/Debian:  sudo apt install python3 python3-pip python3-venv"
-        echo "  CentOS/RHEL:    sudo yum install python3 python3-pip"
-        echo "  Arch:           sudo pacman -S python python-pip"
-        exit 1
-    fi
+    return 0
 }
 
-# Try multiple Python commands
-if command -v python3 &> /dev/null; then
-    PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-    echo "[OK] Python3 found: $PY_VERSION"
-elif command -v python &> /dev/null; then
-    PY_VERSION=$(python --version 2>&1 | awk '{print $2}')
-    echo "[OK] Python found: $PY_VERSION"
-    # Create python3 alias if only python exists
-    if ! command -v python3 &> /dev/null; then
-        PYTHON_PATH=$(which python)
-        sudo ln -sf "$PYTHON_PATH" /usr/local/bin/python3 2>/dev/null || true
+# ============================================
+# UNINSTALL FUNCTION
+# ============================================
+do_uninstall() {
+    echo "============================================"
+    echo "   Uninstalling CloudMesh..."
+    echo "============================================"
+    echo ""
+
+    [ -d "$CLOUDMESH_DIR" ] && rm -rf "$CLOUDMESH_DIR" && echo "[OK] Removed program files"
+    [ -d "$NODE_DIR" ] && rm -rf "$NODE_DIR" && echo "[OK] Removed node agent"
+    [ -d "$VENV_DIR" ] && rm -rf "$VENV_DIR" && echo "[OK] Removed virtual environment"
+
+    if command -v systemctl &> /dev/null; then
+        sudo systemctl stop cloudmesh-node 2>/dev/null
+        sudo systemctl disable cloudmesh-node 2>/dev/null
+        sudo rm -f /etc/systemd/system/cloudmesh-node.service
+        sudo systemctl daemon-reload 2>/dev/null
+        echo "[OK] Removed systemd service"
     fi
-elif command -v py &> /dev/null; then
-    PY_VERSION=$(py --version 2>&1 | awk '{print $2}')
-    echo "[OK] Python (py) found: $PY_VERSION"
-else
-    install_python
-    if ! command -v python3 &> /dev/null; then
-        echo "[ERROR] Python installation failed."
-        exit 1
+
+    CM_BIN="$HOME/.local/bin/cm"
+    [ -f "$CM_BIN" ] && rm -f "$CM_BIN" && echo "[OK] Removed cm shortcut"
+
+    rm -f /tmp/cloudmesh.zip /tmp/cm_*.sh 2>/dev/null
+
+    echo ""
+    echo "[OK] CloudMesh has been uninstalled."
+    echo ""
+}
+
+# ============================================
+# FULL SETUP FUNCTION
+# ============================================
+do_setup() {
+    echo "============================================"
+    echo "   Installing CloudMesh Node..."
+    echo "============================================"
+    echo ""
+
+    # Check Python
+    echo "[1/6] Checking Python..."
+
+    install_python() {
+        echo "[INFO] Python3 not found. Installing..."
+        if command -v apt &> /dev/null; then
+            sudo apt update -qq
+            sudo apt install -y -qq python3 python3-pip python3-venv
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y python3 python3-pip
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y python3 python3-pip
+        elif command -v pacman &> /dev/null; then
+            sudo pacman -Sy --noconfirm python python-pip
+        elif command -v zypper &> /dev/null; then
+            sudo zypper install -y python3 python3-pip
+        elif command -v apk &> /dev/null; then
+            sudo apk add --no-cache python3 py3-pip
+        else
+            echo "[ERROR] Cannot detect package manager."
+            echo "[INFO] Install Python3 manually"
+            return 1
+        fi
+    }
+
+    if command -v python3 &> /dev/null; then
+        PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
+        echo "[OK] Python3 found: $PY_VERSION"
+    elif command -v python &> /dev/null; then
+        PY_VERSION=$(python --version 2>&1 | awk '{print $2}')
+        echo "[OK] Python found: $PY_VERSION"
+        if ! command -v python3 &> /dev/null; then
+            PYTHON_PATH=$(which python)
+            sudo ln -sf "$PYTHON_PATH" /usr/local/bin/python3 2>/dev/null || true
+        fi
+    else
+        install_python
+        if ! command -v python3 &> /dev/null; then
+            echo "[ERROR] Python installation failed."
+            return 1
+        fi
+        PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
+        echo "[OK] Python3 installed: $PY_VERSION"
     fi
-    PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-    echo "[OK] Python3 installed: $PY_VERSION"
-fi
 
-# --- Install psutil ---
-echo "[2/6] Installing node dependencies..."
-python3 -m pip install --user psutil 2>/dev/null || true
-echo "[OK] Dependencies installed"
+    echo "[2/6] Installing node dependencies..."
+    python3 -m pip install --user psutil 2>/dev/null || true
+    echo "[OK] Dependencies installed"
 
-# --- Create node directory ---
-echo "[3/6] Creating node directory..."
-mkdir -p "$NODE_DIR"
-mkdir -p "$NODE_DIR/logs"
-mkdir -p "$NODE_DIR/data"
+    echo "[3/6] Creating node directory..."
+    mkdir -p "$NODE_DIR" "$NODE_DIR/logs" "$NODE_DIR/data"
 
-# --- Install node agent ---
-echo "[4/6] Installing CloudMesh Node agent..."
-NODE_SOURCE="$CLOUDMESH_DIR/node/$NODE_SCRIPT"
-if [ -f "$NODE_SOURCE" ]; then
-    cp "$NODE_SOURCE" "$NODE_DIR/$NODE_SCRIPT"
-else
-    echo "[ERROR] cloudmesh_node.py not found"
-    exit 1
-fi
-chmod +x "$NODE_DIR/$NODE_SCRIPT"
-echo "[OK] Node agent installed"
+    echo "[4/6] Installing CloudMesh Node agent..."
+    NODE_SOURCE="$CLOUDMESH_DIR/node/$NODE_SCRIPT"
+    if [ -f "$NODE_SOURCE" ]; then
+        cp "$NODE_SOURCE" "$NODE_DIR/$NODE_SCRIPT"
+        chmod +x "$NODE_DIR/$NODE_SCRIPT"
+        echo "[OK] Node agent installed"
+    else
+        echo "[WARNING] cloudmesh_node.py not found, skipping node"
+        echo ""
+        do_controller_setup
+        return
+    fi
 
-# --- Create node helper scripts ---
-echo "[5/6] Creating node scripts..."
+    echo "[5/6] Creating node scripts..."
 
-cat > "$NODE_DIR/start.sh" << 'EOF'
+    cat > "$NODE_DIR/start.sh" << 'SEOF'
 #!/bin/bash
 cd "$(dirname "$0")"
 python3 cloudmesh_node.py start "$@"
-EOF
-chmod +x "$NODE_DIR/start.sh"
+SEOF
+    chmod +x "$NODE_DIR/start.sh"
 
-cat > "$NODE_DIR/stop.sh" << 'EOF'
+    cat > "$NODE_DIR/stop.sh" << 'SEOF'
 #!/bin/bash
 cd "$(dirname "$0")"
 python3 cloudmesh_node.py stop
-EOF
-chmod +x "$NODE_DIR/stop.sh"
+SEOF
+    chmod +x "$NODE_DIR/stop.sh"
 
-cat > "$NODE_DIR/status.sh" << 'EOF'
+    cat > "$NODE_DIR/status.sh" << 'SEOF'
 #!/bin/bash
 cd "$(dirname "$0")"
 python3 cloudmesh_node.py status
-EOF
-chmod +x "$NODE_DIR/status.sh"
+SEOF
+    chmod +x "$NODE_DIR/status.sh"
 
-# Systemd service
-if command -v systemctl &> /dev/null; then
-    sudo tee /etc/systemd/system/cloudmesh-node.service > /dev/null << SERVICEEOF
+    if command -v systemctl &> /dev/null; then
+        sudo tee /etc/systemd/system/cloudmesh-node.service > /dev/null << SERVICEEOF
 [Unit]
 Description=CloudMesh Node
 After=network.target
@@ -222,62 +228,56 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 SERVICEEOF
-    sudo systemctl daemon-reload
-    echo "[OK] Systemd service created"
-fi
+        sudo systemctl daemon-reload
+        echo "[OK] Systemd service created"
+    fi
 
-echo "[OK] Node scripts created"
+    echo "[OK] Node scripts created"
 
-# --- Print node info ---
-echo "[6/6] Node setup complete!"
-echo ""
-AUTH_KEY=$(cat "$NODE_DIR/.node_key" 2>/dev/null || echo "N/A")
-IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR_IP")
+    echo "[6/6] Node setup complete!"
+    echo ""
+    AUTH_KEY=$(cat "$NODE_DIR/.node_key" 2>/dev/null || echo "N/A")
+    IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR_IP")
 
-echo "  [OK] Node Location: $NODE_DIR"
-echo "  [OK] Auth Key: $AUTH_KEY"
-echo ""
-echo "  === Add from Controller ==="
-echo "  cm node add -n $(hostname) -H $IP_ADDRESS -p 9999 -k $AUTH_KEY"
-echo ""
+    echo "  [OK] Node Location: $NODE_DIR"
+    echo "  [OK] Auth Key: $AUTH_KEY"
+    echo ""
+    echo "  === Add from Controller ==="
+    echo "  cm node add -n $(hostname) -H $IP_ADDRESS -p 9999 -k $AUTH_KEY"
+    echo ""
 
-# Ask to start node now
-read -p "Start node now? (y/n): " START_NODE
-if [ "$START_NODE" = "y" ] || [ "$START_NODE" = "Y" ]; then
-    bash "$NODE_DIR/start.sh"
-fi
-echo ""
+    read -p "Start node now? (y/n): " START_NODE
+    if [ "$START_NODE" = "y" ] || [ "$START_NODE" = "Y" ]; then
+        bash "$NODE_DIR/start.sh"
+    fi
+    echo ""
 
-# ============================================
-# STEP 4: Controller Setup
-# ============================================
-echo "============================================"
-echo "   CloudMesh Controller Setup"
-echo "============================================"
-echo ""
+    do_controller_setup
+}
 
-# Create venv
-if [ ! -d "$VENV_DIR" ]; then
-    echo "[INFO] Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-    pip install -q -r "$CLOUDMESH_DIR/requirements.txt"
-    echo "[OK] Environment ready!"
-else
-    source "$VENV_DIR/bin/activate"
-    echo "[OK] Virtual environment exists"
-fi
-echo ""
+do_controller_setup() {
+    echo "============================================"
+    echo "   CloudMesh Controller Setup"
+    echo "============================================"
+    echo ""
 
-# ============================================
-# STEP 5: Create cm shortcut
-# ============================================
-echo "[INFO] Creating cm shortcut..."
+    if [ ! -d "$VENV_DIR" ]; then
+        echo "[INFO] Creating virtual environment..."
+        python3 -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install -q -r "$CLOUDMESH_DIR/requirements.txt"
+        echo "[OK] Environment ready!"
+    else
+        source "$VENV_DIR/bin/activate"
+        echo "[OK] Virtual environment exists"
+    fi
+    echo ""
 
-CM_BIN="$HOME/.local/bin/cm"
-mkdir -p "$HOME/.local/bin"
+    echo "[INFO] Creating cm shortcut..."
+    CM_BIN="$HOME/.local/bin/cm"
+    mkdir -p "$HOME/.local/bin"
 
-cat > "$CM_BIN" << CMEOF
+    cat > "$CM_BIN" << CMEOF
 #!/bin/bash
 VENV_PYTHON="$VENV_DIR/bin/python"
 CLOUDMESH_DIR="$CLOUDMESH_DIR"
@@ -287,42 +287,157 @@ if [ ! -f "\$VENV_PYTHON" ]; then
 fi
 "\$VENV_PYTHON" "\$CLOUDMESH_DIR/main.py" "\$@"
 CMEOF
-chmod +x "$CM_BIN"
+    chmod +x "$CM_BIN"
 
-# Add to PATH if not already
-if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-    export PATH="$HOME/.local/bin:$PATH"
-    echo "[OK] Added ~/.local/bin to PATH"
-fi
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+        export PATH="$HOME/.local/bin:$PATH"
+        echo "[OK] Added ~/.local/bin to PATH"
+    fi
 
-echo "[OK] cm command available!"
-echo ""
+    echo "[OK] cm command available!"
+    echo ""
+}
 
 # ============================================
-# DONE
+# MAIN MENU
 # ============================================
-echo "============================================"
-echo "   CloudMesh Installed Successfully!"
-echo "============================================"
-echo ""
-echo "=== Quick Start ==="
-echo "  cm --help           # Show all commands"
-echo "  cm interactive      # Interactive TUI"
-echo "  cm version          # Show version"
-echo "  cm ping             # Test connections"
-echo "  cm discover 192.168.1  # Scan network"
-echo "  cm bench            # Benchmark"
-echo ""
-echo "=== Node Commands ==="
-echo "  Start:    $NODE_DIR/start.sh"
-echo "  Status:   $NODE_DIR/status.sh"
-echo "  Stop:     $NODE_DIR/stop.sh"
-echo ""
-echo "=== Files Installed ==="
-echo "  Program:  $CLOUDMESH_DIR"
-echo "  Node:     $NODE_DIR"
-echo "  Shortcut: $CM_BIN"
-echo ""
-echo "Usage: cm [command] [options]"
-echo ""
+while true; do
+    clear
+    echo "============================================"
+    echo "   CloudMesh Installer"
+    echo "============================================"
+    echo ""
+
+    if [ "$IS_INSTALLED" -eq 1 ]; then
+        echo "   [CloudMesh is already installed]"
+        echo ""
+        echo "   [1] Fresh Install"
+        echo "   [2] Update (keep config)"
+        echo "   [3] Factory Reset"
+        echo "   [4] Uninstall"
+        echo "   [5] Exit"
+        echo ""
+        read -p "   Choose [1-5]: " CHOICE
+    else
+        echo "   [CloudMesh is NOT installed]"
+        echo ""
+        echo "   [1] Install CloudMesh"
+        echo "   [2] Exit"
+        echo ""
+        read -p "   Choose [1-2]: " CHOICE
+    fi
+    echo ""
+
+    if [ "$IS_INSTALLED" -eq 1 ]; then
+        case "$CHOICE" in
+            1)
+                download_from_github || { read -p "Press Enter to continue..."; continue; }
+                do_setup
+                echo ""
+                echo "============================================"
+                echo "   CloudMesh Installed Successfully!"
+                echo "============================================"
+                echo ""
+                echo "=== Quick Start ==="
+                echo "  cm --help              # Show all commands"
+                echo "  cm interactive         # Interactive TUI"
+                echo "  cm version             # Show version"
+                echo "  cm ping                # Test connections"
+                echo "  cm discover 192.168.1  # Scan network"
+                echo "  cm bench               # Benchmark"
+                echo ""
+                echo "Usage: cm [command] [options]"
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            2)
+                echo "============================================"
+                echo "   Updating CloudMesh..."
+                echo "============================================"
+                echo ""
+
+                BACKUP_DIR="/tmp/cloudmesh_backup"
+                mkdir -p "$BACKUP_DIR"
+                [ -f "$CLOUDMESH_DIR/.node_keys.json" ] && cp "$CLOUDMESH_DIR/.node_keys.json" "$BACKUP_DIR/" && echo "[OK] Backed up node keys"
+                [ -f "$INSTALL_DIR/cloudmesh.json" ] && cp "$INSTALL_DIR/cloudmesh.json" "$BACKUP_DIR/" && echo "[OK] Backed up server config"
+
+                download_from_github || { read -p "Press Enter to continue..."; continue; }
+
+                [ -f "$BACKUP_DIR/.node_keys.json" ] && cp "$BACKUP_DIR/.node_keys.json" "$CLOUDMESH_DIR/" 2>/dev/null
+                [ -f "$BACKUP_DIR/cloudmesh.json" ] && cp "$BACKUP_DIR/cloudmesh.json" "$INSTALL_DIR/" 2>/dev/null
+                rm -rf "$BACKUP_DIR"
+                echo "[OK] Config restored"
+
+                do_setup
+                echo "[OK] Update complete!"
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            3)
+                echo "[WARNING] This will delete ALL data!"
+                read -p "Are you sure? (y/n): " CONFIRM
+                if [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ]; then
+                    echo ""
+                    echo "[INFO] Removing old installation..."
+                    [ -d "$CLOUDMESH_DIR" ] && rm -rf "$CLOUDMESH_DIR"
+                    [ -d "$NODE_DIR" ] && rm -rf "$NODE_DIR"
+                    [ -d "$VENV_DIR" ] && rm -rf "$VENV_DIR"
+                    echo "[OK] Old files removed"
+                    echo ""
+
+                    download_from_github || { read -p "Press Enter to continue..."; continue; }
+                    do_setup
+                    echo "[OK] Factory Reset complete!"
+                    echo ""
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            4)
+                do_uninstall
+                IS_INSTALLED=0
+                read -p "Press Enter to continue..."
+                ;;
+            5)
+                echo "Goodbye!"
+                exit 0
+                ;;
+            *)
+                echo "[ERROR] Invalid choice!"
+                read -p "Press Enter to continue..."
+                ;;
+        esac
+    else
+        case "$CHOICE" in
+            1)
+                download_from_github || { read -p "Press Enter to continue..."; continue; }
+                do_setup
+                IS_INSTALLED=1
+                echo ""
+                echo "============================================"
+                echo "   CloudMesh Installed Successfully!"
+                echo "============================================"
+                echo ""
+                echo "=== Quick Start ==="
+                echo "  cm --help              # Show all commands"
+                echo "  cm interactive         # Interactive TUI"
+                echo "  cm version             # Show version"
+                echo "  cm ping                # Test connections"
+                echo "  cm discover 192.168.1  # Scan network"
+                echo "  cm bench               # Benchmark"
+                echo ""
+                echo "Usage: cm [command] [options]"
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            2)
+                echo "Goodbye!"
+                exit 0
+                ;;
+            *)
+                echo "[ERROR] Invalid choice!"
+                read -p "Press Enter to continue..."
+                ;;
+        esac
+    fi
+done

@@ -1,9 +1,6 @@
 @echo off
-setlocal
-echo ============================================
-echo    CloudMesh Installer (Auto-Download)
-echo ============================================
-echo.
+setlocal enabledelayedexpansion
+title CloudMesh Installer
 
 :: ============================================
 :: CONFIG
@@ -20,31 +17,172 @@ set CLOUDMESH_DIR=%INSTALL_DIR%\cloudmesh
 set NODE_DIR=%USERPROFILE%\.cloudmesh-node
 set VENV_DIR=%INSTALL_DIR%\venv
 set VENV_PYTHON=%VENV_DIR%\Scripts\python.exe
+set CM_BAT=%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\cm.bat
 
 :: ============================================
-:: STEP 1: Check if cloudmesh folder exists locally
+:: Check if already installed
 :: ============================================
-set LOCAL_SOURCE=%~dp0cloudmesh
-set USE_LOCAL=0
+set IS_INSTALLED=0
+if exist "%CLOUDMESH_DIR%\main.py" set IS_INSTALLED=1
 
-if exist "%LOCAL_SOURCE%\main.py" (
-    echo [OK] Found local cloudmesh folder
-    set USE_LOCAL=1
-    set CLOUDMESH_DIR=%LOCAL_SOURCE%
-) else (
-    echo [INFO] Local cloudmesh folder not found
-    echo [INFO] Will download from GitHub...
+:: ============================================
+:: MENU
+:: ============================================
+:menu
+cls
+echo ============================================
+echo    CloudMesh Installer
+echo ============================================
+echo.
+
+if !IS_INSTALLED! EQU 1 (
+    echo    [CloudMesh is already installed]
     echo.
+    echo    [1] Fresh Install
+    echo    [2] Update (keep config)
+    echo    [3] Factory Reset
+    echo    [4] Uninstall
+    echo    [5] Exit
+    echo.
+    set /p CHOICE="    Choose [1-5]: "
+) else (
+    echo    [CloudMesh is NOT installed]
+    echo.
+    echo    [1] Install CloudMesh
+    echo    [2] Exit
+    echo.
+    set /p CHOICE="    Choose [1-2]: "
+)
+echo.
+
+if "!IS_INSTALLED!"=="1" goto :menu_installed
+goto :menu_not_installed
+
+:menu_installed
+if "!CHOICE!"=="1" goto :do_fresh
+if "!CHOICE!"=="2" goto :do_update
+if "!CHOICE!"=="3" goto :do_reset
+if "!CHOICE!"=="4" goto :do_uninstall
+if "!CHOICE!"=="5" goto :do_exit
+echo [ERROR] Invalid choice!
+pause
+goto :menu
+
+:menu_not_installed
+if "!CHOICE!"=="1" goto :do_fresh
+if "!CHOICE!"=="2" goto :do_exit
+echo [ERROR] Invalid choice!
+pause
+goto :menu
+
+:: ============================================
+:: UNINSTALL
+:: ============================================
+:do_uninstall
+echo ============================================
+echo    Uninstalling CloudMesh...
+echo ============================================
+echo.
+
+if exist "%CLOUDMESH_DIR%" (
+    rmdir /s /q "%CLOUDMESH_DIR%"
+    echo [OK] Removed program files
+)
+if exist "%NODE_DIR%" (
+    rmdir /s /q "%NODE_DIR%"
+    echo [OK] Removed node agent
+)
+if exist "%VENV_DIR%" (
+    rmdir /s /q "%VENV_DIR%"
+    echo [OK] Removed virtual environment
+)
+if exist "%INSTALL_DIR%" (
+    rmdir /s /q "%INSTALL_DIR%"
+    echo [OK] Removed install directory
+)
+if exist "%CM_BAT%" (
+    del "%CM_BAT%"
+    echo [OK] Removed cm shortcut
+)
+del "%TEMP%\cloudmesh.zip" 2>nul
+del "%TEMP%\cm_dl.ps1" 2>nul
+del "%TEMP%\cm_ex.ps1" 2>nul
+
+echo.
+echo [OK] CloudMesh has been uninstalled.
+echo.
+pause
+exit /b 0
+
+:: ============================================
+:: FACTORY RESET
+:: ============================================
+:do_reset
+echo ============================================
+echo    Factory Reset
+echo ============================================
+echo.
+echo [WARNING] This will delete ALL data!
+echo   - Auth keys
+echo   - Server config
+echo   - Backups
+echo   - Everything
+echo.
+set /p CONFIRM="Are you sure? (y/n): "
+if /i not "!CONFIRM!"=="y" goto :menu
+
+echo.
+echo [INFO] Removing old installation...
+if exist "%CLOUDMESH_DIR%" rmdir /s /q "%CLOUDMESH_DIR%"
+if exist "%NODE_DIR%" rmdir /s /q "%NODE_DIR%"
+if exist "%VENV_DIR%" rmdir /s /q "%VENV_DIR%"
+echo [OK] Old files removed
+echo.
+
+goto :do_install
+
+:: ============================================
+:: UPDATE (keep config)
+:: ============================================
+:do_update
+echo ============================================
+echo    Updating CloudMesh...
+echo ============================================
+echo.
+
+set BACKUP_DIR=%TEMP%\cloudmesh_backup
+if not exist "!BACKUP_DIR!" mkdir "!BACKUP_DIR!"
+
+if exist "%CLOUDMESH_DIR%\.node_keys.json" (
+    copy /Y "%CLOUDMESH_DIR%\.node_keys.json" "!BACKUP_DIR!\" >nul
+    echo [OK] Backed up node keys
+)
+if exist "%INSTALL_DIR%\cloudmesh.json" (
+    copy /Y "%INSTALL_DIR%\cloudmesh.json" "!BACKUP_DIR!\" >nul
+    echo [OK] Backed up server config
 )
 
-:: ============================================
-:: STEP 2: Download from GitHub if needed
-:: ============================================
-if %USE_LOCAL% EQU 0 goto :do_download
-goto :skip_download
+set SKIP_SETUP=0
+goto :do_download
 
+:: ============================================
+:: FRESH INSTALL
+:: ============================================
+:do_fresh
+echo ============================================
+echo    Fresh Install
+echo ============================================
+echo.
+set SKIP_SETUP=0
+goto :do_download
+
+:: ============================================
+:: DOWNLOAD
+:: ============================================
 :do_download
-echo [INFO] Downloading CloudMesh from GitHub...
+echo ============================================
+echo    Downloading from GitHub...
+echo ============================================
 echo.
 
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
@@ -52,30 +190,33 @@ if not exist "%CLOUDMESH_DIR%" mkdir "%CLOUDMESH_DIR%"
 if not exist "%CLOUDMESH_DIR%\core" mkdir "%CLOUDMESH_DIR%\core"
 if not exist "%CLOUDMESH_DIR%\node" mkdir "%CLOUDMESH_DIR%\node"
 
-echo [1/2] Downloading ZIP from GitHub...
+echo [1/2] Downloading ZIP...
 echo [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 > "%TEMP%\cm_dl.ps1"
 echo $ProgressPreference = 'SilentlyContinue' >> "%TEMP%\cm_dl.ps1"
-echo $url = 'https://github.com/%GITHUB_USER%/%GITHUB_REPO%/archive/refs/heads/%GITHUB_BRANCH%.zip' >> "%TEMP%\cm_dl.ps1"
+echo $url = 'https://github.com/!GITHUB_USER!/!GITHUB_REPO!/archive/refs/heads/!GITHUB_BRANCH!.zip' >> "%TEMP%\cm_dl.ps1"
 echo $dest = Join-Path $env:TEMP 'cloudmesh.zip' >> "%TEMP%\cm_dl.ps1"
+echo if (Test-Path $dest) { Remove-Item -Force $dest } >> "%TEMP%\cm_dl.ps1"
 echo try { >> "%TEMP%\cm_dl.ps1"
 echo   Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing >> "%TEMP%\cm_dl.ps1"
 echo   if (-not (Test-Path $dest) -or (Get-Item $dest).Length -eq 0) { throw 'empty' } >> "%TEMP%\cm_dl.ps1"
 echo } catch { >> "%TEMP%\cm_dl.ps1"
-echo   Write-Host '[ERROR] Download failed!' >> "%TEMP%\cm_dl.ps1"
+echo   Write-Host 'ERROR: Download failed' >> "%TEMP%\cm_dl.ps1"
 echo   exit 1 >> "%TEMP%\cm_dl.ps1"
 echo } >> "%TEMP%\cm_dl.ps1"
 
 powershell -ExecutionPolicy Bypass -File "%TEMP%\cm_dl.ps1"
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo [ERROR] Download failed! Check your internet connection.
+    echo.
     pause
-    exit /b 1
+    goto :menu
 )
 
 if not exist "%TEMP%\cloudmesh.zip" (
     echo [ERROR] Download failed! Check your internet connection.
+    echo.
     pause
-    exit /b 1
+    goto :menu
 )
 
 echo [2/2] Extracting files...
@@ -85,10 +226,9 @@ echo $out = Join-Path $env:TEMP 'cloudmesh_extract' >> "%TEMP%\cm_ex.ps1"
 echo if (Test-Path $out) { Remove-Item -Recurse -Force $out } >> "%TEMP%\cm_ex.ps1"
 echo Expand-Archive -Path $zip -DestinationPath $out -Force >> "%TEMP%\cm_ex.ps1"
 echo $d = Get-ChildItem -Path $out -Directory ^| Select-Object -First 1 >> "%TEMP%\cm_ex.ps1"
-echo $cloudmeshDest = '%CLOUDMESH_DIR%' >> "%TEMP%\cm_ex.ps1"
-echo Copy-Item -Path (Join-Path $d.FullName 'cloudmesh\*') -Destination $cloudmeshDest -Recurse -Force >> "%TEMP%\cm_ex.ps1"
-echo $nodeDest = '%CLOUDMESH_DIR%\node' >> "%TEMP%\cm_ex.ps1"
-echo Copy-Item -Path (Join-Path $d.FullName 'cloudmesh\node\*') -Destination $nodeDest -Recurse -Force >> "%TEMP%\cm_ex.ps1"
+echo $destPath = '%CLOUDMESH_DIR%' >> "%TEMP%\cm_ex.ps1"
+echo if (Test-Path $destPath) { Remove-Item -Recurse -Force $destPath } >> "%TEMP%\cm_ex.ps1"
+echo Copy-Item -Path (Join-Path $d.FullName 'cloudmesh') -Destination $destPath -Recurse -Force >> "%TEMP%\cm_ex.ps1"
 echo Remove-Item -Recurse -Force $out >> "%TEMP%\cm_ex.ps1"
 echo Remove-Item -Force $zip >> "%TEMP%\cm_ex.ps1"
 
@@ -99,46 +239,60 @@ del "%TEMP%\cm_ex.ps1" 2>nul
 
 if not exist "%CLOUDMESH_DIR%\main.py" (
     echo [ERROR] Extract failed!
+    echo.
     pause
-    exit /b 1
+    goto :menu
 )
 
 echo. > "%CLOUDMESH_DIR%\core\__init__.py"
 echo [OK] Download complete!
 echo.
 
-:skip_download
+:: Restore config if update
+if "!SKIP_SETUP!"=="0" (
+    if exist "%BACKUP_DIR%\.node_keys.json" (
+        copy /Y "%BACKUP_DIR%\.node_keys.json" "%CLOUDMESH_DIR%\" >nul
+        echo [OK] Config restored
+    )
+    if exist "%BACKUP_DIR%\cloudmesh.json" (
+        copy /Y "%BACKUP_DIR%\cloudmesh.json" "%INSTALL_DIR%\" >nul
+    )
+    if exist "%BACKUP_DIR%" rmdir /s /q "%BACKUP_DIR%"
+)
+
+goto :setup_all
 
 :: ============================================
-:: STEP 3: Node Agent Installation
+:: FULL SETUP
 :: ============================================
+:setup_all
+
 echo ============================================
 echo    Installing CloudMesh Node...
 echo ============================================
 echo.
 
-:: --- Check Python ---
+:: Check Python
 echo [1/6] Checking Python...
 
 python --version >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
+if !ERRORLEVEL! EQU 0 (
     for /f "tokens=2" %%v in ('python --version 2^>^&1') do echo [OK] Python found: %%v
     goto :py_ok
 )
 
 python3 --version >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
+if !ERRORLEVEL! EQU 0 (
     for /f "tokens=2" %%v in ('python3 --version 2^>^&1') do echo [OK] Python3 found: %%v
     goto :py_ok
 )
 
 py --version >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
+if !ERRORLEVEL! EQU 0 (
     for /f "tokens=2" %%v in ('py --version 2^>^&1') do echo [OK] Python (py) found: %%v
     goto :py_ok
 )
 
-:: Check common install paths
 for %%p in (
     "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
@@ -148,7 +302,7 @@ for %%p in (
     "C:\Python310\python.exe"
 ) do (
     if exist %%p (
-        set "PATH=%%~dp0;%PATH%"
+        set "PATH=%%~dp0;!PATH!"
         echo [OK] Python found: %%p
         goto :py_ok
     )
@@ -156,35 +310,34 @@ for %%p in (
 
 echo [INFO] Python not found. Installing...
 winget --version >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
+if !ERRORLEVEL! EQU 0 (
     winget install Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements
     goto :refresh_path
 )
 choco --version >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
+if !ERRORLEVEL! EQU 0 (
     choco install python -y
     goto :refresh_path
 )
 scoop --version >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
+if !ERRORLEVEL! EQU 0 (
     scoop install python
     goto :refresh_path
 )
 echo [ERROR] Python not found and cannot auto-install.
 echo [INFO] Please install Python manually from: https://www.python.org/downloads/
-echo [INFO] Make sure "Add Python to PATH" is checked!
 start https://www.python.org/downloads/
 pause
 exit /b 1
 
 :refresh_path
-set PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python312\Scripts\
-set PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python312\
-set PATH=%PATH%;C:\Python312\
-set PATH=%PATH%;C:\Python312\Scripts\
+set PATH=!PATH!;%LOCALAPPDATA%\Programs\Python\Python312\Scripts\
+set PATH=!PATH!;%LOCALAPPDATA%\Programs\Python\Python312\
+set PATH=!PATH!;C:\Python312\
+set PATH=!PATH!;C:\Python312\Scripts\
 
 python --version >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo [ERROR] Python installation failed. Please install manually.
     start https://www.python.org/downloads/
     pause
@@ -193,29 +346,25 @@ if %ERRORLEVEL% NEQ 0 (
 
 :py_ok
 
-:: --- Install psutil ---
 echo [2/6] Installing node dependencies...
 python -m pip install --user psutil >nul 2>&1
 echo [OK] Dependencies installed
 
-:: --- Create node directory ---
 echo [3/6] Creating node directory...
 if not exist "%NODE_DIR%" mkdir "%NODE_DIR%"
 if not exist "%NODE_DIR%\logs" mkdir "%NODE_DIR%\logs"
 if not exist "%NODE_DIR%\data" mkdir "%NODE_DIR%\data"
 
-:: --- Install node agent ---
 echo [4/6] Installing CloudMesh Node agent...
 set NODE_SOURCE=%CLOUDMESH_DIR%\node\cloudmesh_node.py
-if exist "%NODE_SOURCE%" (
-    copy /Y "%NODE_SOURCE%" "%NODE_DIR%\cloudmesh_node.py" >nul
+if exist "!NODE_SOURCE!" (
+    copy /Y "!NODE_SOURCE!" "%NODE_DIR%\cloudmesh_node.py" >nul
     echo [OK] Node agent installed
 ) else (
-    echo [ERROR] cloudmesh_node.py not found
-    exit /b 1
+    echo [WARNING] cloudmesh_node.py not found, skipping node
+    goto :controller_setup
 )
 
-:: --- Create node helper scripts ---
 echo [5/6] Creating node scripts...
 
 (
@@ -238,7 +387,6 @@ echo python cloudmesh_node.py status
 
 echo [OK] Node scripts created
 
-:: --- Print node info ---
 echo [6/6] Node setup complete!
 echo.
 set AUTH_KEY=N/A
@@ -251,22 +399,19 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4" ^| findstr /v 
 )
 
 echo  [OK] Node Location: %NODE_DIR%
-echo  [OK] Auth Key: %AUTH_KEY%
+echo  [OK] Auth Key: !AUTH_KEY!
 echo.
 echo  === Add from Controller ===
-echo  cm node add -n %COMPUTERNAME% -H %IP_ADDRESS% -p 9999 -k %AUTH_KEY%
+echo  cm node add -n %COMPUTERNAME% -H !IP_ADDRESS! -p 9999 -k !AUTH_KEY!
 echo.
 
-:: Ask to start node now
 set /p START_NODE="Start node now? (y/n): "
-if /i "%START_NODE%"=="y" (
+if /i "!START_NODE!"=="y" (
     call "%NODE_DIR%\start.bat"
 )
 echo.
 
-:: ============================================
-:: STEP 4: Controller Setup
-:: ============================================
+:controller_setup
 echo ============================================
 echo    CloudMesh Controller Setup
 echo ============================================
@@ -282,12 +427,7 @@ if not exist "%VENV_PYTHON%" (
 )
 echo.
 
-:: ============================================
-:: STEP 5: Create cm shortcut
-:: ============================================
 echo [INFO] Creating cm shortcut...
-
-set CM_BAT=%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\cm.bat
 
 (
 echo @echo off
@@ -304,30 +444,26 @@ echo "%%VENV_PYTHON%%" "%%CLOUDMESH_DIR%%\main.py" %%*
 echo [OK] cm command available!
 echo.
 
-:: ============================================
-:: DONE
-:: ============================================
 echo ============================================
 echo    CloudMesh Installed Successfully!
 echo ============================================
 echo.
 echo === Quick Start ===
-echo   cm --help           # Show all commands
-echo   cm interactive      # Interactive TUI
-echo   cm version          # Show version
-echo   cm ping             # Test connections
+echo   cm --help              # Show all commands
+echo   cm interactive         # Interactive TUI
+echo   cm version             # Show version
+echo   cm ping                # Test connections
 echo   cm discover 192.168.1  # Scan network
-echo   cm bench            # Benchmark
+echo   cm bench               # Benchmark
 echo.
-echo === Node Commands ===
-echo   Start:    %NODE_DIR%\start.bat
-echo   Status:   %NODE_DIR%\status.bat
-echo   Stop:     %NODE_DIR%\stop.bat
-echo.
-echo === Files Installed ===
+echo === Files ===
 echo   Program:  %CLOUDMESH_DIR%
 echo   Node:     %NODE_DIR%
 echo   Shortcut: %CM_BAT%
 echo.
-echo Usage: cm [command] [options]
-echo.
+pause
+exit /b 0
+
+:do_exit
+echo Goodbye!
+exit /b 0
