@@ -5,22 +5,23 @@ Connect multiple devices and servers into one unified resource pool. Monitor, ma
 ## Quick Start
 
 ### Windows
-```powershell
-cm_for-windows.bat
-```
+1. Download `cm_for-windows.bat` from this repo
+2. Double-click to run it
+3. Follow the installer menu
 
-### Linux / macOS
+### Linux
+1. Download `cm_for-linux.sh` from this repo
+2. Run these commands:
 ```bash
 chmod +x cm_for-linux.sh
 ./cm_for-linux.sh
 ```
 
-### Shortcut (Windows)
-After first install, use `cm` from anywhere:
-```powershell
-cm --help
-cm monitor --local
-cm interactive
+### After Installation
+```bash
+cm --help              # Show all 48 commands
+cm interactive         # Interactive TUI menu
+cm monitor --local     # Monitor this machine
 ```
 
 ---
@@ -433,10 +434,17 @@ cm map                          # Show all devices
 ## Installation Options
 
 ### Fresh Install
-Run the installer for the first time - it sets up everything automatically.
+- **Windows**: Download `cm_for-windows.bat` and run it
+- **Linux**: Download `cm_for-linux.sh`, run `chmod +x cm_for-linux.sh && ./cm_for-linux.sh`
+
+The installer will:
+1. Download all files from GitHub automatically
+2. Check and install Python if missing
+3. Setup node agent
+4. Create controller environment
 
 ### Update
-If already installed, run the installer again and choose **3. Update**:
+Run the installer again and choose **3. Update**:
 - Keeps your auth keys and server list
 - Updates Python code and dependencies
 
@@ -455,7 +463,7 @@ Choose **1. Uninstall** from the installer menu:
 
 ### Method 1: Local Install (same network)
 ```bash
-# Run installer on the target device
+# Download cm_for-linux.sh on the target device
 chmod +x cm_for-linux.sh
 ./cm_for-linux.sh
 ```
