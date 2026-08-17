@@ -1,378 +1,240 @@
+<div align="center">
+
 # CloudMesh
 
-Connect multiple devices and servers into one unified resource pool. Monitor, manage, and distribute workloads from a central controller.
+### One Console to Control Them All
+
+Connect multiple devices and servers into one unified resource pool.
+Monitor, manage, and distribute workloads from a single terminal.
+
+[![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)]()
+[![Commands](https://img.shields.io/badge/Commands-48-orange?style=for-the-badge)]()
+[![Stars](https://img.shields.io/github/stars/MrAli88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/MrAli88708/CloudMesh/stargazers)
+
+<br>
+
+```
+ __  __           _        ____
+|  \/  | ___  ___| |__    / ___|___  _ __ ___
+| |\/| |/ _ \/ __| '_ \  | |   / _ \| '__/ _ \
+| |  | |  __/\__ \ | | | | |__| (_) | | |  __/
+|_|  |_|\___||___/_| |_|  \____\___/|_|  \___|
+```
+
+**48 commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry**
+
+</div>
+
+---
+
+## Why CloudMesh?
+
+Managing multiple servers shouldn't mean juggling 10 SSH windows. CloudMesh gives you **one command** to control everything.
+
+| Problem | CloudMesh Solution |
+|---------|-------------------|
+| SSH into each server manually | `cm run "command"` - run on all servers at once |
+| No visibility into resource usage | `cm monitor` - live dashboard for all nodes |
+| GPU servers hard to manage | `cm node gpu` - GPU telemetry from any node |
+| No way to distribute work | `cm slice` - auto-slice tasks across servers by resources |
+| Miss server alerts | `cm notify` - Telegram/Discord alerts |
+
+---
 
 ## Quick Start
 
 ### Windows
-1. Download `cm_for-windows.bat` from this repo
-2. Double-click to run it
-3. Follow the installer menu
+1. Download [`cm_for-windows.bat`](cm_for-windows.bat) from this repo
+2. Double-click to run
+3. Done! Use `cm --help` to see all commands
 
 ### Linux
-1. Download `cm_for-linux.sh` from this repo
-2. Run these commands:
 ```bash
-chmod +x cm_for-linux.sh
-./cm_for-linux.sh
+# Download and run - that's it
+curl -sL https://raw.githubusercontent.com/MrAli88708/CloudMesh/main/cm_for-linux.sh -o cm.sh
+chmod +x cm.sh && ./cm.sh
 ```
 
-### After Installation
+### First Steps
 ```bash
-cm --help              # Show all 48 commands
+cm --help              # See all 48 commands
 cm interactive         # Interactive TUI menu
 cm monitor --local     # Monitor this machine
+cm discover 192.168.1  # Scan your network for nodes
 ```
-
----
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| **Server Management** | Add servers via SSH, monitor resources |
-| **Cloud Nodes** | Lightweight TCP agents on any device |
-| **GPU Telemetry** | Monitor GPU usage, VRAM, temperature |
-| **Async Jobs** | Run background tasks, check status later |
-| **Task Slicer** | Distribute files across servers by resources |
-| **Auto-Sync** | Sync local files to servers automatically |
-| **Live Dashboard** | Real-time monitoring with Rich TUI |
-| **File Transfer** | Upload/download between controller and servers |
-| **Directory Sync** | Keep directories in sync across servers |
-| **Package Deploy** | Install packages on all servers at once |
-| **Alerts** | Set threshold alerts for CPU/RAM/Disk |
-| **Device Groups** | Group servers and run commands on groups |
-| **Failover** | Auto-retry on different server if one fails |
-| **Backups** | Manage backups with rotation and verification |
-| **Command History** | Log and search all executed commands |
-| **Ping** | Quick ping all servers and nodes |
-| **Uptime** | Show uptime of all connected servers |
-| **Top Processes** | View top processes by CPU/RAM usage |
-| **Disk Detail** | Detailed disk usage per mount point |
-| **Network Info** | Show network interfaces on servers |
-| **Who** | Show who's logged in on servers |
-| **Find Files** | Search for files on remote servers |
-| **Server Logs** | View recent system logs from servers |
-| **Config Export/Import** | Export and import configuration |
-| **File Encryption** | Encrypt/decrypt files with Fernet |
-| **Speed Test** | Network latency test between servers |
-| **Subnet Scan** | Scan subnet for CloudMesh nodes |
-| **Cleanup** | Remove old logs, backups, and temp files |
-| **Usage Report** | Generate JSON report of all resources |
-| **Command Aliases** | Create shortcuts for frequent commands |
-| **Version Info** | Show version and platform details |
-| **Auto-Discovery** | Scan network for CloudMesh nodes |
-| **Benchmark** | CPU/RAM/Disk performance testing |
-| **Schedule** | Schedule recurring commands |
-| **Notifications** | Telegram/Discord alert integration |
-| **REST API** | HTTP API for integrations |
-| **Config Profiles** | Save/load multiple configurations |
-| **Security Audit** | Check server security settings |
-| **Quick SSH** | Generate SSH commands instantly |
-| **Templates** | Reusable command templates with variables |
-| **Network Map** | Visual overview of all devices |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  CloudMesh                          │
-│                                                     │
-│  ┌──────────────┐         ┌──────────────┐         │
-│  │  Controller  │ ←─SSH─→ │    Server    │         │
-│  │  (your PC)   │         │  (cloud VM)  │         │
-│  └──────┬───────┘         └──────────────┘         │
-│         │                                           │
-│         │ ←─TCP:9999─→ ┌──────────────┐            │
-│         │               │  Node Agent  │            │
-│         │               │  (any device)│            │
-│         │               └──────────────┘            │
-│         │                                           │
-│         │ ←─TCP:9999─→ ┌──────────────┐            │
-│         └──────────────→│  Node Agent  │            │
-│                         │  (GPU server)│            │
-│                         └──────────────┘            │
-└─────────────────────────────────────────────────────┘
+                        +-----------------+
+                        |   YOUR LAPTOP   |
+                        |   (Controller)  |
+                        +--------+--------+
+                                 |
+                  +--------------+--------------+
+                  |              |              |
+            SSH |         TCP 9999 |      TCP 9999 |
+                  |              |              |
+          +-------v--+    +-----v----+   +-----v----+
+          |  Linux   |    | Windows  |   |   GPU    |
+          |  Server  |    |  Server  |   |  Server  |
+          +----------+    +----------+   +----------+
 ```
 
-**Two connection methods:**
-- **SSH** - For servers with SSH access (Linux, Windows with OpenSSH)
-- **TCP Node** - Lightweight agent on any device (port 9999)
+**Two ways to connect:**
+- **SSH** - For any server with SSH access
+- **TCP Node** - Lightweight agent (2MB) on any device
 
 ---
 
-## Commands Reference
+## Features
 
-### General
+<details>
+<summary><b>Core - Server Management</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm server add` | Add server via SSH |
+| `cm server list` | List all servers |
+| `cm server test` | Test connection |
+| `cm server info` | Server details |
+| `cm run "cmd"` | Run command on all servers |
+| `cm monitor` | Real-time resource monitoring |
+| `cm dashboard` | Live dashboard |
+
+</details>
+
+<details>
+<summary><b>Cloud Nodes - Lightweight Agents</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm node add` | Add a node |
+| `cm node install` | Remote install via SSH |
+| `cm node monitor` | Monitor node resources |
+| `cm node gpu` | GPU telemetry |
+| `cm node exec` | Execute command on node |
+| `cm node job start` | Start async job |
+| `cm node job status` | Check job status |
+| `cm node dashboard` | Node overview |
+
+</details>
+
+<details>
+<summary><b>Network & Discovery</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm discover` | Scan subnet for nodes |
+| `cm ping` | Ping all servers |
+| `cm scan` | Scan subnet for ports |
+| `cm speed` | Network latency test |
+| `cm network` | Network interfaces |
+| `cm map` | Visual network overview |
+
+</details>
+
+<details>
+<summary><b>System Monitoring</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm monitor` | CPU/RAM/Disk live view |
+| `cm top` | Top processes |
+| `cm disk` | Disk usage per mount |
+| `cm uptime` | System uptime |
+| `cm who` | Logged-in users |
+| `cm logs` | System logs |
+| `cm gpu` | GPU stats |
+
+</details>
+
+<details>
+<summary><b>File Operations</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm transfer` | Upload/download files |
+| `cm sync` | Sync directories |
+| `cm autosync` | Auto-sync folders |
+| `cm find` | Search for files |
+| `cm slice` | Distribute files across servers |
+
+</details>
+
+<details>
+<summary><b>Advanced Features</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm bench` | CPU/RAM/Disk benchmark |
+| `cm schedule` | Recurring commands |
+| `cm notify` | Telegram/Discord alerts |
+| `cm api` | REST API server |
+| `cm audit` | Security audit |
+| `cm template` | Reusable command templates |
+| `cm profile` | Config profiles |
+| `cm alerts` | Threshold alerts |
+
+</details>
+
+<details>
+<summary><b>Utilities</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm encrypt`/`decrypt` | File encryption |
+| `cm export`/`import` | Config backup |
+| `cm cleanup` | Remove old files |
+| `cm report` | Usage report |
+| `cm alias` | Command shortcuts |
+| `cm version` | Version info |
+| `cm history` | Command history |
+
+</details>
+
+---
+
+## Examples
+
+### Add a Server
 ```bash
-cm --help                  # Show all commands
-cm interactive             # Interactive TUI menu
-cm monitor --local         # Monitor this machine
-cm dashboard --live        # Live dashboard
+cm server add -n prod-server -H 192.168.1.100 -u root -k ~/.ssh/id_rsa
+cm server test -n prod-server
 ```
 
-### Server Management (SSH)
+### Monitor Everything
 ```bash
-cm server add -n NAME -H HOST -u USER [-p PORT] [-k KEY]
-cm server remove -n NAME
-cm server list
-cm server test -n NAME
-cm server info -n NAME
+cm monitor           # All servers
+cm monitor -n prod   # Specific server
+cm node gpu          # GPU usage on all nodes
 ```
 
-**Example:**
+### Run Commands Everywhere
 ```bash
-cm server add -n myserver -H 192.168.1.100 -u root -k ~/.ssh/id_rsa
-cm server test -n myserver
-cm monitor -n myserver
+cm run "apt update && apt upgrade -y"        # Update all servers
+cm run "df -h" --best                         # Run on best server
+cm run "docker ps" -s "web,api"              # Specific servers
 ```
 
-### Cloud Nodes (TCP Agent)
+### Distribute Work
 ```bash
-cm node add -n NAME -H HOST [-p PORT] -k AUTH_KEY
-cm node remove -n NAME
-cm node list
-cm node test -n NAME
-cm node info -n NAME
-cm node monitor [-n NAME]
-cm node gpu [-n NAME]
-cm node exec -n NAME "COMMAND"
-cm node install -H HOST -u USER [-k KEY]
-cm node dashboard
-```
+# Split files across GPU servers
+cm slice -f "data_*.csv" -s "gpu1,gpu2,gpu3"
 
-**Example:**
-```bash
-# Install node on remote server
-cm node install -H 192.168.1.100 -u root -k ~/.ssh/id_rsa
-
-# Add the node
-cm node add -n gpu-server -H 192.168.1.100 -p 9999 -k abc123xyz
-
-# Monitor
-cm node monitor -n gpu-server
-cm node gpu -n gpu-server
-```
-
-### Async Jobs
-```bash
-cm node job start -n NAME "COMMAND" [-t TIMEOUT]
-cm node job status -n NAME -j JOB_ID
-cm node job list -n NAME
-cm node job kill -n NAME -j JOB_ID
-```
-
-**Example:**
-```bash
-cm node job start -n gpu-server "python train_model.py" -t 3600
-cm node job status -n gpu-server -j a1b2c3d4e5f6
-cm node job list -n gpu-server
-```
-
-### Task Slicing
-```bash
-cm slice -f "file1,file2,file3" [-s "server1,server2"]
-cm slice -f "*.py" -e "python {file}"
-```
-
-**Example:**
-```bash
-cm slice -f "data1.csv,data2.csv,data3.csv" -s "s1,s2"
-cm slice -f "model_*.py" -e "python {file}" -s "gpu1,gpu2"
-```
-
-### Auto-Sync
-```bash
-cm autosync -l LOCAL_DIR --to-server SERVER [--remote-to REMOTE_PATH]
-```
-
-**Example:**
-```bash
-cm autosync -l ./myproject --to-server gpu-server --remote-to /opt/project
-```
-
-### Run Commands
-```bash
-cm run "COMMAND"                    # Run on all servers
-cm run "COMMAND" --best             # Run on best server
-cm run "COMMAND" -s "s1,s2"        # Run on specific servers
-```
-
-### File Transfer
-```bash
-cm transfer -f LOCAL_FILE --to-server SERVER [-r REMOTE_PATH]
-cm transfer --from-server SERVER -r REMOTE_FILE [-f LOCAL_PATH]
-cm transfer --from-server S1 --to-server S2 -r REMOTE_PATH
-```
-
-### Directory Sync
-```bash
-cm sync -l LOCAL_DIR --to-server SERVER [--remote-to REMOTE_PATH]
-cm sync --from-server SERVER --remote-from REMOTE_DIR [-l LOCAL_DIR]
-```
-
-### Deploy Packages
-```bash
-cm deploy -i PACKAGE_NAME          # Install on all servers
-cm deploy -c PACKAGE_NAME          # Check if installed
-cm deploy -s "SCRIPT" -n SERVER    # Run script on server
-```
-
-### Alerts
-```bash
-cm alerts -a "NAME,METRIC,THRESHOLD"   # Add rule
-cm alerts --list-rules                   # List rules
-cm alerts --check                        # Check now
-cm alerts --history                      # View history
-```
-
-**Example:**
-```bash
-cm alerts -a "high-cpu,cpu,80"
-cm alerts -a "low-disk,disk,90,myserver"
-```
-
-### Groups
-```bash
-cm group create -n NAME
-cm group add -g GROUP -d DEVICE
-cm group run -g GROUP "COMMAND"
-cm group list
-```
-
-### History
-```bash
-cm history --record              # Record snapshot
-cm history -n SERVER             # View history
-cm history --stats SERVER        # View stats
-```
-
-### Backup
-```bash
-cm backup run -n SERVER
-cm backup list -n SERVER
-cm backup restore -n SERVER -j JOB_ID
-cm backup verify -n SERVER -j JOB_ID
-```
-
-### Ping All
-```bash
-cm ping                    # Ping all servers and nodes
-cm ping --no-nodes         # Ping servers only
-```
-
-### Uptime
-```bash
-cm uptime                  # All servers
-cm uptime -n server1       # Specific server
-```
-
-### Top Processes
-```bash
-cm top                     # Top 5 by CPU on all servers
-cm top -n server1          # Specific server
-cm top --sort ram -l 10    # Top 10 by RAM
-```
-
-### Disk Detail
-```bash
-cm disk                    # All servers
-cm disk -n server1         # Specific server
-```
-
-### Network
-```bash
-cm network                 # All servers
-cm network -n server1      # Specific server
-```
-
-### Who (Logged In)
-```bash
-cm who                     # All servers
-cm who -n server1          # Specific server
-```
-
-### Find Files
-```bash
-cm find -n server1 "*.log"
-cm find -n server1 -p /var/log "*.conf"
-```
-
-### Server Logs
-```bash
-cm logs -n server1
-cm logs -n server1 -f /var/log/auth.log -l 50
-```
-
-### Export/Import Config
-```bash
-cm export -f backup.json
-cm import -f backup.json
-```
-
-### Encrypt/Decrypt
-```bash
-cm encrypt secret.txt
-cm decrypt secret.txt.encrypted -k YOUR_KEY
-```
-
-### Speed Test
-```bash
-cm speed                   # All servers
-cm speed -n server1 -t 8.8.8.8 -c 5
-```
-
-### Scan Subnet
-```bash
-cm scan 192.168.1.0/24
-cm scan 10.0.0.0/24 --port 9999
-```
-
-### Cleanup
-```bash
-cm cleanup                 # Remove files older than 7 days
-cm cleanup -d 30           # Remove files older than 30 days
-```
-
-### Report
-```bash
-cm report                  # Save to cloudmesh_report.json
-cm report -f myreport.json
-```
-
-### Aliases
-```bash
-cm alias -n ls --cmd "ls -la"
-cm alias -l                # List all aliases
-cm alias -r ls             # Remove alias
-```
-
-### Version
-```bash
-cm version
+# Start async job
+cm node job start -n gpu-server "python train.py" -t 3600
+cm node job status -n gpu-server -j abc123
 ```
 
 ### Auto-Discovery
 ```bash
-cm discover 192.168.1.0          # Scan subnet
+cm discover 192.168.1.0          # Find nodes on subnet
 cm discover 10.0.0 --port 9999   # Custom port
-```
-
-### Benchmark
-```bash
-cm bench                         # Local benchmark
-cm bench -s server1              # Remote server
-```
-
-### Schedule
-```bash
-cm schedule add -n monitor "cm ping" -i 300    # Every 5 min
-cm schedule add -n cleanup "cm cleanup -d 7" -i 86400  # Daily
-cm schedule list                               # View all
-cm schedule toggle -n monitor                  # Enable/disable
-cm schedule remove -n monitor                  # Delete
 ```
 
 ### Notifications
@@ -380,220 +242,169 @@ cm schedule remove -n monitor                  # Delete
 cm notify setup-telegram --token BOT_TOKEN --chat-id CHAT_ID
 cm notify setup-discord --webhook WEBHOOK_URL
 cm notify send "Server is down!"
-cm notify status
 ```
 
-### REST API
+### Schedule Tasks
 ```bash
-cm api                          # Start on port 8080
-cm api --port 9090              # Custom port
-
-# Endpoints:
-# GET /api/status
-# GET /api/servers
-# GET /api/nodes
-# GET /api/exec/{server}?cmd={command}
-```
-
-### Config Profiles
-```bash
-cm profile list                 # List profiles
-cm profile save -n production   # Save current config
-cm profile load -n production   # Load profile
-cm profile delete -n production # Delete profile
-```
-
-### Security Audit
-```bash
-cm audit                        # Audit all servers
-cm audit -n server1             # Audit specific server
-```
-
-### Quick SSH
-```bash
-cm ssh -n server1               # Generate SSH command
-cm ssh -H 192.168.1.100 -u root
-```
-
-### Templates
-```bash
-cm template add -n deploy "rsync -avz {src} {user}@{host}:{dst}" -d "Deploy files"
-cm template add -n update "ssh {user}@{host} 'apt update && apt upgrade -y'"
-cm template list
-cm template run -n deploy -p "src=./dist,host=server1,user=root,dst=/opt/app"
-cm template remove -n deploy
-```
-
-### Network Map
-```bash
-cm map                          # Show all devices
+cm schedule add -n monitor "cm ping" -i 300           # Every 5 min
+cm schedule add -n cleanup "cm cleanup -d 7" -i 86400  # Daily
+cm schedule list                                        # View all
 ```
 
 ---
 
 ## Installation Options
 
-### Fresh Install
-- **Windows**: Download `cm_for-windows.bat` and run it
-- **Linux**: Download `cm_for-linux.sh`, run `chmod +x cm_for-linux.sh && ./cm_for-linux.sh`
+| Option | What it does |
+|--------|-------------|
+| **Fresh Install** | Download installer, double-click, done |
+| **Update** | Run installer again, choose "Update" |
+| **Factory Reset** | Choose "Factory Reset" - wipes everything |
+| **Uninstall** | Choose "Uninstall" - removes completely |
 
-The installer will:
-1. Download all files from GitHub automatically
-2. Check and install Python if missing
-3. Setup node agent
-4. Create controller environment
-
-### Update
-Run the installer again and choose **3. Update**:
-- Keeps your auth keys and server list
-- Updates Python code and dependencies
-
-### Factory Reset
-Choose **2. Factory Reset** from the installer menu:
-- Deletes all data (keys, config, backups)
-- Reinstalls everything from scratch
-
-### Uninstall
-Choose **1. Uninstall** from the installer menu:
-- Removes everything completely
+The installer automatically:
+- Downloads all files from GitHub
+- Installs Python if missing
+- Sets up node agent
+- Creates virtual environment
+- Installs all dependencies
 
 ---
 
 ## Node Installation
 
-### Method 1: Local Install (same network)
+### On the Same Network
 ```bash
-# Download cm_for-linux.sh on the target device
 chmod +x cm_for-linux.sh
 ./cm_for-linux.sh
 ```
 
-### Method 2: Remote Install (via SSH)
+### Remote (via SSH from Controller)
 ```bash
-cm node install -H SERVER_IP -u USER -k SSH_KEY
+cm node install -H SERVER_IP -u root -k ~/.ssh/id_rsa
 ```
 
-### Method 3: Manual Install
-```bash
-# Copy the installer to the target device
-scp cm_for-linux.sh user@server:/tmp/
-ssh user@server "chmod +x /tmp/cm_for-linux.sh && /tmp/cm_for-linux.sh"
+### What Gets Installed
+```
+~/.cloudmesh-node/
+  cloudmesh_node.py    # Node agent
+  .node_key            # Auth key
+  start.sh             # Start script
+  stop.sh              # Stop script
+  status.sh            # Status script
+  cloudmesh-node.service  # Systemd service (auto-created)
 ```
 
 ---
 
-## Configuration
+## Project Structure
 
-### Config Files
-| File | Location | Description |
-|------|----------|-------------|
-| `.node_keys.json` | `cloudmesh/` | Node connection keys |
-| `cloudmesh.json` | `~/.cloudmesh/` | Server configurations |
-| `.node_key` | `~/.cloudmesh-node/` | Node authentication key |
-
-### Security
-- Auth keys are auto-generated (32-char hex)
-- SSH keys preferred over passwords
-- Config encrypted with Fernet (AES-128-CBC)
-- Auto-backups before config changes
-- Path traversal protection on file operations
-
----
-
-## Supported Platforms
-
-| Platform | Controller | Node Agent |
-|----------|------------|------------|
-| Windows  | Yes | Yes |
-| Linux    | Yes | Yes |
-| macOS    | Yes | Yes (with WSL) |
-
-### Package Managers (for auto-installing Python)
-| Manager | Platform |
-|---------|----------|
-| winget | Windows 10/11 |
-| chocolatey | Windows |
-| scoop | Windows |
-| apt | Ubuntu/Debian |
-| yum/dnf | CentOS/RHEL/Fedora |
-| pacman | Arch |
-| zypper | openSUSE |
-| apk | Alpine |
-
-### Linux Node Setup
-```bash
-# Install dependencies
-sudo apt install python3 python3-pip
-
-# Run the installer
-chmod +x cm_for-linux.sh
-./cm_for-linux.sh
-
-# Start the node
-~/.cloudmesh-node/start.sh
+```
+cloudmesh/
+  main.py              # CLI entry point (48 commands)
+  requirements.txt     # Python dependencies
+  README.md            # This file
+  core/
+    server.py          # SSH server management
+    monitor.py         # Resource monitoring
+    scheduler.py       # Task scheduling
+    node_client.py     # TCP node communication
+    jobs.py            # Async job system
+    gpu.py             # GPU telemetry
+    features.py        # 20 utility features
+    advanced.py        # 10 advanced features
+    security.py        # Encryption & audit
+    transfer.py        # File transfer
+    sync.py            # Directory sync
+    deploy.py          # Package deployment
+    alerts.py          # Threshold alerts
+    groups.py          # Device groups
+    dashboard.py       # Live dashboard
+    tui.py             # Interactive TUI
+    history.py         # Command history
+    cmdlog.py          # Command logging
+    service.py         # Service management
+  node/
+    cloudmesh_node.py  # Standalone node agent
 ```
 
 ---
 
 ## Requirements
 
-### Controller
-- Python 3.8+
-- SSH client (for server connections)
-
-### Node Agent
-- Python 3.8+ (auto-installed if missing)
-- psutil (optional, for detailed metrics)
+| Component | Requirement |
+|-----------|------------|
+| Controller | Python 3.8+, SSH client |
+| Node Agent | Python 3.8+ (auto-installed) |
+| OS | Windows 10+, Linux (Ubuntu/Debian/CentOS/Arch) |
 
 ### Dependencies (auto-installed)
-- rich - Terminal UI
-- paramiko - SSH connections
-- psutil - System monitoring
-- cryptography - Encryption
+- `rich` - Beautiful terminal UI
+- `paramiko` - SSH connections
+- `psutil` - System monitoring
+- `cryptography` - File encryption
 
 ---
 
 ## Troubleshooting
 
-### "ModuleNotFoundError: No module named 'rich'"
-```powershell
-# Reinstall dependencies
-%USERPROFILE%\CloudMesh\venv\Scripts\pip.exe install -r cloudmesh\requirements.txt
-```
+<details>
+<summary><b>Download fails from installer</b></summary>
 
-### "Connection refused" when connecting to node
+Make sure you have internet access. The installer downloads from GitHub. If behind a proxy, download the files manually from this repo.
+</details>
+
+<details>
+<summary><b>Node not connecting</b></summary>
+
 ```bash
-# Make sure node is running
+# Check node is running
 ~/.cloudmesh-node/status.sh
 
-# If not running, start it
+# Restart node
 ~/.cloudmesh-node/start.sh
-```
 
-### "Auth failed" error
-```bash
-# Check the auth key on the node
-cat ~/.cloudmesh-node/.node_key
-
-# Re-add the node with the correct key
-cm node add -n NAME -H HOST -p 9999 -k CORRECT_KEY
-```
-
-### Node agent not starting
-```bash
-# Check logs
-cat ~/.cloudmesh-node/cloudmesh_node.log
-
-# Check if port is in use
+# Check port is open
 netstat -tlnp | grep 9999
 ```
+</details>
+
+<details>
+<summary><b>Auth failed error</b></summary>
+
+```bash
+# Get the key from the node
+cat ~/.cloudmesh-node/.node_key
+
+# Re-add with correct key
+cm node add -n NAME -H HOST -p 9999 -k YOUR_KEY
+```
+</details>
+
+<details>
+<summary><b>Module not found errors</b></summary>
+
+```bash
+# Reinstall dependencies
+cm version    # Shows Python path
+pip install -r requirements.txt
+```
+</details>
 
 ---
 
 ## License
 
-MIT
+MIT License - Free to use, modify, and distribute.
 
 ---
 
-## Make And Build By MRSX PRO
+<div align="center">
+
+**Made with passion by MRSX PRO**
+
+Star this repo if CloudMesh helps you! It motivates us to keep building.
+
+[Star on GitHub](https://github.com/MrAli88708/CloudMesh)
+
+</div>
