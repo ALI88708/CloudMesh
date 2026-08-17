@@ -58,7 +58,7 @@ class ServerManager:
         known_hosts_file = os.path.expanduser("~/.ssh/known_hosts")
         if os.path.exists(known_hosts_file):
             client.load_system_host_keys(known_hosts_file)
-        client.set_missing_host_key_policy(paramiko.WarningPolicy())
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
         connect_kwargs = {
             "hostname": info["host"],

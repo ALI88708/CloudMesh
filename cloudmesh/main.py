@@ -1675,7 +1675,9 @@ def cmd_api(args):
     keys = _load_node_keys()
     api = CloudMeshAPI(server_mgr, monitor, keys, args.port)
     port = api.start()
-    console.print(f"[green]API running on http://0.0.0.0:{port}[/]")
+    console.print(f"[green]API running on http://127.0.0.1:{port}[/]")
+    console.print(f"[bold yellow]API Key: {api.api_key}[/]")
+    console.print("[dim]Use header: X-Api-Key: <key>[/]")
     console.print("[dim]Endpoints: /api/status, /api/servers, /api/nodes, /api/exec/{server}?cmd={command}[/]")
     console.print("[dim]Press Ctrl+C to stop[/]")
     try:

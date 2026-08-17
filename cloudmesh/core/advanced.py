@@ -263,19 +263,26 @@ class NotifyManager:
 
 # === 5. REST API ===
 
+import secrets
+
 class CloudMeshAPI:
-    def __init__(self, server_mgr=None, monitor=None, node_keys=None, port=8080):
+    def __init__(self, server_mgr=None, monitor=None, node_keys=None, port=8080, api_key=None):
         self.server_mgr = server_mgr
         self.monitor = monitor
         self.node_keys = node_keys or {}
         self.port = port
         self._running = False
+        self.api_key = api_key or secrets.token_hex(32)
 
     def _handle(self, request):
         import urllib.parse
         parsed = urllib.parse.urlparse(request.path)
         path = parsed.path.rstrip("/")
         params = urllib.parse.parse_qs(parsed.query)
+
+        api_key = request.headers.get("X-Api-Key", "")
+        if not secrets.compare_digest(api_key, self.api_key):
+            return {"error": "Unauthorized"}, 401
 
         if path == "/api/status":
             return {"status": "ok", "version": "1.0.0", "time": datetime.now().isoformat()}
@@ -290,7 +297,13 @@ class CloudMeshAPI:
                         servers[name] = None
             return {"servers": servers}
         elif path == "/api/nodes":
-            return {"nodes": self.node_keys}
+            safe_nodes = {}
+            for name, info in self.node_keys.items():
+                safe_nodes[name] = {
+                    "host": info.get("host", ""),
+                    "port": info.get("port", 9999),
+                }
+            return {"nodes": safe_nodes}
         elif path.startswith("/api/exec/"):
             server = path.split("/")[-1]
             cmd = params.get("cmd", [""])[0]
@@ -307,13 +320,24 @@ class CloudMeshAPI:
 
     def start(self):
         api = self
+        _api_key = self.api_key
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                api_key = self.headers.get("X-Api-Key", "")
+                if not secrets.compare_digest(api_key, _api_key):
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "Unauthorized"}).encode())
+                    return
                 result = api._handle(self)
-                self.send_response(200)
+                status = 200
+                if isinstance(result, tuple):
+                    status = result[1]
+                    result = result[0]
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(json.dumps(result, indent=2).encode())
 
@@ -321,7 +345,7 @@ class CloudMeshAPI:
                 pass
 
         self._running = True
-        server = http.server.HTTPServer(("0.0.0.0", self.port), Handler)
+        server = http.server.HTTPServer(("127.0.0.1", self.port), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         return self.port

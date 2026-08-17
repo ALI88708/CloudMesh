@@ -146,22 +146,31 @@ def get_metrics():
 
 def _safe_path(user_path):
     try:
-        resolved = Path(user_path).resolve()
-        if ".." in user_path.split("/") or ".." in user_path.split("\\"):
-            return None
-        allowed = BASE_DIR / "data"
+        allowed = (BASE_DIR / "data").resolve()
         allowed.mkdir(parents=True, exist_ok=True)
-        if not str(resolved).startswith(str(allowed.resolve())):
+        resolved = Path(user_path).resolve()
+        try:
+            resolved.relative_to(allowed)
+        except ValueError:
             return None
+        real_allowed = allowed
+        if os.name != "nt":
+            real_allowed = Path(os.path.realpath(str(allowed)))
+            real_resolved = Path(os.path.realpath(str(resolved)))
+            if not str(real_resolved).startswith(str(real_allowed) + os.sep) and str(real_resolved) != str(real_allowed):
+                return None
         return resolved
     except Exception:
         return None
 
 
 class NodeAgent:
-    def __init__(self, port=DEFAULT_PORT, auth_key=None):
+    def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0", tls_cert=None, tls_key=None):
         self.port = port
         self.auth_key = auth_key or get_or_create_key()
+        self.bind_host = bind_host
+        self.tls_cert = tls_cert
+        self.tls_key = tls_key
         self._running = False
         self._jobs = {}
         self._lock = threading.Lock()
@@ -353,10 +362,16 @@ class NodeAgent:
         PID_FILE.write_text(str(os.getpid()))
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind(("0.0.0.0", self.port))
+        srv.bind((self.bind_host, self.port))
         srv.listen(16)
         srv.settimeout(1)
-        _log(f"Node started on port {self.port}")
+        _log(f"Node started on {self.bind_host}:{self.port}")
+        if self.tls_cert and self.tls_key:
+            import ssl
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(self.tls_cert, self.tls_key)
+            srv = ctx.wrap_socket(srv, server_side=True)
+            _log("TLS enabled")
         if platform.system() != "Windows":
             signal.signal(signal.SIGTERM, lambda s, f: setattr(self, "_running", False))
         while self._running:
@@ -405,7 +420,7 @@ def _is_running(pid):
             return False
 
 
-def cmd_start(port=DEFAULT_PORT):
+def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0", tls_cert=None, tls_key=None):
     existing = _read_pid()
     if existing and _is_running(existing):
         print(f"Already running (PID {existing})")
@@ -414,8 +429,8 @@ def cmd_start(port=DEFAULT_PORT):
         PID_FILE.unlink(missing_ok=True)
     except Exception:
         pass
-    agent = NodeAgent(port=port)
-    print(f"Starting node agent on port {port}...")
+    agent = NodeAgent(port=port, bind_host=bind_host, tls_cert=tls_cert, tls_key=tls_key)
+    print(f"Starting node agent on {bind_host}:{port}...")
     try:
         agent.serve()
     except KeyboardInterrupt:
@@ -465,11 +480,14 @@ def main():
     sub = p.add_subparsers(dest="command")
     start_p = sub.add_parser("start")
     start_p.add_argument("--port", "-p", type=int, default=DEFAULT_PORT)
+    start_p.add_argument("--bind", "-b", default="0.0.0.0")
+    start_p.add_argument("--tls-cert", default=None)
+    start_p.add_argument("--tls-key", default=None)
     sub.add_parser("stop")
     sub.add_parser("status")
     args = p.parse_args()
     if args.command == "start":
-        cmd_start(port=args.port)
+        cmd_start(port=args.port, bind_host=args.bind, tls_cert=args.tls_cert, tls_key=args.tls_key)
     elif args.command == "stop":
         cmd_stop()
     elif args.command == "status":
