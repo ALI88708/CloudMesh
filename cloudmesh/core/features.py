@@ -246,7 +246,7 @@ def remove_alias(name, aliases_file=None):
 
 def get_version():
     return {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",
         "platform": __import__('sys').platform,
     }

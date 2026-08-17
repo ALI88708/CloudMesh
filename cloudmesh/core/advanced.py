@@ -285,12 +285,12 @@ class CloudMeshAPI:
             return {"error": "Unauthorized"}, 401
 
         if path == "/api/status":
-            return {"status": "ok", "version": "1.0.0", "time": datetime.now().isoformat()}
+            return {"status": "ok", "version": "1.1.0", "time": datetime.now().isoformat()}
         elif path == "/api/health":
             return {
                 "status": "healthy",
                 "uptime": "ok",
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "node_count": len(self.node_keys),
                 "api_key_set": bool(self.api_key),
             }
