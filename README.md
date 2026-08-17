@@ -383,12 +383,148 @@ Supports: MySQL, PostgreSQL
 
 ---
 
+## Quick Reference
+
+### Server Management
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm server add -n NAME -H HOST -u USER` | `cm add` | Add server via SSH |
+| `cm server remove -n NAME` | `cm rm` | Remove server |
+| `cm server list` | `cm ls` | List all servers |
+| `cm server test -n NAME` | `cm test` | Test connection |
+| `cm server info -n NAME` | `cm info` | Server details |
+| `cm run "cmd"` | `cm run` | Run on all servers |
+
+### Monitoring
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm monitor` | `cm mon` | CPU/RAM/Disk live view |
+| `cm dashboard` | `cm dash` | Live dashboard |
+| `cm uptime` | `cm up` | System uptime |
+| `cm disk` | `cm df` | Disk usage per mount |
+| `cm network` | `cm net` | Network interfaces |
+| `cm top` | `cm top` | Top processes |
+| `cm who` | `cm who` | Logged-in users |
+
+### Nodes
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm node add -n NAME -H HOST -p 9999 -k KEY` | - | Add node |
+| `cm node remove -n NAME` | `cm rmnode` | Remove node |
+| `cm node install -H HOST -u USER -k KEY` | `cm nodeinstall` | Install node agent |
+| `cm node monitor -n NAME` | `cm monnode` | Monitor node |
+| `cm node gpu -n NAME` | `cm gpunode` | GPU telemetry |
+| `cm node exec -n NAME "cmd"` | `cm exec` | Execute on node |
+| `cm node job start -n NAME "cmd"` | `cm js` | Start async job |
+| `cm node dashboard` | `cm dash` | Node overview |
+
+### Docker
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm docker containers -s SERVER` | `cm dcls` | List containers |
+| `cm docker stats -s SERVER` | `cm dcstats` | Container stats |
+| `cm docker exec CONTAINER "cmd"` | `cm dcexec` | Exec in container |
+| `cm docker logs CONTAINER -s SERVER` | `cm dclogs` | Container logs |
+| `cm docker images -s SERVER` | - | List images |
+| `cm docker cleanup -s SERVER` | - | Cleanup Docker |
+| `cm docker compose PATH -s SERVER` | - | Run docker-compose |
+
+### Firewall
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm firewall status` | `cm fw` | Firewall status |
+| `cm firewall add-rule --port PORT` | `cm fwadd` | Add firewall rule |
+| `cm firewall list-rules` | - | List rules |
+| `cm firewall check-port --port PORT` | - | Check if port open |
+
+### SSL Monitoring
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm ssl check DOMAIN` | `cm sslchk DOMAIN` | Check SSL certificate |
+| `cm ssl check-all` | `cm sslall` | Check all domains |
+| `cm ssl add DOMAIN` | - | Add domain |
+| `cm ssl history` | - | Expiry history |
+
+### Logs
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm logs -n NAME` | `cm log -n NAME` | System logs |
+| `cm logagg search -p PATTERN` | `cm logsearch -p PATTERN` | Search logs |
+| `cm logagg filter -l LEVEL` | - | Filter by level |
+| `cm logagg subscribe -s SOURCE` | - | Tail logs live |
+| `cm logagg sources` | - | List sources |
+
+### File Operations
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm transfer -s SERVER -l LOCAL -r REMOTE` | `cm cp` | Upload/download |
+| `cm sync` | `cm sync` | Sync directories |
+| `cm find -n NAME -p PATH` | `cm find` | Search files |
+
+### Webhooks & Alerts
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm webhooks add --name NAME --url URL` | - | Add webhook |
+| `cm webhooks send MSG` | `cm whsend MSG` | Send message |
+| `cm webhooks test -n NAME` | - | Test webhook |
+| `cm watcher check` | `cm wtchk` | Check watchers |
+
+### ACL & Security
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm acl users` | `cm aclu` | List users |
+| `cm acl add-user -u USER -p PASS -r ROLE` | `cm acladd` | Add user |
+| `cm acl remove-user -u USER` | `cm aclrm` | Remove user |
+| `cm acl roles` | - | List roles |
+
+### Cost & Tunnels
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm cost estimate -p PROVIDER -i INSTANCE` | `cm costest` | Estimate cost |
+| `cm cost compare -i INSTANCE` | - | Compare providers |
+| `cm tunnel add --name NAME --host HOST` | `cm tunadd` | Add tunnel |
+| `cm tunnel start -n NAME` | `cm tunstart` | Start tunnel |
+| `cm tunnel stop -n NAME` | `cm tunstop` | Stop tunnel |
+| `cm tunnel quick --host HOST -l PORT -r PORT` | - | Quick tunnel |
+
+### Database
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm database status -s SERVER` | `cm dbstatus` | Database status |
+| `cm database query -s SERVER "SQL"` | `cm dbq` | Run query |
+| `cm database backup -s SERVER -d DB` | `cm dbbak` | Backup database |
+| `cm database list -s SERVER` | - | List databases |
+
+### Utilities
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm encrypt FILE` | `cm enc FILE` | Encrypt file |
+| `cm decrypt FILE` | `cm dec FILE` | Decrypt file |
+| `cm export` | `cm exp` | Export config |
+| `cm import -f FILE` | `cm imp -f FILE` | Import config |
+| `cm cleanup` | `cm cleanup` | Remove old files |
+| `cm report` | `cm report` | Usage report |
+| `cm version` | `cm version` | Version info |
+
+### Advanced
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `cm discover SUBNET` | - | Auto-discover nodes |
+| `cm bench -s SERVER` | - | Benchmark |
+| `cm audit -n NAME` | - | Security audit |
+| `cm api --port 8080` | - | REST API |
+| `cm notify setup-telegram` | - | Telegram alerts |
+| `cm schedule add -n NAME "CMD"` | - | Schedule task |
+| `cm ssh -n NAME` | - | Quick SSH |
+
+---
+
 ## Examples
 
 ### Add a Server
 ```bash
-cm server add -n prod-server -H 192.168.1.100 -u root -k ~/.ssh/id_rsa
-cm server test -n prod-server
+cm add -n prod-server -H 192.168.1.100 -u root -k ~/.ssh/id_rsa
+cm test -n prod-server
 ```
 
 ### Monitor Everything

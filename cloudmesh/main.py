@@ -1843,6 +1843,111 @@ def cmd_node_dashboard(args):
     console.print()
 
 
+def _alias_docker(args, action):
+    args.action = action
+    cmd_docker(args)
+
+def _alias_docker_exec(args):
+    args.action = "exec"
+    args.container = getattr(args, "container", "")
+    args.cmd = getattr(args, "dc_cmd", "")
+    args.server = getattr(args, "server", None)
+    cmd_docker(args)
+
+def _alias_docker_logs(args):
+    args.action = "logs"
+    args.container = getattr(args, "container", "")
+    args.server = getattr(args, "server", None)
+    args.lines = getattr(args, "lines", 50)
+    cmd_docker(args)
+
+def _alias_firewall(args, action):
+    args.action = action
+    args.server = getattr(args, "server", None)
+    cmd_firewall(args)
+
+def _alias_firewall_add(args):
+    args.action = "add-rule"
+    cmd_firewall(args)
+
+def _alias_ssl(args, action):
+    args.action = action
+    if not hasattr(args, "domain"):
+        args.domain = ""
+    if not hasattr(args, "port"):
+        args.port = 443
+    cmd_ssl(args)
+
+def _alias_logagg_search(args):
+    args.action = "search"
+    cmd_logagg(args)
+
+def _alias_plugin_run(args):
+    args.action = "run"
+    cmd_plugins(args)
+
+def _alias_webhook_send(args):
+    args.action = "send"
+    args.name = getattr(args, "name", None)
+    args.event = getattr(args, "event", "alert")
+    cmd_webhooks(args)
+
+def _alias_watcher(args, action):
+    args.action = action
+    cmd_watcher(args)
+
+def _alias_cost(args):
+    args.action = "estimate"
+    cmd_cost(args)
+
+def _alias_tunnel_add(args):
+    args.action = "add"
+    args.remote_host = "127.0.0.1"
+    cmd_tunnel(args)
+
+def _alias_tunnel_start(args):
+    args.action = "start"
+    cmd_tunnel(args)
+
+def _alias_tunnel_stop(args):
+    args.action = "stop"
+    cmd_tunnel(args)
+
+def _alias_db_query(args):
+    args.action = "query"
+    args.host = "127.0.0.1"
+    args.port = None
+    args.user = "root"
+    cmd_database(args)
+
+def _alias_db_backup(args):
+    args.action = "backup"
+    args.path = "/tmp"
+    args.host = "127.0.0.1"
+    args.port = None
+    args.user = "root"
+    cmd_database(args)
+
+def _alias_db_status(args):
+    args.action = "status"
+    args.host = "127.0.0.1"
+    args.port = None
+    args.user = "root"
+    cmd_database(args)
+
+def _alias_acl(args, action):
+    args.action = action
+    cmd_acl(args)
+
+def _alias_acl_add(args):
+    args.action = "add-user"
+    cmd_acl(args)
+
+def _alias_acl_rm(args):
+    args.action = "remove-user"
+    cmd_acl(args)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
     subparsers = parser.add_subparsers(dest="command", help="Command")
@@ -2405,6 +2510,179 @@ def main():
     dbb.add_argument("--user", "-u", default="root")
     dbb.add_argument("--password", "-P", default="")
 
+    mon = subparsers.add_parser("mon", help="[alias] Monitor resources")
+    mon.add_argument("--name", "-n")
+
+    dash = subparsers.add_parser("dash", help="[alias] Live dashboard")
+
+    ls = subparsers.add_parser("ls", help="[alias] List servers")
+    ls.add_argument("--name", "-n")
+
+    add_alias = subparsers.add_parser("add", help="[alias] Add server")
+    add_alias.add_argument("--name", "-n", required=True)
+    add_alias.add_argument("--host", "-H", required=True)
+    add_alias.add_argument("--user", "-u", required=True)
+    add_alias.add_argument("--port", "-p", type=int, default=22)
+    add_alias.add_argument("--key", "-k")
+    add_alias.add_argument("--password")
+
+    rm_alias = subparsers.add_parser("rm", help="[alias] Remove server")
+    rm_alias.add_argument("--name", "-n", required=True)
+
+    rm_node = subparsers.add_parser("rmnode", help="[alias] Remove node")
+    rm_node.add_argument("--name", "-n", required=True)
+
+    test_alias = subparsers.add_parser("test", help="[alias] Test connection")
+    test_alias.add_argument("--name", "-n")
+
+    info_alias = subparsers.add_parser("info", help="[alias] Server info")
+    info_alias.add_argument("--name", "-n")
+
+    up = subparsers.add_parser("up", help="[alias] Show uptime")
+    up.add_argument("--name", "-n")
+
+    df = subparsers.add_parser("df", help="[alias] Disk usage")
+    df.add_argument("--name", "-n")
+
+    log_alias = subparsers.add_parser("log", help="[alias] System logs")
+    log_alias.add_argument("--name", "-n", required=True)
+    log_alias.add_argument("--file", "-f", default="/var/log/syslog")
+    log_alias.add_argument("--lines", "-n", type=int, default=50)
+
+    net = subparsers.add_parser("net", help="[alias] Network info")
+    net.add_argument("--name", "-n")
+
+    cp = subparsers.add_parser("cp", help="[alias] Transfer file")
+    cp.add_argument("--server", "-s", required=True)
+    cp.add_argument("--local", "-l")
+    cp.add_argument("--remote", "-r")
+    cp.add_argument("--direction", "-d", default="upload", choices=["upload", "download"])
+
+    enc_alias = subparsers.add_parser("enc", help="[alias] Encrypt file")
+    enc_alias.add_argument("file")
+
+    dec_alias = subparsers.add_parser("dec", help="[alias] Decrypt file")
+    dec_alias.add_argument("file")
+
+    exp = subparsers.add_parser("exp", help="[alias] Export config")
+    exp.add_argument("--file", "-f", default="cloudmesh_export.json")
+
+    imp = subparsers.add_parser("imp", help="[alias] Import config")
+    imp.add_argument("--file", "-f", required=True)
+
+    js = subparsers.add_parser("js", help="[alias] Start async job")
+    js.add_argument("--name", "-n", required=True)
+    js.add_argument("job_cmd")
+    js.add_argument("--timeout", "-t", type=int, default=300)
+
+    monnode = subparsers.add_parser("monnode", help="[alias] Monitor node")
+    monnode.add_argument("--name", "-n")
+
+    gpunode = subparsers.add_parser("gpunode", help="[alias] GPU on node")
+    gpunode.add_argument("--name", "-n")
+
+    execnode = subparsers.add_parser("exec", help="[alias] Exec on node")
+    execnode.add_argument("--name", "-n", required=True)
+    execnode.add_argument("node_cmd")
+
+    installnode = subparsers.add_parser("nodeinstall", help="[alias] Install node")
+    installnode.add_argument("--host", "-H", required=True)
+    installnode.add_argument("--user", "-u", default="root")
+    installnode.add_argument("--key", "-k")
+
+    dcls = subparsers.add_parser("dcls", help="[alias] Docker containers")
+    dcls.add_argument("--server", "-s")
+
+    dcstats = subparsers.add_parser("dcstats", help="[alias] Docker stats")
+    dcstats.add_argument("--server", "-s")
+
+    dcexec = subparsers.add_parser("dcexec", help="[alias] Docker exec")
+    dcexec.add_argument("container")
+    dcexec.add_argument("dc_cmd")
+    dcexec.add_argument("--server", "-s")
+
+    dclogs = subparsers.add_parser("dclogs", help="[alias] Docker logs")
+    dclogs.add_argument("container")
+    dclogs.add_argument("--server", "-s")
+    dclogs.add_argument("--lines", "-n", type=int, default=50)
+
+    fw = subparsers.add_parser("fw", help="[alias] Firewall status")
+
+    fwadd = subparsers.add_parser("fwadd", help="[alias] Add firewall rule")
+    fwadd.add_argument("--port", "-p", required=True, type=int)
+    fwadd.add_argument("--proto", default="tcp")
+    fwadd.add_argument("--action", "-a", default="allow")
+    fwadd.add_argument("--server", "-s")
+
+    sslchk = subparsers.add_parser("sslchk", help="[alias] Check SSL")
+    sslchk.add_argument("domain")
+    sslchk.add_argument("--port", "-p", type=int, default=443)
+
+    sslall = subparsers.add_parser("sslall", help="[alias] Check all SSL")
+
+    logsearch = subparsers.add_parser("logsearch", help="[alias] Search logs")
+    logsearch.add_argument("--pattern", "-p", required=True)
+    logsearch.add_argument("--source", "-s")
+    logsearch.add_argument("--since", default="1h")
+    logsearch.add_argument("--limit", "-n", type=int, default=50)
+
+    pluginrun = subparsers.add_parser("pluginrun", help="[alias] Run plugin")
+    pluginrun.add_argument("--name", "-n", required=True)
+    pluginrun.add_argument("--server", "-s")
+
+    whsend = subparsers.add_parser("whsend", help="[alias] Send webhook")
+    whsend.add_argument("--name", "-n")
+    whsend.add_argument("message")
+    whsend.add_argument("--event", "-e", default="alert")
+
+    wtchk = subparsers.add_parser("wtchk", help="[alias] Check watchers")
+
+    costest = subparsers.add_parser("costest", help="[alias] Estimate cost")
+    costest.add_argument("--provider", "-p", required=True)
+    costest.add_argument("--instance", "-i", required=True)
+    costest.add_argument("--hours", type=int, default=730)
+
+    tunadd = subparsers.add_parser("tunadd", help="[alias] Add tunnel")
+    tunadd.add_argument("--name", "-n", required=True)
+    tunadd.add_argument("--host", required=True)
+    tunadd.add_argument("--user", "-u", default="root")
+    tunadd.add_argument("--local-port", "-l", type=int, required=True)
+    tunadd.add_argument("--remote-port", "-r", type=int, required=True)
+    tunadd.add_argument("--key", "-k")
+
+    tunstart = subparsers.add_parser("tunstart", help="[alias] Start tunnel")
+    tunstart.add_argument("--name", "-n", required=True)
+
+    tunstop = subparsers.add_parser("tunstop", help="[alias] Stop tunnel")
+    tunstop.add_argument("--name", "-n", required=True)
+
+    dbq = subparsers.add_parser("dbq", help="[alias] Database query")
+    dbq.add_argument("--server", "-s", required=True)
+    dbq.add_argument("sql")
+    dbq.add_argument("--database", "-d", default="mysql")
+    dbq.add_argument("--type", "-t", default="mysql")
+    dbq.add_argument("--password", "-P", default="")
+
+    dbbak = subparsers.add_parser("dbbak", help="[alias] Database backup")
+    dbbak.add_argument("--server", "-s", required=True)
+    dbbak.add_argument("--database", "-d", required=True)
+    dbbak.add_argument("--type", "-t", default="mysql")
+    dbbak.add_argument("--password", "-P", default="")
+
+    dbstatus = subparsers.add_parser("dbstatus", help="[alias] Database status")
+    dbstatus.add_argument("--server", "-s", required=True)
+    dbstatus.add_argument("--type", "-t", default="mysql")
+    dbstatus.add_argument("--password", "-P", default="")
+
+    aclu = subparsers.add_parser("aclu", help="[alias] List ACL users")
+    acladd = subparsers.add_parser("acladd", help="[alias] Add ACL user")
+    acladd.add_argument("--username", "-u", required=True)
+    acladd.add_argument("--password", "-p", required=True)
+    acladd.add_argument("--role", "-r", default="viewer")
+
+    aclrm = subparsers.add_parser("aclrm", help="[alias] Remove ACL user")
+    aclrm.add_argument("--username", "-u", required=True)
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
@@ -2425,10 +2703,13 @@ def main():
             "gpu": cmd_node_gpu, "job": cmd_node_job,
         }.get(args.action, lambda: node.print_help())(args),
         "monitor": lambda: cmd_monitor(args),
+        "mon": lambda: cmd_monitor(args),
         "dashboard": lambda: cmd_dashboard(args),
+        "dash": lambda: cmd_dashboard(args),
         "run": lambda: cmd_run(args),
         "plan": lambda: cmd_plan(args),
         "transfer": lambda: cmd_transfer(args),
+        "cp": lambda: cmd_transfer(args),
         "sync": lambda: cmd_sync(args),
         "history": lambda: cmd_history(args),
         "deploy": lambda: cmd_deploy(args),
@@ -2443,16 +2724,24 @@ def main():
         "backup": lambda: cmd_backup(args),
         "ping": lambda: cmd_ping(args),
         "uptime": lambda: cmd_uptime(args),
+        "up": lambda: cmd_uptime(args),
         "top": lambda: cmd_top(args),
         "disk": lambda: cmd_disk(args),
+        "df": lambda: cmd_disk(args),
         "network": lambda: cmd_network(args),
+        "net": lambda: cmd_network(args),
         "who": lambda: cmd_who(args),
         "find": lambda: cmd_find(args),
         "logs": lambda: cmd_logs(args),
+        "log": lambda: cmd_logs(args),
         "export": lambda: cmd_export(args),
+        "exp": lambda: cmd_export(args),
         "import": lambda: cmd_import(args),
+        "imp": lambda: cmd_import(args),
         "encrypt": lambda: cmd_encrypt(args),
+        "enc": lambda: cmd_encrypt(args),
         "decrypt": lambda: cmd_decrypt(args),
+        "dec": lambda: cmd_decrypt(args),
         "speed": lambda: cmd_speed(args),
         "scan": lambda: cmd_scan(args),
         "cleanup": lambda: cmd_cleanup(args),
@@ -2481,6 +2770,38 @@ def main():
         "cost": lambda: cmd_cost(args),
         "tunnel": lambda: cmd_tunnel(args),
         "database": lambda: cmd_database(args),
+        "ls": lambda: cmd_server_list(args),
+        "add": lambda: cmd_server_add(args),
+        "rm": lambda: cmd_server_remove(args),
+        "rmnode": lambda: cmd_node_remove(args),
+        "test": lambda: cmd_server_test(args),
+        "info": lambda: cmd_node_info(args),
+        "monnode": lambda: cmd_node_monitor(args),
+        "gpunode": lambda: cmd_node_gpu(args),
+        "exec": lambda: cmd_node_exec(args),
+        "nodeinstall": lambda: cmd_node_install(args),
+        "dcls": lambda: _alias_docker(args, "containers"),
+        "dcstats": lambda: _alias_docker(args, "stats"),
+        "dcexec": lambda: _alias_docker_exec(args),
+        "dclogs": lambda: _alias_docker_logs(args),
+        "fw": lambda: _alias_firewall(args, "status"),
+        "fwadd": lambda: _alias_firewall_add(args),
+        "sslchk": lambda: _alias_ssl(args, "check"),
+        "sslall": lambda: _alias_ssl(args, "check-all"),
+        "logsearch": lambda: _alias_logagg_search(args),
+        "pluginrun": lambda: _alias_plugin_run(args),
+        "whsend": lambda: _alias_webhook_send(args),
+        "wtchk": lambda: _alias_watcher(args, "check"),
+        "costest": lambda: _alias_cost(args),
+        "tunadd": lambda: _alias_tunnel_add(args),
+        "tunstart": lambda: _alias_tunnel_start(args),
+        "tunstop": lambda: _alias_tunnel_stop(args),
+        "dbq": lambda: _alias_db_query(args),
+        "dbbak": lambda: _alias_db_backup(args),
+        "dbstatus": lambda: _alias_db_status(args),
+        "aclu": lambda: _alias_acl(args, "users"),
+        "acladd": lambda: _alias_acl_add(args),
+        "aclrm": lambda: _alias_acl_rm(args),
     }
     handler = cmds.get(args.command)
     if handler:
