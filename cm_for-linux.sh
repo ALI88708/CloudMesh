@@ -1,6 +1,13 @@
 #!/bin/bash
 
 # ============================================
+# CloudMesh Installer - Linux
+# Created by MRSX PRO
+# ============================================
+
+set -e
+
+# ============================================
 # CONFIG
 # ============================================
 GITHUB_USER="MrAli88708"
@@ -17,10 +24,22 @@ VENV_DIR="$INSTALL_DIR/venv"
 NODE_SCRIPT="cloudmesh_node.py"
 
 # ============================================
-# Check if already installed
+# COLORS
+# ============================================
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# ============================================
+# CHECK INSTALL STATUS
 # ============================================
 IS_INSTALLED=0
 if [ -f "$CLOUDMESH_DIR/main.py" ]; then
+    IS_INSTALLED=1
+fi
+if [ -d "$VENV_DIR" ]; then
     IS_INSTALLED=1
 fi
 
@@ -28,9 +47,10 @@ fi
 # DOWNLOAD FUNCTION
 # ============================================
 download_from_github() {
-    echo "============================================"
-    echo "   Downloading from GitHub..."
-    echo "============================================"
+    echo ""
+    echo -e "${BLUE}============================================${NC}"
+    echo -e "${BLUE}   Downloading from GitHub...${NC}"
+    echo -e "${BLUE}============================================${NC}"
     echo ""
 
     mkdir -p "$CLOUDMESH_DIR"
@@ -45,13 +65,13 @@ download_from_github() {
     elif command -v wget &> /dev/null; then
         wget -q --timeout=10 --tries=3 "$ZIP_URL" -O "$ZIP_FILE"
     else
-        echo "[ERROR] Neither curl nor wget found!"
+        echo -e "${RED}[ERROR] Neither curl nor wget found!${NC}"
         echo "[INFO] Install with: sudo apt install curl"
         return 1
     fi
 
     if [ ! -f "$ZIP_FILE" ] || [ ! -s "$ZIP_FILE" ]; then
-        echo "[ERROR] Download failed! Check your internet connection."
+        echo -e "${RED}[ERROR] Download failed! Check your internet connection.${NC}"
         return 1
     fi
 
@@ -62,7 +82,7 @@ download_from_github() {
     EXTRACTED=$(find "$EXTRACT_DIR" -maxdepth 1 -type d -name "CloudMesh*" | head -1)
 
     if [ -z "$EXTRACTED" ]; then
-        echo "[ERROR] Extract failed!"
+        echo -e "${RED}[ERROR] Extract failed!${NC}"
         rm -rf "$EXTRACT_DIR" "$ZIP_FILE"
         return 1
     fi
@@ -74,11 +94,11 @@ download_from_github() {
     rm -f "$ZIP_FILE"
 
     if [ ! -f "$CLOUDMESH_DIR/main.py" ]; then
-        echo "[ERROR] Download failed!"
+        echo -e "${RED}[ERROR] Download failed!${NC}"
         return 1
     fi
 
-    echo "[OK] Download complete!"
+    echo -e "${GREEN}[OK] Download complete!${NC}"
     echo ""
     return 0
 }
@@ -87,47 +107,49 @@ download_from_github() {
 # UNINSTALL FUNCTION
 # ============================================
 do_uninstall() {
-    echo "============================================"
-    echo "   Uninstalling CloudMesh..."
-    echo "============================================"
+    echo ""
+    echo -e "${BLUE}============================================${NC}"
+    echo -e "${BLUE}   Uninstalling CloudMesh...${NC}"
+    echo -e "${BLUE}============================================${NC}"
     echo ""
 
-    [ -d "$CLOUDMESH_DIR" ] && rm -rf "$CLOUDMESH_DIR" && echo "[OK] Removed program files"
-    [ -d "$NODE_DIR" ] && rm -rf "$NODE_DIR" && echo "[OK] Removed node agent"
-    [ -d "$VENV_DIR" ] && rm -rf "$VENV_DIR" && echo "[OK] Removed virtual environment"
+    [ -d "$CLOUDMESH_DIR" ] && rm -rf "$CLOUDMESH_DIR" && echo -e "${GREEN}[OK] Removed program files${NC}"
+    [ -d "$NODE_DIR" ] && rm -rf "$NODE_DIR" && echo -e "${GREEN}[OK] Removed node agent${NC}"
+    [ -d "$VENV_DIR" ] && rm -rf "$VENV_DIR" && echo -e "${GREEN}[OK] Removed virtual environment${NC}"
 
     if command -v systemctl &> /dev/null; then
-        sudo systemctl stop cloudmesh-node 2>/dev/null
-        sudo systemctl disable cloudmesh-node 2>/dev/null
+        sudo systemctl stop cloudmesh-node 2>/dev/null || true
+        sudo systemctl disable cloudmesh-node 2>/dev/null || true
         sudo rm -f /etc/systemd/system/cloudmesh-node.service
-        sudo systemctl daemon-reload 2>/dev/null
-        echo "[OK] Removed systemd service"
+        sudo systemctl daemon-reload 2>/dev/null || true
+        echo -e "${GREEN}[OK] Removed systemd service${NC}"
     fi
 
     CM_BIN="$HOME/.local/bin/cm"
-    [ -f "$CM_BIN" ] && rm -f "$CM_BIN" && echo "[OK] Removed cm shortcut"
+    [ -f "$CM_BIN" ] && rm -f "$CM_BIN" && echo -e "${GREEN}[OK] Removed cm shortcut${NC}"
 
-    rm -f /tmp/cloudmesh.zip /tmp/cm_*.sh 2>/dev/null
+    rm -f /tmp/cloudmesh.zip /tmp/cm_*.sh 2>/dev/null || true
 
     echo ""
-    echo "[OK] CloudMesh has been uninstalled."
+    echo -e "${GREEN}[OK] CloudMesh has been uninstalled.${NC}"
     echo ""
 }
 
 # ============================================
-# FULL SETUP FUNCTION
+# SETUP FUNCTION
 # ============================================
 do_setup() {
-    echo "============================================"
-    echo "   Installing CloudMesh Node..."
-    echo "============================================"
+    echo ""
+    echo -e "${BLUE}============================================${NC}"
+    echo -e "${BLUE}   Setting up CloudMesh...${NC}"
+    echo -e "${BLUE}============================================${NC}"
     echo ""
 
     # Check Python
     echo "[1/6] Checking Python..."
 
     install_python() {
-        echo "[INFO] Python3 not found. Installing..."
+        echo -e "${YELLOW}[INFO] Python3 not found. Installing...${NC}"
         if command -v apt &> /dev/null; then
             sudo apt update -qq
             sudo apt install -y -qq python3 python3-pip python3-venv
@@ -142,7 +164,7 @@ do_setup() {
         elif command -v apk &> /dev/null; then
             sudo apk add --no-cache python3 py3-pip
         else
-            echo "[ERROR] Cannot detect package manager."
+            echo -e "${RED}[ERROR] Cannot detect package manager.${NC}"
             echo "[INFO] Install Python3 manually"
             return 1
         fi
@@ -150,10 +172,10 @@ do_setup() {
 
     if command -v python3 &> /dev/null; then
         PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-        echo "[OK] Python3 found: $PY_VERSION"
+        echo -e "${GREEN}[OK] Python3 found: $PY_VERSION${NC}"
     elif command -v python &> /dev/null; then
         PY_VERSION=$(python --version 2>&1 | awk '{print $2}')
-        echo "[OK] Python found: $PY_VERSION"
+        echo -e "${GREEN}[OK] Python found: $PY_VERSION${NC}"
         if ! command -v python3 &> /dev/null; then
             PYTHON_PATH=$(which python)
             sudo ln -sf "$PYTHON_PATH" /usr/local/bin/python3 2>/dev/null || true
@@ -161,28 +183,28 @@ do_setup() {
     else
         install_python
         if ! command -v python3 &> /dev/null; then
-            echo "[ERROR] Python installation failed."
+            echo -e "${RED}[ERROR] Python installation failed.${NC}"
             return 1
         fi
         PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-        echo "[OK] Python3 installed: $PY_VERSION"
+        echo -e "${GREEN}[OK] Python3 installed: $PY_VERSION${NC}"
     fi
 
-    echo "[2/6] Installing node dependencies..."
+    echo "[2/6] Installing dependencies..."
     python3 -m pip install --user psutil 2>/dev/null || true
-    echo "[OK] Dependencies installed"
+    echo -e "${GREEN}[OK] Dependencies installed${NC}"
 
     echo "[3/6] Creating node directory..."
     mkdir -p "$NODE_DIR" "$NODE_DIR/logs" "$NODE_DIR/data"
 
-    echo "[4/6] Installing CloudMesh Node agent..."
+    echo "[4/6] Installing node agent..."
     NODE_SOURCE="$CLOUDMESH_DIR/node/$NODE_SCRIPT"
     if [ -f "$NODE_SOURCE" ]; then
         cp "$NODE_SOURCE" "$NODE_DIR/$NODE_SCRIPT"
         chmod +x "$NODE_DIR/$NODE_SCRIPT"
-        echo "[OK] Node agent installed"
+        echo -e "${GREEN}[OK] Node agent installed${NC}"
     else
-        echo "[WARNING] cloudmesh_node.py not found, skipping node"
+        echo -e "${YELLOW}[WARNING] cloudmesh_node.py not found, skipping node${NC}"
         echo ""
         do_controller_setup
         return
@@ -229,24 +251,24 @@ RestartSec=5
 WantedBy=multi-user.target
 SERVICEEOF
         sudo systemctl daemon-reload
-        echo "[OK] Systemd service created"
+        echo -e "${GREEN}[OK] Systemd service created${NC}"
     fi
 
-    echo "[OK] Node scripts created"
+    echo -e "${GREEN}[OK] Node scripts created${NC}"
 
     echo "[6/6] Node setup complete!"
     echo ""
     AUTH_KEY=$(cat "$NODE_DIR/.node_key" 2>/dev/null || echo "N/A")
     IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR_IP")
 
-    echo "  [OK] Node Location: $NODE_DIR"
-    echo "  [OK] Auth Key: $AUTH_KEY"
+    echo -e "${GREEN}  [OK] Node Location: $NODE_DIR${NC}"
+    echo -e "${GREEN}  [OK] Auth Key: $AUTH_KEY${NC}"
     echo ""
     echo "  === Add from Controller ==="
-    echo "  cm node add -n $(hostname) -H $IP_ADDRESS -p 9999 -k $AUTH_KEY"
+    echo "  cm add -n $(hostname) -H $IP_ADDRESS -p 9999 -k $AUTH_KEY"
     echo ""
 
-    read -p "Start node now? (y/n): " START_NODE
+    read -p "   Start node now? (y/n): " START_NODE
     if [ "$START_NODE" = "y" ] || [ "$START_NODE" = "Y" ]; then
         bash "$NODE_DIR/start.sh"
     fi
@@ -255,25 +277,28 @@ SERVICEEOF
     do_controller_setup
 }
 
+# ============================================
+# CONTROLLER SETUP
+# ============================================
 do_controller_setup() {
-    echo "============================================"
-    echo "   CloudMesh Controller Setup"
-    echo "============================================"
+    echo -e "${BLUE}============================================${NC}"
+    echo -e "${BLUE}   Controller Setup Complete!${NC}"
+    echo -e "${BLUE}============================================${NC}"
     echo ""
 
     if [ ! -d "$VENV_DIR" ]; then
-        echo "[INFO] Creating virtual environment..."
+        echo "Creating virtual environment..."
         python3 -m venv "$VENV_DIR"
         source "$VENV_DIR/bin/activate"
         pip install -q -r "$CLOUDMESH_DIR/requirements.txt"
-        echo "[OK] Environment ready!"
+        echo -e "${GREEN}[OK] Environment ready!${NC}"
     else
         source "$VENV_DIR/bin/activate"
-        echo "[OK] Virtual environment exists"
+        echo -e "${GREEN}[OK] Virtual environment exists${NC}"
     fi
     echo ""
 
-    echo "[INFO] Creating cm shortcut..."
+    echo "Creating cm shortcut..."
     CM_BIN="$HOME/.local/bin/cm"
     mkdir -p "$HOME/.local/bin"
 
@@ -292,10 +317,10 @@ CMEOF
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
         echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
         export PATH="$HOME/.local/bin:$PATH"
-        echo "[OK] Added ~/.local/bin to PATH"
+        echo -e "${GREEN}[OK] Added ~/.local/bin to PATH${NC}"
     fi
 
-    echo "[OK] cm command available!"
+    echo -e "${GREEN}[OK] cm command available!${NC}"
     echo ""
 }
 
@@ -304,91 +329,81 @@ CMEOF
 # ============================================
 while true; do
     clear
-    echo "============================================"
-    echo "   CloudMesh Installer"
-    echo "============================================"
+    echo ""
+    echo -e "${BLUE}╔══════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║        CloudMesh Installer v2.0          ║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════╝${NC}"
     echo ""
 
     if [ "$IS_INSTALLED" -eq 1 ]; then
-        echo "   [CloudMesh is already installed]"
+        echo -e "   ${GREEN}[✓] CloudMesh is already installed${NC}"
         echo ""
-        echo "   [1] Fresh Install"
+        echo "   [1] Fresh Install (overwrite)"
         echo "   [2] Update (keep config)"
         echo "   [3] Factory Reset"
         echo "   [4] Uninstall"
         echo "   [5] Exit"
         echo ""
         read -p "   Choose [1-5]: " CHOICE
-    else
-        echo "   [CloudMesh is NOT installed]"
-        echo ""
-        echo "   [1] Install CloudMesh"
-        echo "   [2] Exit"
-        echo ""
-        read -p "   Choose [1-2]: " CHOICE
-    fi
-    echo ""
 
-    if [ "$IS_INSTALLED" -eq 1 ]; then
         case "$CHOICE" in
             1)
                 download_from_github || { read -p "Press Enter to continue..."; continue; }
                 do_setup
                 echo ""
-                echo "============================================"
-                echo "   CloudMesh Installed Successfully!"
-                echo "============================================"
+                echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+                echo -e "${GREEN}║    CloudMesh Installed Successfully!     ║${NC}"
+                echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
                 echo ""
-                echo "=== Quick Start ==="
-                echo "  cm --help              # Show all commands"
-                echo "  cm interactive         # Interactive TUI"
-                echo "  cm version             # Show version"
-                echo "  cm ping                # Test connections"
-                echo "  cm discover 192.168.1  # Scan network"
-                echo "  cm bench               # Benchmark"
-                echo ""
-                echo "Usage: cm [command] [options]"
+                echo "  Quick Start:"
+                echo "  cm --help              Show all commands"
+                echo "  cm interactive         Interactive TUI"
+                echo "  cm version             Show version"
+                echo "  cm ping                Test connections"
+                echo "  cm discover 192.168.1  Scan network"
+                echo "  cm bench               Benchmark"
                 echo ""
                 read -p "Press Enter to continue..."
                 ;;
             2)
-                echo "============================================"
-                echo "   Updating CloudMesh..."
-                echo "============================================"
+                echo ""
+                echo -e "${BLUE}============================================${NC}"
+                echo -e "${BLUE}   Updating CloudMesh...${NC}"
+                echo -e "${BLUE}============================================${NC}"
                 echo ""
 
                 BACKUP_DIR="/tmp/cloudmesh_backup"
                 mkdir -p "$BACKUP_DIR"
-                [ -f "$CLOUDMESH_DIR/.node_keys.json" ] && cp "$CLOUDMESH_DIR/.node_keys.json" "$BACKUP_DIR/" && echo "[OK] Backed up node keys"
-                [ -f "$INSTALL_DIR/cloudmesh.json" ] && cp "$INSTALL_DIR/cloudmesh.json" "$BACKUP_DIR/" && echo "[OK] Backed up server config"
+                [ -f "$CLOUDMESH_DIR/.node_keys.json" ] && cp "$CLOUDMESH_DIR/.node_keys.json" "$BACKUP_DIR/" && echo -e "${GREEN}[OK] Backed up node keys${NC}"
+                [ -f "$INSTALL_DIR/cloudmesh.json" ] && cp "$INSTALL_DIR/cloudmesh.json" "$BACKUP_DIR/" && echo -e "${GREEN}[OK] Backed up server config${NC}"
 
                 download_from_github || { read -p "Press Enter to continue..."; continue; }
 
                 [ -f "$BACKUP_DIR/.node_keys.json" ] && cp "$BACKUP_DIR/.node_keys.json" "$CLOUDMESH_DIR/" 2>/dev/null
                 [ -f "$BACKUP_DIR/cloudmesh.json" ] && cp "$BACKUP_DIR/cloudmesh.json" "$INSTALL_DIR/" 2>/dev/null
                 rm -rf "$BACKUP_DIR"
-                echo "[OK] Config restored"
+                echo -e "${GREEN}[OK] Config restored${NC}"
 
                 do_setup
-                echo "[OK] Update complete!"
+                echo -e "${GREEN}[OK] Update complete!${NC}"
                 echo ""
                 read -p "Press Enter to continue..."
                 ;;
             3)
-                echo "[WARNING] This will delete ALL data!"
-                read -p "Are you sure? (y/n): " CONFIRM
+                echo -e "${YELLOW}[WARNING] This will delete ALL data!${NC}"
+                read -p "   Are you sure? (y/n): " CONFIRM
                 if [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ]; then
                     echo ""
-                    echo "[INFO] Removing old installation..."
+                    echo "Removing old installation..."
                     [ -d "$CLOUDMESH_DIR" ] && rm -rf "$CLOUDMESH_DIR"
                     [ -d "$NODE_DIR" ] && rm -rf "$NODE_DIR"
                     [ -d "$VENV_DIR" ] && rm -rf "$VENV_DIR"
-                    echo "[OK] Old files removed"
+                    echo -e "${GREEN}[OK] Old files removed${NC}"
                     echo ""
 
                     download_from_github || { read -p "Press Enter to continue..."; continue; }
                     do_setup
-                    echo "[OK] Factory Reset complete!"
+                    echo -e "${GREEN}[OK] Factory Reset complete!${NC}"
                     echo ""
                 fi
                 read -p "Press Enter to continue..."
@@ -399,43 +414,52 @@ while true; do
                 read -p "Press Enter to continue..."
                 ;;
             5)
-                echo "Goodbye!"
+                echo ""
+                echo -e "${BLUE}Goodbye!${NC}"
+                echo ""
                 exit 0
                 ;;
             *)
-                echo "[ERROR] Invalid choice!"
+                echo -e "${RED}[ERROR] Invalid choice!${NC}"
                 read -p "Press Enter to continue..."
                 ;;
         esac
     else
+        echo -e "   ${YELLOW}[!] CloudMesh is NOT installed${NC}"
+        echo ""
+        echo "   [1] Install CloudMesh"
+        echo "   [2] Exit"
+        echo ""
+        read -p "   Choose [1-2]: " CHOICE
+
         case "$CHOICE" in
             1)
                 download_from_github || { read -p "Press Enter to continue..."; continue; }
                 do_setup
                 IS_INSTALLED=1
                 echo ""
-                echo "============================================"
-                echo "   CloudMesh Installed Successfully!"
-                echo "============================================"
+                echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+                echo -e "${GREEN}║    CloudMesh Installed Successfully!     ║${NC}"
+                echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
                 echo ""
-                echo "=== Quick Start ==="
-                echo "  cm --help              # Show all commands"
-                echo "  cm interactive         # Interactive TUI"
-                echo "  cm version             # Show version"
-                echo "  cm ping                # Test connections"
-                echo "  cm discover 192.168.1  # Scan network"
-                echo "  cm bench               # Benchmark"
-                echo ""
-                echo "Usage: cm [command] [options]"
+                echo "  Quick Start:"
+                echo "  cm --help              Show all commands"
+                echo "  cm interactive         Interactive TUI"
+                echo "  cm version             Show version"
+                echo "  cm ping                Test connections"
+                echo "  cm discover 192.168.1  Scan network"
+                echo "  cm bench               Benchmark"
                 echo ""
                 read -p "Press Enter to continue..."
                 ;;
             2)
-                echo "Goodbye!"
+                echo ""
+                echo -e "${BLUE}Goodbye!${NC}"
+                echo ""
                 exit 0
                 ;;
             *)
-                echo "[ERROR] Invalid choice!"
+                echo -e "${RED}[ERROR] Invalid choice!${NC}"
                 read -p "Press Enter to continue..."
                 ;;
         esac
