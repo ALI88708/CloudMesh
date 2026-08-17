@@ -9,7 +9,7 @@ echo ""
 # ============================================
 GITHUB_USER="MrAli88708"
 GITHUB_REPO="CloudMesh"
-GITHUB_BRANCH="main""
+GITHUB_BRANCH="main"
 
 # ============================================
 # PATHS
@@ -66,9 +66,9 @@ if [ "$USE_LOCAL" -eq 0 ]; then
         local url="$1"
         local dest="$2"
         if [ "$DOWNLOADER" = "curl" ]; then
-            curl -sL "$url" -o "$dest"
+            curl -L --connect-timeout 10 --retry 3 -s -o "$dest" "$url"
         else
-            wget -q "$url" -O "$dest"
+            wget -q --timeout=10 --tries=3 "$url" -O "$dest"
         fi
     }
 
@@ -103,7 +103,7 @@ if [ "$USE_LOCAL" -eq 0 ]; then
     download_file "$BASE_URL/cloudmesh/core/jobs.py" "$CLOUDMESH_DIR/core/jobs.py"
 
     echo "[11/12] Downloading remaining core files..."
-    for f in security sync deploy alerts groups dashboard tui service history cmdlog; do
+    for f in security transfer sync deploy alerts groups dashboard tui service history cmdlog; do
         download_file "$BASE_URL/cloudmesh/core/$f.py" "$CLOUDMESH_DIR/core/$f.py" 2>/dev/null
     done
 
