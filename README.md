@@ -52,10 +52,14 @@ Managing multiple servers shouldn't mean juggling 10 SSH windows. CloudMesh give
 
 ### Windows
 1. Download [`cm_for-windows.bat`](cm_for-windows.bat) from this repo
-2. Double-click to run
-3. Done! Use `cm --help` to see all commands
+2. Download [`Python`](https://www.python.org/) From Website
+3. And Install [`Python`](https://www.python.org/) 
+4. Double-click to run [`cm_for-windows.bat`](cm_for-windows.bat) On it
+5. Done! Use `cm --help` to see all commands in PowerShell
 
 ### Linux
+Download [`Python`](https://www.python.org/) From Website
+And Install it
 ```bash
 curl -sL https://raw.githubusercontent.com/MrAli88708/CloudMesh/main/cm_for-linux.sh -o cm.sh
 chmod +x cm.sh && ./cm.sh
