@@ -10,8 +10,9 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)]()
-[![Commands](https://img.shields.io/badge/Commands-48-orange?style=for-the-badge)]()
+[![Commands](https://img.shields.io/badge/Commands-130+-orange?style=for-the-badge)]()
 [![Stars](https://img.shields.io/github/stars/MrAli88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/MrAli88708/CloudMesh/stargazers)
+[![Security](https://img.shields.io/badge/Security-Secured-red?style=for-the-badge)]()
 
 <br>
 
@@ -23,7 +24,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 |_|  |_|\___||___/_| |_|  \____\___/|_|  \___|
 ```
 
-**48 commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry**
+**130+ commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **API auth**
 
 </div>
 
@@ -40,6 +41,8 @@ Managing multiple servers shouldn't mean juggling 10 SSH windows. CloudMesh give
 | GPU servers hard to manage | `cm node gpu` - GPU telemetry from any node |
 | No way to distribute work | `cm slice` - auto-slice tasks across servers by resources |
 | Miss server alerts | `cm notify` - Telegram/Discord alerts |
+| Docker scattered across servers | `cm docker` - manage containers on any node |
+| No cost awareness | `cm cost` - estimate and compare cloud pricing |
 
 ---
 
@@ -59,7 +62,7 @@ chmod +x cm.sh && ./cm.sh
 
 ### First Steps
 ```bash
-cm --help              # See all 48 commands
+cm --help              # See all 130+ commands
 cm interactive         # Interactive TUI menu
 cm monitor --local     # Monitor this machine
 cm discover 192.168.1  # Scan your network for nodes
@@ -125,6 +128,81 @@ cm discover 192.168.1  # Scan your network for nodes
 </details>
 
 <details>
+<summary><b>Docker Management</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm docker list-servers` | List servers with Docker |
+| `cm docker containers` | List containers on server |
+| `cm docker compose` | Run docker-compose on server |
+| `cm docker stats` | Container resource stats |
+| `cm docker images` | List Docker images |
+| `cm docker pull` | Pull image on server |
+| `cm docker exec` | Exec command in container |
+| `cm docker logs` | Container logs |
+| `cm docker cleanup` | Cleanup Docker resources |
+| `cm docker prune` | Prune everything |
+
+</details>
+
+<details>
+<summary><b>Firewall Manager</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm firewall list-rules` | List firewall rules |
+| `cm firewall add-rule` | Add firewall rule |
+| `cm firewall remove-rule` | Remove firewall rule |
+| `cm firewall status` | Firewall status |
+| `cm firewall check-port` | Check if port is open |
+| `cm firewall backup` | Backup rules to file |
+| `cm firewall load` | Load rules from file |
+
+</details>
+
+<details>
+<summary><b>SSL Certificate Monitor</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm ssl check` | Check SSL certificate |
+| `cm ssl check-all` | Check all domains |
+| `cm ssl domains` | List monitored domains |
+| `cm ssl add` | Add domain to monitor |
+| `cm ssl remove` | Remove domain |
+| `cm ssl history` | Expiry check history |
+| `cm ssl renew-check` | Check renewal status |
+
+</details>
+
+<details>
+<summary><b>Log Aggregation</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm logagg add-source` | Add log source |
+| `cm logagg sources` | List log sources |
+| `cm logagg search` | Search logs by pattern |
+| `cm logagg filter` | Filter by level |
+| `cm logagg subscribe` | Tail logs live |
+| `cm logagg stats` | Log statistics |
+| `cm logagg clear` | Clear log index |
+
+</details>
+
+<details>
+<summary><b>Resource History</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm reshistory snapshot` | Take resource snapshot |
+| `cm reshistory show` | Show history for server |
+| `cm reshistory summary` | Stats summary |
+| `cm reshistory clear` | Clear history |
+
+</details>
+
+<details>
 <summary><b>Network & Discovery</b></summary>
 
 | Command | Description |
@@ -167,6 +245,109 @@ cm discover 192.168.1  # Scan your network for nodes
 </details>
 
 <details>
+<summary><b>Custom Plugins</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm plugins list` | List installed plugins |
+| `cm plugins add` | Add custom plugin |
+| `cm plugins remove` | Remove plugin |
+| `cm plugins run` | Run plugin on servers |
+| `cm plugins import` | Import plugins from file |
+| `cm plugins export` | Export plugin to file |
+
+</details>
+
+<details>
+<summary><b>Multi-User ACL</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm acl users` | List users |
+| `cm acl add-user` | Add user with role |
+| `cm acl remove-user` | Remove user |
+| `cm acl set-role` | Change user role |
+| `cm acl enable` | Enable user |
+| `cm acl disable` | Disable user |
+| `cm acl roles` | List roles & permissions |
+| `cm acl add-role` | Create role |
+| `cm acl remove-role` | Delete role |
+
+</details>
+
+<details>
+<summary><b>Webhook Integrations</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm webhooks list` | List webhooks |
+| `cm webhooks add` | Add Discord/Slack/Telegram/custom |
+| `cm webhooks remove` | Remove webhook |
+| `cm webhooks test` | Test webhook |
+| `cm webhooks log` | Webhook delivery log |
+| `cm webhooks send` | Send custom message |
+
+</details>
+
+<details>
+<summary><b>Process Watcher</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm watcher list` | List watchers |
+| `cm watcher add` | Watch process on server |
+| `cm watcher remove` | Remove watcher |
+| `cm watcher check` | Check all watchers |
+| `cm watcher check-status` | Check process on server |
+| `cm watcher alerts` | View watcher alerts |
+
+</details>
+
+<details>
+<summary><b>Cost Estimator</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm cost instances` | List instance prices |
+| `cm cost estimate` | Estimate cost |
+| `cm cost compare` | Compare across providers |
+| `cm cost cheapest` | Find cheapest option |
+
+Supports: AWS, GCP, Azure, DigitalOcean
+
+</details>
+
+<details>
+<summary><b>SSH Tunnel Manager</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm tunnel list` | List tunnels |
+| `cm tunnel add` | Add tunnel |
+| `cm tunnel remove` | Remove tunnel |
+| `cm tunnel start` | Start tunnel |
+| `cm tunnel stop` | Stop tunnel |
+| `cm tunnel stop-all` | Stop all tunnels |
+| `cm tunnel status` | Tunnel status |
+| `cm tunnel quick` | Quick one-liner tunnel |
+
+</details>
+
+<details>
+<summary><b>Database Manager</b></summary>
+
+| Command | Description |
+|---------|-------------|
+| `cm database list` | List databases |
+| `cm database status` | Database status |
+| `cm database query` | Run SQL query |
+| `cm database backup` | Backup database |
+
+Supports: MySQL, PostgreSQL
+
+</details>
+
+<details>
 <summary><b>Advanced Features</b></summary>
 
 | Command | Description |
@@ -174,7 +355,7 @@ cm discover 192.168.1  # Scan your network for nodes
 | `cm bench` | CPU/RAM/Disk benchmark |
 | `cm schedule` | Recurring commands |
 | `cm notify` | Telegram/Discord alerts |
-| `cm api` | REST API server |
+| `cm api` | REST API (auth required) |
 | `cm audit` | Security audit |
 | `cm template` | Reusable command templates |
 | `cm profile` | Config profiles |
@@ -212,6 +393,7 @@ cm server test -n prod-server
 cm monitor           # All servers
 cm monitor -n prod   # Specific server
 cm node gpu          # GPU usage on all nodes
+cm reshistory snapshot  # Take resource snapshot
 ```
 
 ### Run Commands Everywhere
@@ -221,14 +403,74 @@ cm run "df -h" --best                         # Run on best server
 cm run "docker ps" -s "web,api"              # Specific servers
 ```
 
-### Distribute Work
+### Docker Management
 ```bash
-# Split files across GPU servers
-cm slice -f "data_*.csv" -s "gpu1,gpu2,gpu3"
+cm docker containers --server web-1          # List containers
+cm docker compose /path/to/docker-compose.yml --server web-1 -a up
+cm docker stats --server web-1              # Container stats
+cm docker exec web-1-container "ls -la"    # Run command in container
+```
 
-# Start async job
-cm node job start -n gpu-server "python train.py" -t 3600
-cm node job status -n gpu-server -j abc123
+### Firewall Management
+```bash
+cm firewall add-rule --port 443 --proto tcp --action allow
+cm firewall check-port --port 22
+cm firewall backup --output fw_rules.json
+```
+
+### SSL Monitoring
+```bash
+cm ssl add example.com
+cm ssl check-all                           # Check all domains
+cm ssl history                             # Expiry history
+```
+
+### Webhooks
+```bash
+cm webhooks add --name alerts --url https://discord.com/api/webhooks/XXX --type discord
+cm webhooks send --name alerts "Server is down!" --event error
+```
+
+### Process Watcher
+```bash
+cm watcher add --name nginx --process nginx --server web-1 --alert-on stop
+cm watcher check                           # Check all watchers
+cm watcher alerts                          # View recent alerts
+```
+
+### Cost Estimation
+```bash
+cm cost instances -p aws                   # List AWS instances
+cm cost estimate -p aws -i t3.medium --hours 730
+cm cost compare -i t3.medium              # Compare across providers
+cm cost cheapest --ram 8                   # Find cheapest 8GB option
+```
+
+### SSH Tunnels
+```bash
+cm tunnel quick --host 10.0.0.5 -l 5432 -r 5432    # Quick tunnel
+cm tunnel add --name db-tunnel --host 10.0.0.5 -l 3306 -r 3306
+cm tunnel start --name db-tunnel
+```
+
+### Database Management
+```bash
+cm database list --server db-1 --type mysql -P root_password
+cm database query --server db-1 "SHOW PROCESSLIST"
+cm database backup --server db-1 --database myapp
+```
+
+### Custom Plugins
+```bash
+cm plugins add -n health-check -c "curl -s http://localhost/health"
+cm plugins run -n health-check -s web-1
+```
+
+### Multi-User ACL
+```bash
+cm acl add-user -u admin -p secret123 -r admin
+cm acl add-user -u viewer -p pass456 -r viewer
+cm acl roles
 ```
 
 ### Auto-Discovery
@@ -249,6 +491,30 @@ cm notify send "Server is down!"
 cm schedule add -n monitor "cm ping" -i 300           # Every 5 min
 cm schedule add -n cleanup "cm cleanup -d 7" -i 86400  # Daily
 cm schedule list                                        # View all
+```
+
+---
+
+## Security
+
+CloudMesh takes security seriously:
+
+- **API Authentication**: All REST API endpoints require `X-Api-Key` header
+- **Node Auth Keys**: Per-node authentication with HMAC comparison
+- **File Encryption**: Fernet encryption for config and sensitive data
+- **SSH Policy**: RejectPolicy for unknown hosts (no silent acceptance)
+- **Path Traversal Protection**: Sandboxed file operations on nodes
+- **TLS Support**: Optional TLS encryption for node connections
+- **ACL System**: Role-based access control (admin/viewer/custom roles)
+- **Key Rotation**: Rotate `.secret.key` and node auth keys anytime
+
+### REST API Security
+```bash
+cm api --port 8080
+# Prints API key on startup - use it in all requests
+
+curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/status
+curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 ```
 
 ---
@@ -284,6 +550,15 @@ chmod +x cm_for-linux.sh
 cm node install -H SERVER_IP -u root -k ~/.ssh/id_rsa
 ```
 
+### Node Options
+```bash
+# Bind to specific interface
+cm node start --bind 127.0.0.1
+
+# Enable TLS
+cm node start --tls-cert cert.pem --tls-key key.pem
+```
+
 ### What Gets Installed
 ```
 ~/.cloudmesh-node/
@@ -301,7 +576,7 @@ cm node install -H SERVER_IP -u root -k ~/.ssh/id_rsa
 
 ```
 cloudmesh/
-  main.py              # CLI entry point (48 commands)
+  main.py              # CLI entry point (130+ commands)
   requirements.txt     # Python dependencies
   README.md            # This file
   core/
@@ -324,6 +599,18 @@ cloudmesh/
     history.py         # Command history
     cmdlog.py          # Command logging
     service.py         # Service management
+    docker.py          # Docker management
+    firewall.py        # Firewall management
+    sslcheck.py        # SSL certificate monitor
+    logagg.py          # Log aggregation
+    reshistory.py      # Resource history
+    plugins.py         # Custom plugins
+    acl.py             # Multi-user ACL
+    webhooks.py        # Webhook integrations
+    watcher.py         # Process watcher
+    cost.py            # Cost estimator
+    tunnels.py         # SSH tunnel manager
+    database.py        # Database manager
   node/
     cloudmesh_node.py  # Standalone node agent
 ```
@@ -388,6 +675,27 @@ cm node add -n NAME -H HOST -p 9999 -k YOUR_KEY
 # Reinstall dependencies
 cm version    # Shows Python path
 pip install -r requirements.txt
+```
+</details>
+
+<details>
+<summary><b>API returns 401 Unauthorized</b></summary>
+
+```bash
+# The API key is printed when starting the API
+cm api --port 8080
+
+# Use the key in your requests
+curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/status
+```
+</details>
+
+<details>
+<summary><b>SSH connection rejected</b></summary>
+
+CloudMesh uses RejectPolicy for security. Add the host to known_hosts first:
+```bash
+ssh-keyscan -H SERVER_IP >> ~/.ssh/known_hosts
 ```
 </details>
 
