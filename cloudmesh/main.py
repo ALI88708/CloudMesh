@@ -33,6 +33,10 @@ from core.features import (
     network_speed_test, scan_subnet, cleanup_old, generate_report,
     create_alias, get_aliases, remove_alias, get_version,
 )
+from core.panic import PanicManager
+from core.weather import WeatherForecast
+from core.gossip import GossipManager
+from core.checkpoint import CheckpointManager
 from core.advanced import (
     discover_network, run_full_benchmark, ScheduleManager, NotifyManager,
     CloudMeshAPI, ProfileManager, audit_server, quick_ssh,
@@ -992,6 +996,16 @@ def cmd_compare(args):
 
 def cmd_cmdlog(args):
     _, _, _, _, _, _, _, _, _, _, cmd_log = init_components()
+    if args.verify:
+        result = cmd_log.verify()
+        if result["valid"]:
+            console.print(f"[green]{result['message']}[/]")
+        else:
+            console.print(f"[red bold]{result['message']}[/]")
+            if "entry" in result:
+                entry = result["entry"]
+                console.print(f"  Entry #{result['broken_at']}: {entry.get('command', '?')} at {entry.get('timestamp', '?')}")
+        return
     if args.clear:
         cmd_log.clear()
         console.print("[green]Command log cleared.[/]")
@@ -2001,9 +2015,220 @@ def _alias_acl_rm(args):
     cmd_acl(args)
 
 
+# === 5 NEW FEATURES (v1.2.0) ===
+
+
+def cmd_panic(args):
+    panic = PanicManager()
+    if args.dry_run:
+        console.print(Panel("[bold red]PANIC — Dry Run[/]", border_style="red"))
+        actions = panic.dry_run()
+        for action_type, desc in actions:
+            console.print(f"  [yellow]{action_type}[/]: {desc}")
+        console.print("\n[dim]No changes made (dry run)[/]")
+        return
+
+    console.print(Panel("[bold red]PANIC — Executing Emergency Reset[/]", border_style="red"))
+    console.print("[yellow]Rotating all encryption keys and node auth keys...[/]")
+    actions = panic.execute_panic()
+    for action in actions:
+        console.print(f"  [green]+[/] {action}")
+    console.print()
+    console.print("[red bold]All keys rotated. Re-add nodes with new auth keys.[/]")
+
+
+def cmd_weather(args):
+    weather = WeatherForecast()
+    if args.learn:
+        _, server_mgr, monitor, *_ = init_components()
+        keys = _load_node_keys()
+        count = 0
+        for name in server_mgr.list_servers():
+            try:
+                metrics = monitor.get_all_metrics(name)
+                weather.learn_from_metrics(name, metrics)
+                count += 1
+            except Exception:
+                pass
+        for name, info in keys.items():
+            try:
+                client = NodeClient(info["host"], info["port"], info["key"])
+                metrics = client.get_metrics()
+                weather.learn_from_metrics(name, metrics)
+                count += 1
+            except Exception:
+                pass
+        console.print(f"[green]Recorded resource snapshot for {count} server(s)/node(s)[/]")
+        return
+
+    if args.clear:
+        weather.clear(args.clear if args.clear != "all" else None)
+        console.print("[green]Weather data cleared.[/]")
+        return
+
+    if args.server:
+        pred = weather.predict(args.server, args.hour)
+        profile = weather.get_hourly_profile(args.server)
+        console.print(Panel(f"[bold]{args.server}[/]", title="Resource Weather", border_style="cyan"))
+        table = Table(box=box.ROUNDED)
+        table.add_column("Hour", style="bold")
+        table.add_column("CPU EMA")
+        table.add_column("RAM EMA")
+        table.add_column("Samples")
+        for slot in profile:
+            cpu_str = f"{slot['cpu_ema']:.1f}%" if slot["cpu_ema"] is not None else "—"
+            ram_str = f"{slot['ram_ema']:.1f}%" if slot["ram_ema"] is not None else "—"
+            table.add_row(str(slot["hour"]), cpu_str, ram_str, str(slot["samples"]))
+        console.print(table)
+        if pred.get("status") == "predicted":
+            next_h = (datetime.now().hour + 1) % 24
+            console.print(f"\n  [cyan]Next hour ({next_h}:00) prediction:[/] CPU {pred['cpu_ema']:.1f}% / RAM {pred['ram_ema']:.1f}%")
+        return
+
+    all_preds = weather.predict_all(args.hour)
+    if not all_preds:
+        console.print("[dim]No weather data collected yet. Run: cm weather --learn[/]")
+        return
+
+    table = Table(title="Resource Weather Forecast", box=box.ROUNDED)
+    table.add_column("Server", style="bold")
+    table.add_column("Next Hour")
+    table.add_column("Predicted CPU")
+    table.add_column("Predicted RAM")
+    table.add_column("Samples")
+    next_h = (datetime.now().hour + 1) % 24
+    for name, pred in all_preds.items():
+        if pred.get("status") == "predicted":
+            cpu_color = "green" if pred["cpu_ema"] < 50 else "yellow" if pred["cpu_ema"] < 80 else "red"
+            table.add_row(name, f"{next_h}:00", f"[{cpu_color}]{pred['cpu_ema']:.1f}%[/]", f"{pred['ram_ema']:.1f}%", str(pred["samples"]))
+        else:
+            table.add_row(name, f"{next_h}:00", "[dim]no data[/]", "[dim]—[/]", "0")
+    console.print(table)
+
+
+def cmd_trust(args):
+    gossip = GossipManager()
+    if args.scan:
+        console.print("[cyan]Scanning all nodes for trust evaluation...[/]")
+        _, server_mgr, *_ = init_components()
+        keys = _load_node_keys()
+        gossip.scan_all(server_mgr, keys)
+        console.print("[green]Scan complete.[/]")
+
+    status = gossip.get_trust_status()
+    if not status:
+        console.print("[dim]No trust data. Run: cm trust --scan[/]")
+        return
+
+    table = Table(title="Distributed Trust Status", box=box.ROUNDED)
+    table.add_column("Node", style="bold")
+    table.add_column("Trust")
+    table.add_column("Score")
+    table.add_column("Status")
+    table.add_column("Reason")
+
+    for name, node in status.items():
+        trust_color = "green" if node.get("trust_score", 0) >= 80 else "yellow" if node.get("trust_score", 0) >= 50 else "red"
+        status_str = node.get("status", "unknown")
+        reason = node.get("reason") or ""
+        table.add_row(
+            name,
+            f"[{trust_color}]{status_str}[/]",
+            f"{node.get('trust_score', '?')}",
+            status_str,
+            reason[:50] if reason else "",
+        )
+
+    console.print(table)
+
+    suspicious = gossip.get_suspicious_nodes()
+    if suspicious:
+        console.print()
+        console.print(f"[red bold]WARNING: {len(suspicious)} suspicious node(s) detected![/]")
+
+
+# === CHECKPOINT COMMANDS (part of node job) ===
+
+def cmd_job_checkpoint(args):
+    keys = _load_node_keys()
+    if args.name not in keys:
+        console.print(f"[red]Node '{args.name}' not found.[/]")
+        return
+    info = keys[args.name]
+    client = NodeClient(info["host"], info["port"], info["key"])
+    result = client.check_job(args.job_id)
+    if not result:
+        console.print("[red]Job not found.[/]")
+        return
+    jm = JobManager()
+    cp_result = jm.checkpoint_job(
+        args.job_id,
+        stdout=result.get("stdout", ""),
+        stderr=result.get("stderr", ""),
+        exit_code=result.get("exit_code"),
+    )
+    if cp_result:
+        console.print(f"[green]Job '{args.job_id}' checkpointed successfully.[/]")
+    else:
+        console.print(f"[red]Failed to checkpoint job '{args.job_id}'.[/]")
+
+
+def cmd_job_recover(args):
+    jm = JobManager()
+    recoverable = jm.get_recoverable_jobs()
+    if not recoverable:
+        console.print("[dim]No recoverable jobs found.[/]")
+        return
+    table = Table(title="Recoverable Jobs", box=box.ROUNDED)
+    table.add_column("Job ID", style="bold")
+    table.add_column("Command")
+    table.add_column("Original Server")
+    table.add_column("Progress")
+    table.add_column("Checkpointed At")
+    for cp in recoverable:
+        table.add_row(
+            cp.get("job_id", "?"),
+            cp.get("command", "?")[:40],
+            cp.get("server", "?"),
+            str(cp.get("progress", 0)) + "%",
+            cp.get("checkpointed_at", "?")[:19],
+        )
+    console.print(table)
+    if args.relaunch:
+        for cp in recoverable:
+            result = jm.recover_job(cp["job_id"], args.target)
+            if result:
+                console.print(f"[green]Recovered {cp['job_id']} -> new job {result['new_job_id']} on {result['server']}[/]")
+            else:
+                console.print(f"[red]Failed to recover {cp['job_id']}[/]")
+
+
+def cmd_job_checkpoints(args):
+    cp = CheckpointManager()
+    checkpoints = cp.list_checkpoints()
+    if not checkpoints:
+        console.print("[dim]No checkpoints found.[/]")
+        return
+    table = Table(title="Job Checkpoints", box=box.ROUNDED)
+    table.add_column("Job ID", style="bold")
+    table.add_column("Command")
+    table.add_column("Server")
+    table.add_column("Progress")
+    table.add_column("Checkpointed At")
+    for c in checkpoints:
+        table.add_row(
+            c.get("job_id", "?"),
+            c.get("command", "?")[:40],
+            c.get("server", "?"),
+            str(c.get("progress", 0)) + "%",
+            c.get("checkpointed_at", "?")[:19],
+        )
+    console.print(table)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 1.1.0")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 1.2.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -2107,6 +2332,7 @@ def main():
     cl.add_argument("--search", "-s", help="Search commands")
     cl.add_argument("--clear", action="store_true", help="Clear log")
     cl.add_argument("--limit", "-l", type=int, default=20)
+    cl.add_argument("--verify", action="store_true", help="Verify command log chain integrity")
 
     subparsers.add_parser("interactive", help="Interactive TUI mode")
 
@@ -2270,6 +2496,30 @@ def main():
 
     api_p = subparsers.add_parser("api", help="Start REST API server")
     api_p.add_argument("--port", "-p", type=int, default=8080)
+
+    # === v1.2.0 NEW COMMANDS ===
+
+    panic_p = subparsers.add_parser("panic", help="Emergency: rotate all keys")
+    panic_p.add_argument("--dry-run", action="store_true", help="Preview without changes")
+
+    wea = subparsers.add_parser("weather", help="Resource weather forecast")
+    wea.add_argument("--server", "-s", help="Show forecast for specific server")
+    wea.add_argument("--hour", "-H", type=int, help="Predict for specific hour (0-23)")
+    wea.add_argument("--learn", action="store_true", help="Record current resource snapshot")
+    wea.add_argument("--clear", nargs="?", const="all", help="Clear weather data")
+
+    trust_p = subparsers.add_parser("trust", help="Distributed trust status")
+    trust_p.add_argument("--scan", action="store_true", help="Scan all nodes and evaluate trust")
+
+    job_cp = job_sub.add_parser("checkpoint", help="Checkpoint a running job")
+    job_cp.add_argument("--name", "-n", required=True)
+    job_cp.add_argument("--job-id", "-j", required=True)
+
+    job_rc = job_sub.add_parser("recover", help="Show/recover jobs from failed nodes")
+    job_rc.add_argument("--relaunch", action="store_true", help="Auto-relaunch recoverable jobs")
+    job_rc.add_argument("--target", "-t", help="Target node for recovery")
+
+    job_cp2 = job_sub.add_parser("checkpoints", help="List all job checkpoints")
 
     prf = subparsers.add_parser("profile", help="Config profiles")
     prf_sub = prf.add_subparsers(dest="action")
@@ -2757,6 +3007,9 @@ def main():
             "exec": cmd_node_exec, "install": cmd_node_install,
             "dashboard": cmd_node_dashboard,
             "gpu": cmd_node_gpu, "job": cmd_node_job,
+            "checkpoint": cmd_job_checkpoint,
+            "recover": cmd_job_recover,
+            "checkpoints": cmd_job_checkpoints,
         }.get(args.action, lambda: node.print_help())(args),
         "monitor": lambda: cmd_monitor(args),
         "mon": lambda: cmd_monitor(args),
@@ -2810,6 +3063,9 @@ def main():
         "schedule": lambda: cmd_schedule(args),
         "notify": lambda: cmd_notify(args),
         "api": lambda: cmd_api(args),
+        "panic": lambda: cmd_panic(args),
+        "weather": lambda: cmd_weather(args),
+        "trust": lambda: cmd_trust(args),
         "profile": lambda: cmd_profile(args),
         "audit": lambda: cmd_audit(args),
         "ssh": lambda: cmd_ssh(args),

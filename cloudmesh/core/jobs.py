@@ -33,6 +33,8 @@ class JobManager:
             "stderr": "",
             "timeout": timeout,
             "progress": 0,
+            "recoverable": True,
+            "last_checkpoint": None,
         }
         self._job_file(job_id).write_text(json.dumps(job, indent=2))
         return job_id
@@ -45,6 +47,64 @@ class JobManager:
         job.update(kwargs)
         f.write_text(json.dumps(job, indent=2))
         return True
+
+    def checkpoint_job(self, job_id, stdout="", stderr="", exit_code=None):
+        job = self.get_job(job_id)
+        if not job:
+            return False
+
+        self.update_job(
+            job_id,
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=exit_code,
+            last_checkpoint=datetime.now().isoformat(),
+        )
+
+        from core.checkpoint import CheckpointManager
+        cp = CheckpointManager()
+        cp.save_checkpoint(
+            job_id=job_id,
+            command=job.get("command", ""),
+            server=job.get("server", ""),
+            progress=job.get("progress", 0),
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=exit_code,
+        )
+        return True
+
+    def recover_job(self, job_id, new_server=None):
+        cp_import = None
+        try:
+            from core.checkpoint import CheckpointManager
+            cp_import = CheckpointManager()
+        except ImportError:
+            return None
+
+        cp = cp_import.load_checkpoint(job_id)
+        if not cp:
+            return None
+
+        new_server = new_server or cp.get("server", "")
+        new_id = self.create_job(cp.get("command", ""), new_server)
+        self.update_job(
+            new_id,
+            status="pending",
+            progress=cp.get("progress", 0),
+            stdout=cp.get("stdout", ""),
+            stderr=cp.get("stderr", ""),
+        )
+
+        cp_import.remove_checkpoint(job_id)
+
+        return {"old_job_id": job_id, "new_job_id": new_id, "server": new_server}
+
+    def get_recoverable_jobs(self, alive_nodes=None):
+        from core.checkpoint import CheckpointManager
+        cp = CheckpointManager()
+        alive = alive_nodes or set()
+        return cp.needs_recovery(alive)
 
     def get_job(self, job_id):
         f = self._job_file(job_id)
