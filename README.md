@@ -12,7 +12,8 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)]()
-[![Commands](https://img.shields.io/badge/Commands-130+-orange?style=for-the-badge)]()
+[![Commands](https://img.shields.io/badge/Commands-140+-orange?style=for-the-badge)]()
+[![Version](https://img.shields.io/badge/Version-1.2.0-brightgreen?style=for-the-badge)]()
 [![Stars](https://img.shields.io/github/stars/MrAli88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/MrAli88708/CloudMesh/stargazers)
 [![Security](https://img.shields.io/badge/Security-Secured-red?style=for-the-badge)]()
 
@@ -26,7 +27,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 |_|  |_|\___||___/_| |_|  \____\___/|_|  \___|
 ```
 
-**130+ commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **API auth**
+**140+ commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **API auth** | **Immutable Ledger** | **Panic Button**
 
 </div>
 
@@ -45,6 +46,11 @@ Managing multiple servers shouldn't mean juggling 10 SSH windows. CloudMesh give
 | Miss server alerts | `cm notify` - Telegram/Discord alerts |
 | Docker scattered across servers | `cm docker` - manage containers on any node |
 | No cost awareness | `cm cost` - estimate and compare cloud pricing |
+| Tamper-prone logs | `cm cmdlog --verify` - immutable hash chain detects tampering |
+| Compromised keys | `cm panic` - rotate ALL keys in one command |
+| Reactive scheduling | `cm weather` - predictive resource forecasting |
+| Single-point trust | `cm trust` - distributed trust evaluation |
+| Jobs lost on crash | `cm node job recover` - checkpoint & auto-recover jobs |
 
 ---
 
@@ -67,10 +73,12 @@ chmod +x cm.sh && ./cm.sh
 
 ### First Steps
 ```bash
-cm --help              # Show all 130+ commands
+cm --help              # Show all 140+ commands
 cm interactive         # Interactive TUI menu
 cm mon --local         # Monitor this machine
 cm discover 192.168.1  # Scan your network for nodes
+cm panic --dry-run     # Preview emergency key rotation
+cm weather --learn     # Start collecting resource data
 ```
 
 ---
@@ -233,6 +241,23 @@ cm discover 192.168.1  # Scan your network for nodes
 | `cm schedule add -n NAME "CMD"` | - | Schedule task |
 | `cm ssh -n NAME` | - | Quick SSH |
 
+### v1.2.0 — Security & Intelligence
+| Command | Description |
+|---------|-------------|
+| `cm cmdlog --verify` | Verify command log chain integrity (SHA-256 hash chain) |
+| `cm panic` | Emergency: rotate ALL encryption keys and node auth keys |
+| `cm panic --dry-run` | Preview what panic would do without making changes |
+| `cm weather` | Resource weather forecast for all servers |
+| `cm weather --learn` | Record current resource snapshot for prediction |
+| `cm weather -s SERVER` | Hourly CPU/RAM forecast for a specific server |
+| `cm weather --clear` | Clear all weather data |
+| `cm trust` | Distributed trust status for all nodes |
+| `cm trust --scan` | Scan nodes and evaluate trust (controller vs self-report) |
+| `cm node job checkpoint -n NAME -j JOB_ID` | Save checkpoint of a running job |
+| `cm node job recover` | List jobs that can be recovered from failed nodes |
+| `cm node job recover --relaunch` | Auto-relaunch recoverable jobs |
+| `cm node job checkpoints` | List all saved job checkpoints |
+
 ---
 
 ## Examples
@@ -323,6 +348,41 @@ cm schedule add -n cleanup "cm cleanup -d 7" -i 86400  # Daily
 cm schedule list                                        # View all
 ```
 
+### Immutable Command Ledger (v1.2.0)
+```bash
+cm cmdlog --verify           # Check if command log was tampered with
+# Chain intact — all 42 entries verified.
+# Chain BROKEN at entry #17 — possible tampering detected.
+```
+
+### Emergency Panic Button (v1.2.0)
+```bash
+cm panic --dry-run           # Preview what would happen
+cm panic                     # Rotate ALL keys immediately
+# All keys rotated. Re-add nodes with new auth keys.
+```
+
+### Resource Weather Forecast (v1.2.0)
+```bash
+cm weather --learn           # Record current CPU/RAM (run periodically)
+cm weather                   # See forecast for next hour
+cm weather -s prod-server    # Hourly profile for one server
+```
+
+### Distributed Trust (v1.2.0)
+```bash
+cm trust --scan              # Ping all nodes and evaluate trust
+cm trust                     # View trust status
+# WARNING: 1 suspicious node(s) detected!
+```
+
+### Job Checkpoint & Recovery (v1.2.0)
+```bash
+cm node job checkpoint -n gpu-1 -j abc123   # Save job progress
+cm node job checkpoints                       # List all checkpoints
+cm node job recover --relaunch                # Recover failed jobs
+```
+
 ---
 
 ## Security
@@ -337,6 +397,10 @@ CloudMesh takes security seriously:
 - **TLS Support**: Optional TLS encryption for node connections
 - **ACL System**: Role-based access control (admin/viewer/custom roles)
 - **Key Rotation**: Rotate `.secret.key` and node auth keys anytime
+- **Immutable Command Ledger**: SHA-256 hash chain detects any log tampering
+- **Emergency Panic Button**: One command rotates all keys and locks down access
+- **Distributed Trust**: Controller-vs-self-report comparison catches compromised nodes
+- **Job Checkpointing**: Save job progress periodically for crash recovery
 
 ### REST API Security
 ```bash
@@ -406,7 +470,7 @@ cm node start --tls-cert cert.pem --tls-key key.pem
 
 ```
 cloudmesh/
-  main.py              # CLI entry point (130+ commands)
+  main.py              # CLI entry point (140+ commands)
   requirements.txt     # Python dependencies
   README.md            # This file
   core/
@@ -414,7 +478,7 @@ cloudmesh/
     monitor.py         # Resource monitoring
     scheduler.py       # Task scheduling
     node_client.py     # TCP node communication
-    jobs.py            # Async job system
+    jobs.py            # Async job system + checkpoint integration
     gpu.py             # GPU telemetry
     features.py        # 20 utility features
     advanced.py        # 10 advanced features
@@ -427,7 +491,7 @@ cloudmesh/
     dashboard.py       # Live dashboard
     tui.py             # Interactive TUI
     history.py         # Command history
-    cmdlog.py          # Command logging
+    cmdlog.py          # Immutable command ledger (SHA-256 hash chain)
     service.py         # Service management
     docker.py          # Docker management
     firewall.py        # Firewall management
@@ -441,6 +505,10 @@ cloudmesh/
     cost.py            # Cost estimator
     tunnels.py         # SSH tunnel manager
     database.py        # Database manager
+    panic.py           # Emergency key rotation (v1.2.0)
+    weather.py         # Resource weather forecast (v1.2.0)
+    gossip.py          # Distributed trust evaluation (v1.2.0)
+    checkpoint.py      # Job checkpoint manager (v1.2.0)
   node/
     cloudmesh_node.py  # Standalone node agent
 ```
