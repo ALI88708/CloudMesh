@@ -56,14 +56,20 @@ Managing multiple servers shouldn't mean juggling 10 SSH windows. CloudMesh give
 
 ## Quick Start
 
-### Windows
+### PyPI (Recommended)
+```bash
+pip install cloudmesh
+cm --help
+```
+
+### Windows (Installer)
 1. Download [`cm_for-windows.bat`](cm_for-windows.bat) from this repo
 2. Download [`Python`](https://www.python.org/) From Website
 3. And Install [`Python`](https://www.python.org/) 
 4. Double-click to run [`cm_for-windows.bat`](cm_for-windows.bat) On it
 5. Done! Use `cm --help` to see all commands in PowerShell
 
-### Linux
+### Linux (Installer)
 Download [`Python`](https://www.python.org/) From Website
 And Install it
 ```bash
@@ -71,14 +77,21 @@ curl -sL https://raw.githubusercontent.com/MrAli88708/CloudMesh/main/cm_for-linu
 chmod +x cm.sh && ./cm.sh
 ```
 
+### Update
+```bash
+pip install --upgrade cloudmesh
+```
+
 ### First Steps
 ```bash
-cm --help              # Show all 140+ commands
+cm --help              # Show all 145+ commands
 cm interactive         # Interactive TUI menu
 cm mon --local         # Monitor this machine
 cm discover 192.168.1  # Scan your network for nodes
 cm panic --dry-run     # Preview emergency key rotation
 cm weather --learn     # Start collecting resource data
+cm tripwire plant --node honeypot --host 10.0.0.99  # Plant tripwire
+cm panic setup         # Split panic key into 3 Shamir shares
 ```
 
 ---
@@ -445,10 +458,11 @@ curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 
 | Option | What it does |
 |--------|-------------|
+| **PyPI** | `pip install cloudmesh` — simplest method |
 | **Fresh Install** | Download installer, double-click, done |
-| **Update** | Run installer again, choose "Update" |
+| **Update** | `pip install --upgrade cloudmesh` or run installer again |
 | **Factory Reset** | Choose "Factory Reset" - wipes everything |
-| **Uninstall** | Choose "Uninstall" - removes completely |
+| **Uninstall** | `pip uninstall cloudmesh` or choose "Uninstall" |
 
 The installer automatically:
 - Downloads all files from GitHub
