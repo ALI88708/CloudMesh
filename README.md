@@ -12,8 +12,8 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)]()
-[![Commands](https://img.shields.io/badge/Commands-140+-orange?style=for-the-badge)]()
-[![Version](https://img.shields.io/badge/Version-1.2.0-brightgreen?style=for-the-badge)]()
+[![Commands](https://img.shields.io/badge/Commands-145+-orange?style=for-the-badge)]()
+[![Version](https://img.shields.io/badge/Version-1.3.0-brightgreen?style=for-the-badge)]()
 [![Stars](https://img.shields.io/github/stars/MrAli88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/MrAli88708/CloudMesh/stargazers)
 [![Security](https://img.shields.io/badge/Security-Secured-red?style=for-the-badge)]()
 
@@ -27,7 +27,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 |_|  |_|\___||___/_| |_|  \____\___/|_|  \___|
 ```
 
-**140+ commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **API auth** | **Immutable Ledger** | **Panic Button**
+**145+ commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **API auth** | **Ghost Ports** | **Tripwire Keys** | **Shamir Panic**
 
 </div>
 
@@ -383,6 +383,31 @@ cm node job checkpoints                       # List all checkpoints
 cm node job recover --relaunch                # Recover failed jobs
 ```
 
+### Ghost Ports / SPA (v1.3.0)
+```bash
+cm node start --spa                           # Start node with SPA mode
+cm node start --spa --spa-port 9998           # Custom UDP port
+cm node start --spa --spa-window 10           # TCP stays open 10s after knock
+```
+**How it works:** Node listens on UDP silently. Controller sends a signed HMAC packet (knock). Node opens TCP for 5 seconds. Port scanners see nothing.
+
+### Tripwire Keys (v1.3.0)
+```bash
+cm tripwire plant --node honeypot --host 10.0.0.99   # Plant trap
+cm tripwire list                                     # View tripwires
+cm tripwire check                                    # Check if triggered
+cm tripwire remove --node honeypot                   # Remove trap
+```
+
+### Shamir Panic 2-of-3 (v1.3.0)
+```bash
+cm panic setup                             # Generate 3 shares
+cm panic shares                            # View share status
+cm panic execute --share 1 --share 2       # Execute with 2-of-3
+cm panic --dry-run                         # Preview without changes
+```
+**How it works:** Panic key is split into 3 shares using Shamir's Secret Sharing. Any 2 shares can execute panic. A single compromised device cannot trigger it alone.
+
 ---
 
 ## Security
@@ -399,6 +424,9 @@ CloudMesh takes security seriously:
 - **Key Rotation**: Rotate `.secret.key` and node auth keys anytime
 - **Immutable Command Ledger**: SHA-256 hash chain detects any log tampering
 - **Emergency Panic Button**: One command rotates all keys and locks down access
+- **Ghost Ports (SPA)**: TCP port invisible to port scanners — node only opens after signed UDP knock
+- **Tripwire Keys**: Fake keys that trigger automatic breach detection (zero false positives)
+- **Shamir Panic 2-of-3**: Panic requires 2 of 3 key shares — single compromised device can't trigger it
 - **Distributed Trust**: Controller-vs-self-report comparison catches compromised nodes
 - **Job Checkpointing**: Save job progress periodically for crash recovery
 
@@ -509,6 +537,7 @@ cloudmesh/
     weather.py         # Resource weather forecast (v1.2.0)
     gossip.py          # Distributed trust evaluation (v1.2.0)
     checkpoint.py      # Job checkpoint manager (v1.2.0)
+    shamir.py          # Shamir Secret Sharing over GF(p) (v1.3.0)
   node/
     cloudmesh_node.py  # Standalone node agent
 ```
