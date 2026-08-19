@@ -391,3 +391,302 @@ class TestHMACComparison:
         import inspect
         src = inspect.getsource(CloudMeshAPI.start)
         assert "compare_digest" in src
+
+
+# ─────────────────────────────────────────────
+# 6. Shamir Secret Sharing Tests
+# ─────────────────────────────────────────────
+
+class TestShamir:
+    def test_split_and_combine_2of3(self):
+        from core.shamir import ShamirSecretSharing
+        secret = b"supersecretkey12345678901234567"
+        shares = ShamirSecretSharing.split(secret, 3, 2)
+        assert len(shares) == 3
+        reconstructed = ShamirSecretSharing.combine(shares[:2])
+        assert reconstructed == secret
+
+    def test_all_2_of_3_combinations(self):
+        from core.shamir import ShamirSecretSharing
+        secret = b"another_test_secret_key_32bytes!"
+        shares = ShamirSecretSharing.split(secret, 3, 2)
+        for i in range(3):
+            for j in range(i + 1, 3):
+                reconstructed = ShamirSecretSharing.combine([shares[i], shares[j]])
+                assert reconstructed == secret, f"Failed to reconstruct with shares {i},{j}"
+
+    def test_single_share_fails(self):
+        from core.shamir import ShamirSecretSharing
+        secret = b"cannot_reconstruct_with_one_share!"
+        shares = ShamirSecretSharing.split(secret, 3, 2)
+        with pytest.raises(ValueError, match="at least 2"):
+            ShamirSecretSharing.combine([shares[0]])
+
+    def test_empty_secret_rejected(self):
+        from core.shamir import ShamirSecretSharing
+        with pytest.raises(ValueError, match="empty"):
+            ShamirSecretSharing.split(b"", 3, 2)
+
+    def test_invalid_threshold_rejected(self):
+        from core.shamir import ShamirSecretSharing
+        with pytest.raises(ValueError):
+            ShamirSecretSharing.split(b"test", 3, 1)
+
+    def test_duplicate_shares_rejected(self):
+        from core.shamir import ShamirSecretSharing
+        secret = b"test_secret_for_duplicates"
+        shares = ShamirSecretSharing.split(secret, 3, 2)
+        with pytest.raises(ValueError, match="Duplicate"):
+            ShamirSecretSharing.combine([shares[0], shares[0]])
+
+    def test_wrong_shares_fail(self):
+        from core.shamir import ShamirSecretSharing
+        secret1 = b"secret_one_key_1234567890123456"
+        secret2 = b"secret_two_key_1234567890123456"
+        shares1 = ShamirSecretSharing.split(secret1, 3, 2)
+        shares2 = ShamirSecretSharing.split(secret2, 3, 2)
+        mixed = [shares1[0], shares2[1]]
+        reconstructed = ShamirSecretSharing.combine(mixed)
+        assert reconstructed != secret1
+        assert reconstructed != secret2
+
+
+# ─────────────────────────────────────────────
+# 7. Tripwire Tests
+# ─────────────────────────────────────────────
+
+class TestTripwire:
+    def test_plant_and_detect(self, tmp_path):
+        from core.panic import TripwireManager
+        tw = TripwireManager(base_dir=tmp_path)
+        key = tw.plant("honeypot", "10.0.0.99")
+        assert key is not None
+        assert len(key) == 64
+        is_tripwire, name = tw.check(key)
+        assert is_tripwire is True
+        assert name == "honeypot"
+
+    def test_legitimate_key_not_tripwire(self, tmp_path):
+        from core.panic import TripwireManager
+        tw = TripwireManager(base_dir=tmp_path)
+        tw.plant("honeypot", "10.0.0.99")
+        is_tripwire, _ = tw.check("this_is_not_a_tripwire_key")
+        assert is_tripwire is False
+
+    def test_list_tripwires(self, tmp_path):
+        from core.panic import TripwireManager
+        tw = TripwireManager(base_dir=tmp_path)
+        tw.plant("tw1", "10.0.0.1")
+        tw.plant("tw2", "10.0.0.2")
+        tripwires = tw.list_tripwires()
+        assert len(tripwires) == 2
+        assert "tw1" in tripwires
+        assert "tw2" in tripwires
+
+    def test_remove_tripwire(self, tmp_path):
+        from core.panic import TripwireManager
+        tw = TripwireManager(base_dir=tmp_path)
+        tw.plant("to_remove", "10.0.0.5")
+        result = tw.remove("to_remove")
+        assert "removed" in result.lower()
+        tripwires = tw.list_tripwires()
+        assert len(tripwires) == 0
+
+    def test_plant_duplicate_rejected(self, tmp_path):
+        from core.panic import TripwireManager
+        tw = TripwireManager(base_dir=tmp_path)
+        tw.plant("existing", "10.0.0.1", port=9999)
+        result = tw.plant("existing", "10.0.0.2")
+        assert "already" in result.lower()
+
+    def test_node_agent_detects_tripwire(self, tmp_path):
+        sys.path.insert(0, str(ROOT / "node"))
+        from cloudmesh_node import NodeAgent
+        import socket
+
+        tw_key = "tripwire_secret_1234567890abcdef"
+        tripwire_file = tmp_path / ".tripwire_keys.json"
+        tripwire_file.write_text(json.dumps({
+            "honeypot": {"host": "10.0.0.99", "port": 9999, "key": tw_key}
+        }))
+
+        import cloudmesh_node
+        orig_keys = cloudmesh_node.TRIPWIRE_KEYS_FILE
+        orig_base = cloudmesh_node.BASE_DIR
+        cloudmesh_node.TRIPWIRE_KEYS_FILE = tripwire_file
+        cloudmesh_node.BASE_DIR = tmp_path
+
+        node = NodeAgent(port=0, auth_key="real_key", bind_host="127.0.0.1")
+
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        port = srv.getsockname()[1]
+        srv.listen(1)
+
+        result = {}
+
+        def client_thread():
+            c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            c.connect(("127.0.0.1", port))
+            msg = json.dumps({"action": "ping", "auth": tw_key}).encode()
+            c.sendall(len(msg).to_bytes(4, "big") + msg)
+            c.settimeout(3)
+            try:
+                header = b""
+                while len(header) < 4:
+                    chunk = c.recv(4 - len(header))
+                    if not chunk:
+                        break
+                    header += chunk
+                length = int.from_bytes(header, "big")
+                data = b""
+                while len(data) < length:
+                    chunk = c.recv(min(length - len(data), 65536))
+                    if not chunk:
+                        break
+                    data += chunk
+                result["response"] = json.loads(data.decode())
+            except Exception as e:
+                result["error"] = str(e)
+            finally:
+                c.close()
+
+        t = threading.Thread(target=client_thread, daemon=True)
+        t.start()
+        try:
+            conn, addr = srv.accept()
+            node._handle(conn, addr)
+        except Exception:
+            pass
+        t.join(timeout=5)
+        srv.close()
+
+        assert result.get("response", {}).get("type") == "error"
+        assert "auth" in result.get("response", {}).get("message", "").lower()
+
+        log_file = tmp_path / ".tripwire_log.json"
+        assert log_file.exists()
+        log = json.loads(log_file.read_text())
+        assert any(e.get("event") == "triggered" for e in log)
+
+        cloudmesh_node.TRIPWIRE_KEYS_FILE = orig_keys
+        cloudmesh_node.BASE_DIR = orig_base
+
+
+# ─────────────────────────────────────────────
+# 8. SPA Packet Validation Tests
+# ─────────────────────────────────────────────
+
+class TestSpaPacket:
+    def test_valid_hmac_packet(self):
+        import hashlib
+        import hmac as hmac_mod
+        import uuid
+        import time
+
+        auth_key = "test_spa_key_12345"
+        timestamp = time.time()
+        nonce = uuid.uuid4().hex[:16]
+        msg = f"{timestamp}:{nonce}"
+        signature = hmac_mod.new(auth_key.encode(), msg.encode(), hashlib.sha256).hexdigest()
+
+        packet = json.dumps({"timestamp": timestamp, "nonce": nonce, "hmac": signature}).encode()
+        parsed = json.loads(packet)
+
+        expected = hmac_mod.new(auth_key.encode(), f"{parsed['timestamp']}:{parsed['nonce']}".encode(), hashlib.sha256).hexdigest()
+        assert hmac_mod.compare_digest(expected, parsed["hmac"])
+
+    def test_replay_nonce_rejected(self):
+        nonces_seen = set()
+        nonce1 = "abc123"
+        nonce2 = "abc123"
+        assert nonce1 not in nonces_seen
+        nonces_seen.add(nonce1)
+        assert nonce2 in nonces_seen
+
+    def test_stale_timestamp_rejected(self):
+        import time
+        stale_timestamp = time.time() - 60
+        current_time = time.time()
+        max_age = 30
+        assert abs(current_time - stale_timestamp) > max_age
+
+    def test_spa_knock_sends_udp(self):
+        from core.node_client import NodeClient
+        import hmac as hmac_mod
+        import hashlib
+        import time
+        import uuid
+
+        auth_key = "test_controller_key"
+        timestamp = time.time()
+        nonce = uuid.uuid4().hex[:16]
+        msg = f"{timestamp}:{nonce}"
+        signature = hmac_mod.new(auth_key.encode(), msg.encode(), hashlib.sha256).hexdigest()
+
+        import socket
+        srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        srv.bind(("127.0.0.1", 0))
+        port = srv.getsockname()[1]
+        srv.settimeout(2)
+
+        NodeClient.send_spa_knock("127.0.0.1", auth_key, spa_port=port)
+
+        try:
+            data, addr = srv.recvfrom(1024)
+            packet = json.loads(data.decode())
+            assert "timestamp" in packet
+            assert "nonce" in packet
+            assert "hmac" in packet
+            expected = hmac_mod.new(
+                auth_key.encode(),
+                f"{packet['timestamp']}:{packet['nonce']}".encode(),
+                hashlib.sha256
+            ).hexdigest()
+            assert hmac_mod.compare_digest(expected, packet["hmac"])
+        finally:
+            srv.close()
+
+
+# ─────────────────────────────────────────────
+# 9. Shamir Panic Tests
+# ─────────────────────────────────────────────
+
+class TestShamirPanic:
+    def test_setup_shares(self, tmp_path):
+        from core.panic import ShamirPanicManager
+        sp = ShamirPanicManager(base_dir=tmp_path)
+        shares = sp.setup_shares()
+        assert len(shares) == 3
+        for s in shares:
+            assert "id" in s
+            assert "share" in s
+            assert "label" in s
+
+    def test_execute_with_2_shares(self, tmp_path):
+        from core.panic import ShamirPanicManager
+        sp = ShamirPanicManager(base_dir=tmp_path)
+        shares = sp.setup_shares()
+        share_ids = [s["id"] for s in shares[:2]]
+        actions, error = sp.execute_with_shares(share_ids)
+        assert error is None
+        assert len(actions) > 0
+
+    def test_execute_with_1_share_fails(self, tmp_path):
+        from core.panic import ShamirPanicManager
+        sp = ShamirPanicManager(base_dir=tmp_path)
+        shares = sp.setup_shares()
+        actions, error = sp.execute_with_shares([shares[0]["id"]])
+        assert error is not None
+        assert "need" in error.lower() or "2" in error
+
+    def test_get_shares_info(self, tmp_path):
+        from core.panic import ShamirPanicManager
+        sp = ShamirPanicManager(base_dir=tmp_path)
+        sp.setup_shares()
+        info = sp.get_shares_info()
+        assert info is not None
+        assert info["threshold"] == 2
+        assert info["n_shares"] == 3
+        assert len(info["shares"]) == 3

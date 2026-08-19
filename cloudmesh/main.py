@@ -33,7 +33,7 @@ from core.features import (
     network_speed_test, scan_subnet, cleanup_old, generate_report,
     create_alias, get_aliases, remove_alias, get_version,
 )
-from core.panic import PanicManager
+from core.panic import PanicManager, TripwireManager, ShamirPanicManager
 from core.weather import WeatherForecast
 from core.gossip import GossipManager
 from core.checkpoint import CheckpointManager
@@ -2019,6 +2019,49 @@ def _alias_acl_rm(args):
 
 
 def cmd_panic(args):
+    if hasattr(args, "panic_action") and args.panic_action:
+        shamir = ShamirPanicManager()
+        if args.panic_action == "setup":
+            shares = shamir.setup_shares()
+            console.print(Panel("[bold red]PANIC SHARES GENERATED[/]", border_style="red"))
+            console.print("[yellow]Store each share on a separate device. You need 2 of 3 to execute panic.[/]")
+            console.print(f"[dim]Threshold: 2 of {len(shares)} shares[/]\n")
+            for s in shares:
+                console.print(f"  [bold]Share #{s['id']}[/] ({s['label']})")
+                console.print(f"    {s['share']}")
+                console.print()
+            console.print("[red bold]IMPORTANT: These shares cannot be recovered if lost![/]")
+            return
+        elif args.panic_action == "execute":
+            if not args.share:
+                console.print("[red]Need at least 2 --share IDs to execute panic[/]")
+                return
+            console.print(Panel("[bold red]PANIC — Executing with Shamir Shares[/]", border_style="red"))
+            console.print(f"[yellow]Using shares: {args.share}[/]")
+            actions, error = shamir.execute_with_shares(args.share)
+            if error:
+                console.print(f"[red]FAILED: {error}[/]")
+                return
+            for action in actions:
+                console.print(f"  [green]+[/] {action}")
+            console.print()
+            console.print("[red bold]Panic complete. All keys rotated.[/]")
+            return
+        elif args.panic_action == "shares":
+            info = shamir.get_shares_info()
+            if not info:
+                console.print("[dim]No shares configured. Run: cm panic setup[/]")
+                return
+            table = Table(title="Panic Shares", box=box.ROUNDED)
+            table.add_column("ID", style="bold")
+            table.add_column("Label")
+            table.add_column("Created")
+            for s in info["shares"]:
+                table.add_row(str(s["id"]), s["label"], s["created_at"][:19])
+            console.print(table)
+            console.print(f"[dim]Threshold: {info['threshold']} of {info['n_shares']} shares required[/]")
+            return
+
     panic = PanicManager()
     if args.dry_run:
         console.print(Panel("[bold red]PANIC — Dry Run[/]", border_style="red"))
@@ -2035,6 +2078,47 @@ def cmd_panic(args):
         console.print(f"  [green]+[/] {action}")
     console.print()
     console.print("[red bold]All keys rotated. Re-add nodes with new auth keys.[/]")
+
+
+def cmd_tripwire(args):
+    tw = TripwireManager()
+    if args.tripwire_action == "plant":
+        key = tw.plant(args.node, args.host, args.port)
+        console.print(Panel("[bold red]TRIPWIRE PLANTED[/]", border_style="red"))
+        console.print(f"  [bold]Node:[/] {args.node}")
+        console.print(f"  [bold]Host:[/] {args.host}:{args.port}")
+        console.print(f"  [bold]Key:[/]  {key}")
+        console.print("\n[yellow]If anyone connects with this key, it's a 100% confirmed breach.[/]")
+        console.print("[dim]Do NOT use this key. Store it somewhere safe as proof.[/]")
+    elif args.tripwire_action == "list":
+        tripwires = tw.list_tripwires()
+        if not tripwires:
+            console.print("[dim]No tripwires planted.[/]")
+            return
+        table = Table(title="Tripwire Keys", box=box.ROUNDED)
+        table.add_column("Node", style="bold")
+        table.add_column("Host")
+        table.add_column("Planted At")
+        table.add_column("Key (masked)")
+        for name, info in tripwires.items():
+            table.add_row(name, f"{info['host']}:{info['port']}", info["planted_at"][:19], info["key_masked"])
+        console.print(table)
+    elif args.tripwire_action == "remove":
+        result = tw.remove(args.node)
+        console.print(f"[green]{result}[/]")
+    elif args.tripwire_action == "check":
+        triggered = tw.get_triggered()
+        if not triggered:
+            console.print("[green]No tripwire activations detected.[/]")
+            return
+        console.print(f"[red bold]ALERT: {len(triggered)} tripwire activation(s) detected![/]")
+        table = Table(title="Tripwire Breaches", box=box.ROUNDED)
+        table.add_column("Time")
+        table.add_column("Source IP")
+        table.add_column("Key Hash")
+        for entry in triggered:
+            table.add_row(entry.get("timestamp", "?")[:19], entry.get("source_ip", "?"), entry.get("key_hash", "?"))
+        console.print(table)
 
 
 def cmd_weather(args):
@@ -2228,7 +2312,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 1.2.0")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 1.3.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -2501,6 +2585,22 @@ def main():
 
     panic_p = subparsers.add_parser("panic", help="Emergency: rotate all keys")
     panic_p.add_argument("--dry-run", action="store_true", help="Preview without changes")
+    panic_sub = panic_p.add_subparsers(dest="panic_action")
+    panic_sub.add_parser("setup", help="Split panic key into 3 Shamir shares")
+    panic_exec = panic_sub.add_parser("execute", help="Execute panic with 2-of-3 shares")
+    panic_exec.add_argument("--share", "-s", type=int, nargs="+", required=True, help="Share IDs to use (need >= 2)")
+    panic_sub.add_parser("shares", help="Show current share status")
+
+    tw_p = subparsers.add_parser("tripwire", help="Tripwire key management")
+    tw_sub = tw_p.add_subparsers(dest="tripwire_action")
+    tw_plant = tw_sub.add_parser("plant", help="Plant a tripwire key")
+    tw_plant.add_argument("--node", "-n", required=True, help="Tripwire name")
+    tw_plant.add_argument("--host", "-H", required=True, help="Fake host IP")
+    tw_plant.add_argument("--port", "-p", type=int, default=9999)
+    tw_sub.add_parser("list", help="List planted tripwires")
+    tw_rm = tw_sub.add_parser("remove", help="Remove a tripwire")
+    tw_rm.add_argument("--node", "-n", required=True)
+    tw_sub.add_parser("check", help="Check if any tripwire was triggered")
 
     wea = subparsers.add_parser("weather", help="Resource weather forecast")
     wea.add_argument("--server", "-s", help="Show forecast for specific server")
@@ -3064,6 +3164,9 @@ def main():
         "notify": lambda: cmd_notify(args),
         "api": lambda: cmd_api(args),
         "panic": lambda: cmd_panic(args),
+        "tripwire": lambda: cmd_tripwire(args),
+        "tw": lambda: cmd_tripwire(args),
+        "triw": lambda: cmd_tripwire(args),
         "weather": lambda: cmd_weather(args),
         "trust": lambda: cmd_trust(args),
         "profile": lambda: cmd_profile(args),

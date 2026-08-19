@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""CloudMesh Node - Agent with GPU telemetry and async jobs."""
+"""CloudMesh Node - Agent with GPU telemetry, async jobs, SPA and tripwire."""
 
 import hashlib
 import hmac as hmac_mod
 import json
 import os
 import platform
+import secrets
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -27,7 +29,11 @@ KEY_FILE = BASE_DIR / ".node_key"
 JOBS_DIR = BASE_DIR / "jobs"
 PID_FILE = BASE_DIR / "cloudmesh_node.pid"
 LOG_FILE = BASE_DIR / "cloudmesh_node.log"
+TRIPWIRE_KEYS_FILE = BASE_DIR / ".tripwire_keys.json"
 DEFAULT_PORT = 9999
+DEFAULT_SPA_PORT = 9998
+DEFAULT_SPA_WINDOW = 5
+SPA_TIMESTAMP_MAX_AGE = 30
 
 
 def get_or_create_key():
@@ -49,6 +55,41 @@ def _log(msg):
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
+
+
+def _load_tripwire_keys():
+    if TRIPWIRE_KEYS_FILE.exists():
+        try:
+            return json.loads(TRIPWIRE_KEYS_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _log_tripwire_breach(key_used, source_ip):
+    log_file = BASE_DIR / ".tripwire_log.json"
+    entries = []
+    if log_file.exists():
+        try:
+            entries = json.loads(log_file.read_text())
+        except Exception:
+            entries = []
+    entries.append({
+        "event": "triggered",
+        "timestamp": datetime.now().isoformat(),
+        "source_ip": source_ip,
+        "key_hash": hashlib.sha256(key_used.encode()).hexdigest()[:16],
+    })
+    entries = entries[-200:]
+    log_file.write_text(json.dumps(entries, indent=2))
+
+
+def _check_tripwire(key_used):
+    tripwires = _load_tripwire_keys()
+    for name, info in tripwires.items():
+        if info.get("key") == key_used:
+            return True, name
+    return False, None
 
 
 def get_gpu_info():
@@ -164,8 +205,97 @@ def _safe_path(user_path):
         return None
 
 
+class SpacListener:
+    def __init__(self, auth_key, spa_port, tcp_port, window, on_open_callback):
+        self.auth_key = auth_key
+        self.spa_port = spa_port
+        self.tcp_port = tcp_port
+        self.window = window
+        self.on_open = on_open_callback
+        self._running = False
+        self._used_nonces = set()
+        self._nonce_lock = threading.Lock()
+        self._sock = None
+
+    def _validate_packet(self, packet_bytes, source_ip):
+        try:
+            packet = json.loads(packet_bytes.decode())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return False
+
+        timestamp = packet.get("timestamp", 0)
+        nonce = packet.get("nonce", "")
+        signature = packet.get("hmac", "")
+
+        if not timestamp or not nonce or not signature:
+            return False
+
+        now = time.time()
+        if abs(now - timestamp) > SPA_TIMESTAMP_MAX_AGE:
+            _log(f"SPA: Rejected stale packet from {source_ip} (age={abs(now - timestamp):.1f}s)")
+            return False
+
+        with self._nonce_lock:
+            if nonce in self._used_nonces:
+                _log(f"SPA: Rejected replay nonce from {source_ip}")
+                return False
+            self._used_nonces.add(nonce)
+            if len(self._used_nonces) > 10000:
+                self._used_nonces = set(list(self._used_nonces)[-5000:])
+
+        msg = f"{timestamp}:{nonce}"
+        expected_hmac = hmac_mod.new(
+            self.auth_key.encode(), msg.encode(), hashlib.sha256
+        ).hexdigest()
+
+        if not hmac_mod.compare_digest(expected_hmac, signature):
+            _log(f"SPA: Invalid HMAC from {source_ip}")
+            return False
+
+        return True
+
+    def _listen_loop(self):
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.settimeout(1.0)
+        try:
+            self._sock.bind(("0.0.0.0", self.spa_port))
+        except OSError as e:
+            _log(f"SPA: Failed to bind UDP port {self.spa_port}: {e}")
+            return
+        _log(f"SPA: UDP listener started on port {self.spa_port}")
+
+        while self._running:
+            try:
+                data, addr = self._sock.recvfrom(1024)
+                source_ip = addr[0]
+                if self._validate_packet(data, source_ip):
+                    _log(f"SPA: Valid knock from {source_ip} — opening TCP {self.tcp_port} for {self.window}s")
+                    self.on_open(self.window)
+            except socket.timeout:
+                continue
+            except Exception as e:
+                _log(f"SPA: Error: {e}")
+
+        try:
+            self._sock.close()
+        except Exception:
+            pass
+
+    def start(self):
+        self._running = True
+        thread = threading.Thread(target=self._listen_loop, daemon=True)
+        thread.start()
+        return thread
+
+    def stop(self):
+        self._running = False
+
+
 class NodeAgent:
-    def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0", tls_cert=None, tls_key=None):
+    def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",
+                 tls_cert=None, tls_key=None,
+                 spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
         self.port = port
         self.auth_key = auth_key or get_or_create_key()
         self.bind_host = bind_host
@@ -175,6 +305,28 @@ class NodeAgent:
         self._jobs = {}
         self._lock = threading.Lock()
         self._load_jobs()
+
+        self.spa_mode = spa
+        self.spa_port = spa_port
+        self.spa_window = spa_window
+        self._spa_open = False
+        self._spa_lock = threading.Lock()
+        self._spa_event = threading.Event()
+        self._spac = None
+
+    def _on_spa_knock(self, window):
+        with self._spa_lock:
+            self._spa_open = True
+            self._spa_event.set()
+
+        def close_after_delay():
+            time.sleep(window)
+            with self._spa_lock:
+                self._spa_open = False
+                self._spa_event.clear()
+            _log(f"SPA: TCP port {self.port} closed after {window}s window")
+
+        threading.Thread(target=close_after_delay, daemon=True).start()
 
     def _load_jobs(self):
         JOBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -284,9 +436,16 @@ class NodeAgent:
             req = self._recv_msg(client)
             if req is None:
                 return
-            if not hmac_mod.compare_digest(req.get("auth", "") or "", self.auth_key):
+
+            auth_key = req.get("auth", "") or ""
+            if not hmac_mod.compare_digest(auth_key, self.auth_key):
+                is_tripwire, tripwire_name = _check_tripwire(auth_key)
+                if is_tripwire:
+                    _log(f"TRIPWIRE TRIGGERED! Key '{tripwire_name}' used from {addr[0]}")
+                    _log_tripwire_breach(auth_key, addr[0])
                 self._send_msg(client, {"type": "error", "message": "Auth failed"})
                 return
+
             action = req.get("action", "")
             if action == "ping":
                 resp = {"type": "pong", "time": datetime.now().isoformat()}
@@ -296,6 +455,7 @@ class NodeAgent:
                     "platform": sys.platform,
                     "arch": platform.machine(),
                     "python": platform.python_version(),
+                    "spa_mode": self.spa_mode,
                 }}
             elif action == "metrics":
                 resp = {"type": "metrics", "data": get_metrics()}
@@ -360,28 +520,54 @@ class NodeAgent:
     def serve(self):
         self._running = True
         PID_FILE.write_text(str(os.getpid()))
+
+        if self.spa_mode:
+            self._spac = SpacListener(
+                auth_key=self.auth_key,
+                spa_port=self.spa_port,
+                tcp_port=self.port,
+                window=self.spa_window,
+                on_open_callback=self._on_spa_knock,
+            )
+            self._spac.start()
+
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((self.bind_host, self.port))
         srv.listen(16)
         srv.settimeout(1)
-        _log(f"Node started on {self.bind_host}:{self.port}")
+
         if self.tls_cert and self.tls_key:
             import ssl
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.load_cert_chain(self.tls_cert, self.tls_key)
             srv = ctx.wrap_socket(srv, server_side=True)
             _log("TLS enabled")
+
+        mode_str = f"SPA(UDP:{self.spa_port})" if self.spa_mode else "TCP"
+        _log(f"Node started on {self.bind_host}:{self.port} [{mode_str}]")
+
         if platform.system() != "Windows":
             signal.signal(signal.SIGTERM, lambda s, f: setattr(self, "_running", False))
+
         while self._running:
             try:
+                if self.spa_mode:
+                    with self._spa_lock:
+                        spa_open = self._spa_open
+                    if not spa_open:
+                        time.sleep(0.1)
+                        continue
+
                 c, a = srv.accept()
                 threading.Thread(target=self._handle, args=(c, a), daemon=True).start()
             except socket.timeout:
                 continue
             except Exception:
                 pass
+
+        if self._spac:
+            self._spac.stop()
         srv.close()
         try:
             PID_FILE.unlink(missing_ok=True)
@@ -420,7 +606,8 @@ def _is_running(pid):
             return False
 
 
-def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0", tls_cert=None, tls_key=None):
+def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0", tls_cert=None, tls_key=None,
+              spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
     existing = _read_pid()
     if existing and _is_running(existing):
         print(f"Already running (PID {existing})")
@@ -429,8 +616,10 @@ def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0", tls_cert=None, tls_key=Non
         PID_FILE.unlink(missing_ok=True)
     except Exception:
         pass
-    agent = NodeAgent(port=port, bind_host=bind_host, tls_cert=tls_cert, tls_key=tls_key)
-    print(f"Starting node agent on {bind_host}:{port}...")
+    agent = NodeAgent(port=port, bind_host=bind_host, tls_cert=tls_cert, tls_key=tls_key,
+                      spa=spa, spa_port=spa_port, spa_window=spa_window)
+    mode_str = f"SPA(UDP:{spa_port}, window:{spa_window}s)" if spa else "TCP"
+    print(f"Starting node agent on {bind_host}:{port} [{mode_str}]...")
     try:
         agent.serve()
     except KeyboardInterrupt:
@@ -483,11 +672,18 @@ def main():
     start_p.add_argument("--bind", "-b", default="0.0.0.0")
     start_p.add_argument("--tls-cert", default=None)
     start_p.add_argument("--tls-key", default=None)
+    start_p.add_argument("--spa", action="store_true",
+                         help="Enable SPA (Single Packet Authorization) — TCP port invisible to scanners")
+    start_p.add_argument("--spa-port", type=int, default=DEFAULT_SPA_PORT,
+                         help="UDP port for SPA knocks (default: 9998)")
+    start_p.add_argument("--spa-window", type=int, default=DEFAULT_SPA_WINDOW,
+                         help="Seconds TCP port stays open after knock (default: 5)")
     sub.add_parser("stop")
     sub.add_parser("status")
     args = p.parse_args()
     if args.command == "start":
-        cmd_start(port=args.port, bind_host=args.bind, tls_cert=args.tls_cert, tls_key=args.tls_key)
+        cmd_start(port=args.port, bind_host=args.bind, tls_cert=args.tls_cert, tls_key=args.tls_key,
+                  spa=args.spa, spa_port=args.spa_port, spa_window=args.spa_window)
     elif args.command == "stop":
         cmd_stop()
     elif args.command == "status":
