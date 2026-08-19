@@ -189,3 +189,11 @@ class NodeClient:
             "job_id": job_id,
         }, timeout=10, spa=spa, spa_port=spa_port)
         return resp.get("data", resp)
+
+    def rotate_keys(self, auth_key=None, spa=False, spa_port=9998):
+        key = auth_key or self.auth_key
+        resp = self._send({
+            "action": "rotate_keys",
+            "auth": key,
+        }, timeout=10, spa=spa, spa_port=spa_port)
+        return resp.get("data", resp)

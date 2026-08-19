@@ -21,13 +21,14 @@ def list_webhooks():
     data = _load_webhooks()
     return data.get("webhooks", [])
 
-def add_webhook(name, url, webhook_type="custom", events=None):
+def add_webhook(name, url, webhook_type="custom", events=None, chat_id=None):
     data = _load_webhooks()
     webhook = {
         "name": name,
         "url": url,
         "type": webhook_type,
         "events": events or ["alert", "error"],
+        "chat_id": chat_id,
         "enabled": True,
         "created": time.strftime("%Y-%m-%d %H:%M:%S")
     }
@@ -61,7 +62,11 @@ def send_webhook(message, event_type="alert"):
                 payload = json.dumps({"text": f"*CloudMesh* [{event_type}]\n{message}"})
                 cmd = ["curl", "-s", "-X", "POST", "-H", "Content-Type: application/json", "-d", payload, url]
             elif wh_type == "telegram":
-                cmd = ["curl", "-s", "-X", "POST", f"{url}/sendMessage", "-d", f"chat_id=&text=CloudMesh [{event_type}]: {message}"]
+                chat_id = wh.get("chat_id") or ""
+                if not chat_id:
+                    sent.append({"webhook": wh["name"], "status": "failed: chat_id required for Telegram"})
+                    continue
+                cmd = ["curl", "-s", "-X", "POST", f"{url}/sendMessage", "-d", f"chat_id={chat_id}&text=CloudMesh [{event_type}]: {message}"]
             else:
                 payload = json.dumps({"event": event_type, "message": message, "source": "cloudmesh", "time": time.strftime("%Y-%m-%d %H:%M:%S")})
                 cmd = ["curl", "-s", "-X", "POST", "-H", "Content-Type: application/json", "-d", payload, url]

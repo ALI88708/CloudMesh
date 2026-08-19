@@ -1,6 +1,31 @@
-import json, os, subprocess
+import json, os
+from core.ssh_util import run_ssh
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+
+ALLOWED_RULES = {
+    "allow", "deny", "reject",
+    "allow 22/tcp", "allow 80/tcp", "allow 443/tcp", "allow 8080/tcp",
+    "allow from", "deny from",
+    "limit", "delete",
+    "enable", "disable", "status",
+    "reset", "default deny incoming", "default allow outgoing",
+}
+
+
+def _validate_rule(rule):
+    parts = rule.strip().split()
+    base = parts[0].lower() if parts else ""
+    if base not in ("allow", "deny", "reject", "limit", "delete", "enable", "disable", "default"):
+        return False, f"Unknown action: {base}"
+    if base in ("allow", "deny", "reject", "limit"):
+        if len(parts) < 2:
+            return False, f"{base} requires a target (port/IP)"
+        rule_str = rule.strip()
+        if rule_str not in ALLOWED_RULES and not any(rule_str.startswith(p) for p in ("allow ", "deny ", "reject ", "limit ", "delete ")):
+            return False, f"Rule not in allowlist: {rule_str}"
+    return True, ""
+
 
 def _load_config():
     p = os.path.join(DATA_DIR, "cloudmesh.json")
@@ -17,15 +42,7 @@ def _get_server(name):
     return None
 
 def _run_ssh(host, user, key, cmd):
-    ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5"]
-    if key:
-        ssh_cmd += ["-i", key]
-    ssh_cmd += [f"{user}@{host}", cmd]
-    try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
-        return result.stdout.strip(), result.returncode
-    except Exception as e:
-        return str(e), 1
+    return run_ssh(host, user, key, cmd)
 
 def firewall_list(server_name):
     srv = _get_server(server_name)
@@ -42,12 +59,16 @@ def firewall_list(server_name):
         return out
 
 def firewall_add_rule(server_name, rule):
+    valid, msg = _validate_rule(rule)
+    if not valid:
+        return f"Invalid rule: {msg}"
+
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
 
-    out, rc = _run_ssh(host, user, key, "which ufw 2>/dev/null")
+    out, _ = _run_ssh(host, user, key, "which ufw 2>/dev/null")
     if "ufw" in out:
         out, rc = _run_ssh(host, user, key, f"ufw {rule}")
         return f"Rule added: {rule}" if rc == 0 else f"Failed: {out}"
@@ -60,7 +81,7 @@ def firewall_delete_rule(server_name, rule_num):
         return f"Server '{server_name}' not found"
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
 
-    out, rc = _run_ssh(host, user, key, "which ufw 2>/dev/null")
+    out, _ = _run_ssh(host, user, key, "which ufw 2>/dev/null")
     if "ufw" in out:
         out, rc = _run_ssh(host, user, key, f"ufw delete {rule_num}")
         return f"Rule deleted" if rc == 0 else f"Failed: {out}"

@@ -2061,6 +2061,30 @@ def cmd_panic(args):
             console.print(table)
             console.print(f"[dim]Threshold: {info['threshold']} of {info['n_shares']} shares required[/]")
             return
+        elif args.panic_action == "rotate":
+            console.print(Panel("[bold red]PANIC ROTATE — Rotating keys on all remote nodes[/]", border_style="red"))
+            from core.node_client import NodeClient
+            cfg = _load_config()
+            nodes = cfg.get("nodes", {})
+            if not nodes:
+                console.print("[dim]No nodes configured[/]")
+                return
+            for name, srv in nodes.items():
+                host = srv.get("host", "")
+                port = srv.get("port", 9999)
+                key = srv.get("auth_key", "")
+                client = NodeClient(host, port, key)
+                try:
+                    result = client.rotate_keys()
+                    if result.get("success"):
+                        new_key = result.get("new_key", "")[:16]
+                        console.print(f"  [green]+[/] {name}: rotated (key: {new_key}...)")
+                    else:
+                        console.print(f"  [red]![/] {name}: {result.get('message', 'failed')}")
+                except Exception as e:
+                    console.print(f"  [red]![/] {name}: {e}")
+            console.print("\n[red bold]All node keys rotated. Update your local node_keys.json![/]")
+            return
 
     panic = PanicManager()
     if args.dry_run:
@@ -2590,6 +2614,7 @@ def main():
     panic_exec = panic_sub.add_parser("execute", help="Execute panic with 2-of-3 shares")
     panic_exec.add_argument("--share", "-s", type=int, nargs="+", required=True, help="Share IDs to use (need >= 2)")
     panic_sub.add_parser("shares", help="Show current share status")
+    panic_sub.add_parser("rotate", help="Rotate keys on all remote nodes")
 
     tw_p = subparsers.add_parser("tripwire", help="Tripwire key management")
     tw_sub = tw_p.add_subparsers(dest="tripwire_action")

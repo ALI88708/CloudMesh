@@ -319,12 +319,30 @@ class NodeAgent:
             self._spa_open = True
             self._spa_event.set()
 
+        port = self.port
+        try:
+            subprocess.run(
+                ["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"],
+                capture_output=True, timeout=5
+            )
+            _log(f"SPA: iptables ACCEPT rule added for TCP {port}")
+        except Exception as e:
+            _log(f"SPA: iptables failed: {e}")
+
         def close_after_delay():
             time.sleep(window)
+            try:
+                subprocess.run(
+                    ["iptables", "-D", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"],
+                    capture_output=True, timeout=5
+                )
+                _log(f"SPA: iptables ACCEPT rule removed for TCP {port}")
+            except Exception as e:
+                _log(f"SPA: iptables cleanup failed: {e}")
             with self._spa_lock:
                 self._spa_open = False
                 self._spa_event.clear()
-            _log(f"SPA: TCP port {self.port} closed after {window}s window")
+            _log(f"SPA: TCP port {port} closed after {window}s window")
 
         threading.Thread(target=close_after_delay, daemon=True).start()
 
@@ -503,6 +521,21 @@ class NodeAgent:
                         resp = {"type": "download", "data": {"success": True, "content": content, "size": len(content)}}
                     except Exception as e:
                         resp = {"type": "download", "data": {"success": False, "message": str(e)}}
+            elif action == "rotate_keys":
+                keys_file = os.path.join(os.path.dirname(__file__), "..", "data", ".node_keys.json")
+                try:
+                    with open(keys_file) as f:
+                        keys = json.load(f)
+                    new_key = secrets.token_hex(32)
+                    keys["active"] = new_key
+                    keys["previous"] = keys.get("active", "")
+                    keys["rotated"] = datetime.now().isoformat()
+                    with open(keys_file, "w") as f:
+                        json.dump(keys, f, indent=2)
+                    _log(f"Keys rotated by controller command")
+                    resp = {"type": "rotate_keys", "data": {"success": True, "new_key": new_key}}
+                except Exception as e:
+                    resp = {"type": "rotate_keys", "data": {"success": False, "message": str(e)}}
             else:
                 resp = {"type": "error", "message": f"Unknown: {action}"}
             self._send_msg(client, resp)
@@ -546,6 +579,27 @@ class NodeAgent:
 
         mode_str = f"SPA(UDP:{self.spa_port})" if self.spa_mode else "TCP"
         _log(f"Node started on {self.bind_host}:{self.port} [{mode_str}]")
+
+        if not self.tls_cert or not self.tls_key:
+            _log("WARNING: TLS disabled — traffic is unencrypted. Use --tls-cert/--tls-key for production.")
+        if not self.spa_mode:
+            _log("WARNING: SPA disabled — TCP port is visible to scanners. Use --spa for production.")
+
+        if self.spa_mode and platform.system() != "Windows":
+            try:
+                subprocess.run(
+                    ["iptables", "-C", "INPUT", "-p", "tcp", "--dport", str(self.port), "-j", "DROP"],
+                    capture_output=True, timeout=5
+                )
+            except subprocess.CalledProcessError:
+                try:
+                    subprocess.run(
+                        ["iptables", "-A", "INPUT", "-p", "tcp", "--dport", str(self.port), "-j", "DROP"],
+                        capture_output=True, timeout=5
+                    )
+                    _log(f"SPA: iptables DROP rule added for TCP {self.port}")
+                except Exception as e:
+                    _log(f"SPA: iptables DROP failed: {e}")
 
         if platform.system() != "Windows":
             signal.signal(signal.SIGTERM, lambda s, f: setattr(self, "_running", False))

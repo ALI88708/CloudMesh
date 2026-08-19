@@ -1,5 +1,6 @@
 import json, os, subprocess, re
 from datetime import datetime
+from core.ssh_util import run_ssh
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
@@ -18,15 +19,7 @@ def _get_server(name):
     return None
 
 def _run_ssh(host, user, key, cmd):
-    ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5"]
-    if key:
-        ssh_cmd += ["-i", key]
-    ssh_cmd += [f"{user}@{host}", cmd]
-    try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
-        return result.stdout.strip(), result.returncode
-    except Exception as e:
-        return str(e), 1
+    return run_ssh(host, user, key, cmd)
 
 def get_logs(server_name, log_file="/var/log/syslog", lines=50, search=None, severity=None):
     srv = _get_server(server_name)
@@ -77,10 +70,8 @@ def follow_log(server_name, log_file="/var/log/syslog"):
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
     cmd = f"tail -f {log_file} 2>/dev/null"
     try:
-        ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no"]
-        if key:
-            ssh_cmd += ["-i", key]
-        ssh_cmd += [f"{user}@{host}", cmd]
+        from core.ssh_util import build_ssh_cmd
+        ssh_cmd = build_ssh_cmd(host, user, key, cmd, extra_flags=[])
         proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         lines = []
         for _ in range(50):

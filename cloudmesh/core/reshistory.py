@@ -1,4 +1,5 @@
-import json, os, subprocess, time
+import json, os, time
+from core.ssh_util import run_ssh
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
@@ -17,15 +18,7 @@ def _get_server(name):
     return None
 
 def _run_ssh(host, user, key, cmd):
-    ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5"]
-    if key:
-        ssh_cmd += ["-i", key]
-    ssh_cmd += [f"{user}@{host}", cmd]
-    try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
-        return result.stdout.strip(), result.returncode
-    except Exception as e:
-        return str(e), 1
+    return run_ssh(host, user, key, cmd)
 
 def _history_file():
     return os.path.join(DATA_DIR, "resource_history.json")

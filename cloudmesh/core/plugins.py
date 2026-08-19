@@ -1,6 +1,13 @@
 import json, os, subprocess
+from core.ssh_util import run_ssh
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+
+_PLUGINS_WARNING = (
+    "SECURITY WARNING: plugins.json executes arbitrary commands. "
+    "NEVER import plugins.json from untrusted sources or sync it "
+    "from remote/unknown origins. Only add plugins you personally wrote."
+)
 
 def _plugins_dir():
     d = os.path.join(DATA_DIR, "plugins")
@@ -59,6 +66,8 @@ def run_plugin(name, server_name=None):
     targets = plugin.get("targets", "all")
 
     if targets == "local":
+        import warnings
+        warnings.warn(_PLUGINS_WARNING, UserWarning, stacklevel=2)
         try:
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
             return result.stdout.strip()
@@ -85,15 +94,8 @@ def _run_remote(srv, cmd):
     host = srv.get("host", "")
     user = srv.get("user", "root")
     key = srv.get("key", "")
-    ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5"]
-    if key:
-        ssh_cmd += ["-i", key]
-    ssh_cmd += [f"{user}@{host}", cmd]
-    try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
-        return result.stdout.strip()
-    except Exception as e:
-        return str(e)
+    out, rc = run_ssh(host, user, key, cmd, timeout=60)
+    return out
 
 def import_plugin(filepath):
     if not os.path.exists(filepath):
