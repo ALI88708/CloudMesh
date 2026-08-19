@@ -447,70 +447,6 @@ def cmd_watcher(args):
         console.print("[red]Usage: cm watcher <action>[/]")
 
 
-def cmd_cost(args):
-    from core.cost import list_instances, estimate_cost, compare_all, cheapest_instance
-    if args.action == "instances":
-        instances = list_instances(args.provider)
-        table = Table(title=f"{args.provider.upper()} Instances", box=box.ROUNDED)
-        table.add_column("Instance", style="cyan")
-        table.add_column("CPU", justify="right")
-        table.add_column("RAM GB", justify="right")
-        table.add_column("GPU")
-        table.add_column("Price/Month", style="green")
-        for name, info in instances.items():
-            table.add_row(name, str(info.get("cpu", 0)), str(info.get("ram", 0)), info.get("gpu", "-"), f"${info.get('price_month', 0):.2f}")
-        console.print(table)
-    elif args.action == "estimate":
-        result = estimate_cost(args.provider, args.instance, args.hours, args.disk, args.bandwidth)
-        if isinstance(result, str):
-            console.print(f"[red]{result}[/]")
-            return
-        table = Table(title="Cost Estimate", box=box.ROUNDED)
-        table.add_column("Item", style="cyan")
-        table.add_column("Cost")
-        table.add_row("Provider", result.get("provider", ""))
-        table.add_row("Instance", result.get("instance", ""))
-        table.add_row("CPU", str(result.get("cpu", "")))
-        table.add_row("RAM", f"{result.get('ram_gb', 0)} GB")
-        if result.get("gpu"):
-            table.add_row("GPU", result.get("gpu"))
-        table.add_row("Compute Cost", f"${result.get('compute_cost', 0):.2f}")
-        table.add_row("Disk Cost", f"${result.get('disk_cost', 0):.2f}")
-        table.add_row("Bandwidth Cost", f"${result.get('bandwidth_cost', 0):.2f}")
-        table.add_row("Total Cost", f"[green]${result.get('total_cost', 0):.2f}[/]")
-        console.print(table)
-    elif args.action == "compare":
-        results = compare_all(args.instance, args.hours)
-        if not results:
-            console.print(f"[yellow]No matching instances found[/]")
-            return
-        table = Table(title=f"Cost Comparison: {args.instance}", box=box.ROUNDED)
-        table.add_column("#", style="dim")
-        table.add_column("Provider", style="cyan")
-        table.add_column("Instance")
-        table.add_column("Total Cost", style="green")
-        for i, r in enumerate(results, 1):
-            table.add_row(str(i), r.get("provider"), r.get("instance"), f"${r.get('total_cost', 0):.2f}")
-        console.print(table)
-    elif args.action == "cheapest":
-        results = cheapest_instance(args.cpu, args.ram, getattr(args, "provider", None))
-        if not results:
-            console.print("[yellow]No matching instances[/]")
-            return
-        table = Table(title="Cheapest Instances", box=box.ROUNDED)
-        table.add_column("#", style="dim")
-        table.add_column("Provider", style="cyan")
-        table.add_column("Instance")
-        table.add_column("CPU", justify="right")
-        table.add_column("RAM", justify="right")
-        table.add_column("GPU")
-        table.add_column("Price/Month", style="green")
-        for i, r in enumerate(results, 1):
-            table.add_row(str(i), r.get("provider"), r.get("instance"), str(r.get("cpu", 0)), f"{r.get('ram', 0)}GB", r.get("gpu", "-"), f"${r.get('price_month', 0):.2f}")
-        console.print(table)
-    else:
-        console.print("[red]Usage: cm cost <action>[/]")
-
 
 def cmd_tunnel(args):
     from core.tunnels import list_tunnels, add_tunnel, remove_tunnel, start_tunnel, stop_tunnel, stop_all_tunnels, tunnel_status, quick_tunnel
@@ -1963,10 +1899,6 @@ def _alias_watcher(args, action):
     args.action = action
     cmd_watcher(args)
 
-def _alias_cost(args):
-    args.action = "estimate"
-    cmd_cost(args)
-
 def _alias_tunnel_add(args):
     args.action = "add"
     args.remote_host = "127.0.0.1"
@@ -2862,24 +2794,6 @@ def main():
     wts.add_argument("--process", required=True)
     wt_sub.add_parser("alerts", help="Watcher alerts")
 
-    cost_p = subparsers.add_parser("cost", help="Cost estimator")
-    cost_sub = cost_p.add_subparsers(dest="action")
-    costi = cost_sub.add_parser("instances", help="List instance prices")
-    costi.add_argument("--provider", "-p", default="aws", choices=["aws", "gcp", "azure", "do"])
-    coste = cost_sub.add_parser("estimate", help="Estimate cost")
-    coste.add_argument("--provider", "-p", required=True, choices=["aws", "gcp", "azure", "do"])
-    coste.add_argument("--instance", "-i", required=True)
-    coste.add_argument("--hours", type=int, default=730)
-    coste.add_argument("--disk", type=int, default=0)
-    coste.add_argument("--bandwidth", type=int, default=0)
-    costc = cost_sub.add_parser("compare", help="Compare across providers")
-    costc.add_argument("--instance", "-i", required=True)
-    costc.add_argument("--hours", type=int, default=730)
-    costch = cost_sub.add_parser("cheapest", help="Find cheapest")
-    costch.add_argument("--cpu", type=float)
-    costch.add_argument("--ram", type=float)
-    costch.add_argument("--provider", "-p")
-
     tun_p = subparsers.add_parser("tunnel", help="SSH tunnel manager")
     tun_sub = tun_p.add_subparsers(dest="action")
     tun_sub.add_parser("list", help="List tunnels")
@@ -3068,11 +2982,6 @@ def main():
 
     wtchk = subparsers.add_parser("wtchk", help="[alias] Check watchers")
 
-    costest = subparsers.add_parser("costest", help="[alias] Estimate cost")
-    costest.add_argument("--provider", "-p", required=True)
-    costest.add_argument("--instance", "-i", required=True)
-    costest.add_argument("--hours", type=int, default=730)
-
     tunadd = subparsers.add_parser("tunadd", help="[alias] Add tunnel")
     tunadd.add_argument("--name", "-n", required=True)
     tunadd.add_argument("--host", required=True)
@@ -3208,7 +3117,6 @@ def main():
         "acl": lambda: cmd_acl(args),
         "webhooks": lambda: cmd_webhooks(args),
         "watcher": lambda: cmd_watcher(args),
-        "cost": lambda: cmd_cost(args),
         "tunnel": lambda: cmd_tunnel(args),
         "database": lambda: cmd_database(args),
         "ls": lambda: cmd_server_list(args),
@@ -3233,7 +3141,6 @@ def main():
         "pluginrun": lambda: _alias_plugin_run(args),
         "whsend": lambda: _alias_webhook_send(args),
         "wtchk": lambda: _alias_watcher(args, "check"),
-        "costest": lambda: _alias_cost(args),
         "tunadd": lambda: _alias_tunnel_add(args),
         "tunstart": lambda: _alias_tunnel_start(args),
         "tunstop": lambda: _alias_tunnel_stop(args),
