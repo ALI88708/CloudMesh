@@ -57,6 +57,8 @@ Managing multiple servers shouldn't mean juggling 10 SSH windows. CloudMesh give
 ## Quick Start
 
 ### PyPI (Recommended)
+1.Download [`Python`](https://www.python.org/) from Website for Linux or Windows
+2.
 ```bash
 pip install cloudmesh
 cm --help
@@ -70,7 +72,7 @@ cm --help
 5. Done! Use `cm --help` to see all commands in PowerShell
 
 ### Linux (Installer)
-Download [`Python`](https://www.python.org/) From Website
+Download [`Python`](https://www.python.org/) from Website
 And Install it
 ```bash
 curl -sL https://raw.githubusercontent.com/MrAli88708/CloudMesh/main/cm_for-linux.sh -o cm.sh
@@ -81,7 +83,6 @@ chmod +x cm.sh && ./cm.sh
 ```bash
 pip install --upgrade cloudmesh
 ```
-
 ### First Steps
 ```bash
 cm --help              # Show all 145+ commands
