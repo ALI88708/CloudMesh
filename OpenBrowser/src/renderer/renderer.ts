@@ -392,57 +392,13 @@ function renderWebview(url: string, tabId: number): void {
   wv.addEventListener('did-start-loading', () => {});
   wv.addEventListener('did-stop-loading', () => {
     wv.executeJavaScript(FP_INJECT).catch(() => {});
-  });
-  wv.addEventListener('ipc-message', (e: any) => {
-    if (e.channel === 'context-menu-data') {
-      const data = e.args[0];
-      const ctx: WebViewContext = {
-        linkURL: data.linkURL || '',
-        imageURL: data.imageURL || '',
-        selText: data.selText || '',
-        pageURL: data.pageURL || '',
-        isEditable: data.isEditable || false,
-        isImage: data.isImage || false
-      };
-      showWebViewContextMenu(data.x || 0, data.y || 0, ctx);
-    }
-  });
-  wv.addEventListener('dom-ready', () => {
-    const CONTEXT_INJECT = `
-      (function(){
-        document.addEventListener('contextmenu', function(e){
-          e.preventDefault();
-          var target = e.target;
-          var linkURL = '';
-          var el = target;
-          while(el && el !== document){
-            if(el.tagName === 'A' && el.href){ linkURL = el.href; break; }
-            el = el.parentElement;
-          }
-          var imageURL = '';
-          if(target.tagName === 'IMG' && target.src){ imageURL = target.src; }
-          var isEditable = target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.contentEditable === 'true';
-          var selText = window.getSelection().toString() || '';
-          window.postMessage({
-            type: 'openbrowser-contextmenu',
-            x: e.clientX,
-            y: e.clientY,
-            linkURL: linkURL,
-            imageURL: imageURL,
-            selText: selText,
-            pageURL: location.href,
-            isEditable: isEditable,
-            isImage: target.tagName === 'IMG'
-          }, '*');
-        }, true);
-      })();
-    `;
-    wv.executeJavaScript(CONTEXT_INJECT).catch(() => {});
+    injectContextMenuScript(wv);
   });
   wv.addEventListener('console-message', (e: any) => {
-    if (e.message && e.message.startsWith('openbrowser-contextmenu|')) {
+    const msg = e.message || '';
+    if (msg.startsWith('OBCtx:')) {
       try {
-        const data = JSON.parse(e.message.split('|')[1]);
+        const data = JSON.parse(msg.substring(6));
         const ctx: WebViewContext = {
           linkURL: data.linkURL || '',
           imageURL: data.imageURL || '',
@@ -456,6 +412,45 @@ function renderWebview(url: string, tabId: number): void {
     }
   });
   wrapper.appendChild(wv);
+}
+
+function injectContextMenuScript(wv: any): void {
+  if (!wv || !wv.executeJavaScript) return;
+  const script = `
+    if (!window.__obCtxInjected) {
+      window.__obCtxInjected = true;
+      document.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var target = e.target;
+        var linkURL = '';
+        var el = target;
+        while (el && el !== document) {
+          if (el.tagName === 'A' && el.href) { linkURL = el.href; break; }
+          el = el.parentElement;
+        }
+        var imageURL = '';
+        if (target.tagName === 'IMG' && target.src) { imageURL = target.src; }
+        var isEditable = target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.contentEditable === 'true';
+        var selText = '';
+        try { selText = window.getSelection().toString() || ''; } catch(ex) {}
+        var payload = JSON.stringify({
+          x: e.clientX,
+          y: e.clientY,
+          linkURL: linkURL,
+          imageURL: imageURL,
+          selText: selText,
+          pageURL: location.href,
+          isEditable: isEditable,
+          isImage: target.tagName === 'IMG'
+        });
+        console.log('OBCtx:' + payload);
+      }, true);
+    }
+  `;
+  wv.executeJavaScript(script).catch((err: any) => {
+    console.log('context menu inject failed:', err);
+  });
 }
 
 function setupInternalPageEvents(url: string, tabId: number): void {
