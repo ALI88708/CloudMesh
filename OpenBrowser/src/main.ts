@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, session, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, session, dialog, clipboard, nativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PrivacyEngine } from './privacy';
@@ -495,4 +495,46 @@ ipcMain.handle('capture-page', async () => {
   } catch (e) {
     return null;
   }
+});
+
+// ===== Clipboard IPC =====
+ipcMain.handle('clipboard-write-text', (_event: any, text: string) => {
+  clipboard.writeText(text);
+  return true;
+});
+ipcMain.handle('clipboard-read-text', () => {
+  return clipboard.readText();
+});
+ipcMain.handle('clipboard-write-image', async (_event: any, buffer: number[]) => {
+  try {
+    const img = nativeImage.createFromBuffer(Buffer.from(buffer));
+    clipboard.writeImage(img);
+    return true;
+  } catch {
+    return false;
+  }
+});
+ipcMain.handle('clipboard-read-image', () => {
+  const img = clipboard.readImage();
+  return img.isEmpty() ? null : img.toPNG();
+});
+ipcMain.handle('save-image-as', async (_event: any, buffer: number[], defaultName: string) => {
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    defaultPath: path.join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+  });
+  if (!result.canceled && result.filePath) {
+    fs.writeFileSync(result.filePath, Buffer.from(buffer));
+    return result.filePath;
+  }
+  return null;
+});
+ipcMain.handle('get-clipboard-text', () => clipboard.readText());
+
+// ===== Inspect Element IPC =====
+ipcMain.handle('inspect-element', (_event: any, x: number, y: number) => {
+  if (!mainWindow) return false;
+  const wv = mainWindow.webContents;
+  wv.inspectElement(x, y);
+  return true;
 });

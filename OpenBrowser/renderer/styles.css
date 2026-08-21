@@ -2111,3 +2111,47 @@ body.incognito::after {
   color: var(--text-secondary, #888);
   border: 1px solid var(--border, #333);
 }
+
+/* ========== WebView Context Menu ========== */
+.wv-ctx-menu {
+  min-width: 220px;
+  max-width: 340px;
+  padding: 4px;
+  background: var(--bg-secondary, #0a0a0a);
+  border: 1px solid var(--border, #1a1a1a);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+}
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text-primary, #eee);
+  cursor: pointer;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s;
+}
+
+.ctx-item:hover {
+  background: var(--accent, #00d4ff);
+  color: #000;
+}
+
+.ctx-icon {
+  font-size: 14px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.ctx-separator {
+  height: 1px;
+  background: var(--border, #1a1a1a);
+  margin: 4px 8px;
+}

@@ -64,5 +64,16 @@ contextBridge.exposeInMainWorld('openBrowser', {
   revealPassword: (id: string) => ipcRenderer.invoke('reveal-password', id),
 
   // Screenshot
-  capturePage: () => ipcRenderer.invoke('capture-page')
+  capturePage: () => ipcRenderer.invoke('capture-page'),
+
+  // Clipboard
+  clipboardWriteText: (text: string) => ipcRenderer.invoke('clipboard-write-text', text),
+  clipboardReadText: () => ipcRenderer.invoke('clipboard-read-text'),
+  clipboardWriteImage: (buffer: number[]) => ipcRenderer.invoke('clipboard-write-image', buffer),
+  clipboardReadImage: () => ipcRenderer.invoke('clipboard-read-image'),
+  saveImageAs: (buffer: number[], name: string) => ipcRenderer.invoke('save-image-as', buffer, name),
+  getClipboardText: () => ipcRenderer.invoke('get-clipboard-text'),
+
+  // Inspect
+  inspectElement: (x: number, y: number) => ipcRenderer.invoke('inspect-element', x, y)
 });

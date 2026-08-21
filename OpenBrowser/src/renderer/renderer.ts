@@ -54,6 +54,15 @@ declare global {
       revealPassword: (id: string) => Promise<string>;
       // Screenshot
       capturePage: () => Promise<string | null>;
+      // Clipboard
+      clipboardWriteText: (text: string) => Promise<boolean>;
+      clipboardReadText: () => Promise<string>;
+      clipboardWriteImage: (buffer: number[]) => Promise<boolean>;
+      clipboardReadImage: () => Promise<number[] | null>;
+      saveImageAs: (buffer: number[], name: string) => Promise<string | null>;
+      getClipboardText: () => Promise<string>;
+      // Inspect
+      inspectElement: (x: number, y: number) => Promise<boolean>;
     };
     _gameInterval: any;
     _gameKeyHandler: any;
@@ -98,6 +107,7 @@ async function init(): Promise<void> {
   initLang();
   setupEventListeners();
   setupPasswordAutofill();
+  setupWebviewContextMenu();
   startTimer();
 }
 
@@ -1504,4 +1514,253 @@ function showPasswordSavePrompt(input: HTMLInputElement): void {
     prompt.classList.remove('show');
     setTimeout(() => prompt.remove(), 300);
   });
+}
+
+// ========== WEBVIEW CONTEXT MENU ==========
+function setupWebviewContextMenu(): void {
+  document.addEventListener('contextmenu', (e: MouseEvent) => {
+    const wv = (e.target as HTMLElement).closest('webview') as any;
+    if (!wv) return;
+    e.preventDefault();
+
+    const ctx = (wv as any).contextMenuURL || '';
+    const selText = (wv as any).contextMenuSelectionText || '';
+    const isImage = (wv as any).contextMenuMediaType === 'image';
+    const isEditable = (wv as any).contextMenuInputFieldType === 'text' || (wv as any).contextMenuInputFieldType === 'password';
+    const linkURL = (wv as any).contextMenuLinkURL || '';
+    const imageURL = isImage ? (wv as any).contextMenuSrcURL || '' : '';
+    const pageURL = (wv as any).getURL ? (wv as any).getURL() : '';
+
+    showWebViewContextMenu(e.clientX, e.clientY, {
+      linkURL, imageURL, selText, pageURL, isEditable, isImage
+    });
+  });
+}
+
+interface WebViewContext {
+  linkURL: string;
+  imageURL: string;
+  selText: string;
+  pageURL: string;
+  isEditable: boolean;
+  isImage: boolean;
+}
+
+function showWebViewContextMenu(x: number, y: number, ctx: WebViewContext): void {
+  let existing = document.getElementById('wv-context-menu');
+  if (existing) existing.remove();
+
+  const isEn = currentLang === 'en';
+  const menu = document.createElement('div');
+  menu.id = 'wv-context-menu';
+  menu.className = 'context-menu wv-ctx-menu';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+
+  let items: string[] = [];
+
+  if (ctx.linkURL) {
+    items.push(
+      'open-link-new-tab|' + (isEn ? 'Open link in new tab' : 'فتح الرابط في تاب جديد') + '|🔗',
+      'copy-link|' + (isEn ? 'Copy link address' : 'نسخ رابط الرابط') + '|📋',
+      '---'
+    );
+  }
+
+  if (ctx.imageURL) {
+    items.push(
+      'save-image|' + (isEn ? 'Save image as...' : 'حفظ الصورة كـ...') + '|💾',
+      'copy-image|' + (isEn ? 'Copy image' : 'نسخ الصورة') + '|🖼️',
+      'copy-image-address|' + (isEn ? 'Copy image address' : 'نسخ رابط الصورة') + '|🔗',
+      '---'
+    );
+  }
+
+  if (ctx.selText) {
+    items.push(
+      'copy|' + (isEn ? 'Copy' : 'نسخ') + '|📋',
+      'search-google|' + (isEn ? 'Search for "' + ctx.selText.substring(0, 30) + '"' : 'بحث عن "' + ctx.selText.substring(0, 30) + '"') + '|🔍',
+      '---'
+    );
+  }
+
+  if (ctx.isEditable) {
+    items.push(
+      'cut|' + (isEn ? 'Cut' : 'قص') + '|✂️',
+      'copy|' + (isEn ? 'Copy' : 'نسخ') + '|📋',
+      'paste|' + (isEn ? 'Paste' : 'لصق') + '|📌',
+      'select-all|' + (isEn ? 'Select all' : 'تحديد الكل') + '|🔵',
+      '---'
+    );
+  }
+
+  items.push(
+    'go-back|' + (isEn ? 'Go back' : 'رجوع') + '|◀',
+    'go-forward|' + (isEn ? 'Go forward' : 'أمام') + '|▶',
+    'reload|' + (isEn ? 'Reload' : 'تحديث') + '|🔄',
+    '---'
+  );
+
+  if (!ctx.isEditable && !ctx.selText) {
+    items.push(
+      'select-all|' + (isEn ? 'Select all' : 'تحديد الكل') + '|🔵',
+      'copy-page-url|' + (isEn ? 'Copy page address' : 'نسخ رابط الصفحة') + '|📋',
+      '---'
+    );
+  }
+
+  items.push('inspect|' + (isEn ? 'Inspect' : 'فحص العنصر') + '|🔧');
+
+  menu.innerHTML = items.map(item => {
+    if (item === '---') return '<div class="ctx-separator"></div>';
+    const [action, label, icon] = item.split('|');
+    return `<div class="ctx-item" data-action="${action}"><span class="ctx-icon">${icon}</span><span>${label}</span></div>`;
+  }).join('');
+
+  document.body.appendChild(menu);
+
+  // Position adjustment
+  const menuRect = menu.getBoundingClientRect();
+  if (x + menuRect.width > window.innerWidth) menu.style.left = (x - menuRect.width) + 'px';
+  if (y + menuRect.height > window.innerHeight) menu.style.top = (y - menuRect.height) + 'px';
+
+  menu.addEventListener('click', (e: Event) => {
+    const action = (e.target as HTMLElement).closest('.ctx-item') as HTMLElement;
+    if (!action) return;
+    handleContextAction(action.dataset.action || '', ctx);
+    menu.remove();
+  });
+
+  setTimeout(() => {
+    document.addEventListener('click', () => menu.remove(), { once: true });
+  }, 10);
+}
+
+async function handleContextAction(action: string, ctx: WebViewContext): Promise<void> {
+  const isEn = currentLang === 'en';
+  const tab = tabs.find(t => t.id === currentTabId);
+  const wv = document.querySelector(`.webview-wrapper[data-tab-id="${currentTabId}"] webview`) as any;
+
+  switch (action) {
+    case 'open-link-new-tab':
+      if (ctx.linkURL) createTab(ctx.linkURL);
+      break;
+    case 'copy-link':
+      if (ctx.linkURL) {
+        await window.openBrowser.clipboardWriteText(ctx.linkURL);
+        showNotification(isEn ? 'Link copied!' : 'تم نسخ الرابط!');
+      }
+      break;
+    case 'save-image':
+      if (ctx.imageURL && wv) {
+        try {
+          const result = await wv.executeJavaScript(`
+            (async function() {
+              const resp = await fetch('${ctx.imageURL}');
+              const blob = await resp.blob();
+              const reader = new FileReader();
+              return new Promise(resolve => {
+                reader.onload = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+              });
+            })()
+          `);
+          if (result) {
+            const base64 = result.split(',')[1];
+            const buffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+            const name = ctx.imageURL.split('/').pop()?.split('?')[0] || `image-${Date.now()}.png`;
+            await window.openBrowser.saveImageAs(Array.from(buffer), name);
+          }
+        } catch (e) {}
+      }
+      break;
+    case 'copy-image':
+      if (ctx.imageURL && wv) {
+        try {
+          const result = await wv.executeJavaScript(`
+            (async function() {
+              const resp = await fetch('${ctx.imageURL}');
+              const blob = await resp.blob();
+              const reader = new FileReader();
+              return new Promise(resolve => {
+                reader.onload = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+              });
+            })()
+          `);
+          if (result) {
+            const base64 = result.split(',')[1];
+            const buffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+            await window.openBrowser.clipboardWriteImage(Array.from(buffer));
+            showNotification(isEn ? 'Image copied!' : 'تم نسخ الصورة!');
+          }
+        } catch (e) {}
+      }
+      break;
+    case 'copy-image-address':
+      if (ctx.imageURL) {
+        await window.openBrowser.clipboardWriteText(ctx.imageURL);
+        showNotification(isEn ? 'Image address copied!' : 'تم نسخ رابط الصورة!');
+      }
+      break;
+    case 'copy':
+      if (wv && wv.executeJavaScript) {
+        await wv.executeJavaScript('document.execCommand("copy")');
+      }
+      break;
+    case 'cut':
+      if (wv && wv.executeJavaScript) {
+        await wv.executeJavaScript('document.execCommand("cut")');
+      }
+      break;
+    case 'paste':
+      if (wv && wv.executeJavaScript) {
+        const clipText = await window.openBrowser.getClipboardText();
+        await wv.executeJavaScript(`
+          var el = document.activeElement;
+          if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+            el.value = el.value ? el.value + ${JSON.stringify(clipText)} : ${JSON.stringify(clipText)};
+            el.dispatchEvent(new Event('input', {bubbles:true}));
+          }
+        `);
+      }
+      break;
+    case 'select-all':
+      if (wv && wv.executeJavaScript) {
+        await wv.executeJavaScript('document.execCommand("selectAll")');
+      }
+      break;
+    case 'search-google':
+      if (ctx.selText) {
+        const engine = settings.searchEngine || 'google';
+        const engines: Record<string, string> = {
+          google: 'https://www.google.com/search?q=',
+          bing: 'https://www.bing.com/search?q=',
+          duckduckgo: 'https://duckduckgo.com/?q=',
+          brave: 'https://search.brave.com/search?q='
+        };
+        createTab((engines[engine] || engines.google) + encodeURIComponent(ctx.selText));
+      }
+      break;
+    case 'copy-page-url':
+      if (tab && tab.url) {
+        await window.openBrowser.clipboardWriteText(tab.url);
+        showNotification(isEn ? 'Page address copied!' : 'تم نسخ رابط الصفحة!');
+      }
+      break;
+    case 'go-back':
+      goBack();
+      break;
+    case 'go-forward':
+      goForward();
+      break;
+    case 'reload':
+      if (wv) wv.reload();
+      break;
+    case 'inspect':
+      if (wv && wv.executeJavaScript) {
+        wv.openDevTools();
+      }
+      break;
+  }
 }
