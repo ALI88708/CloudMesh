@@ -14,6 +14,7 @@ const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
 const STATS_PATH = path.join(app.getPath('userData'), 'stats.json');
 const HISTORY_PATH = path.join(app.getPath('userData'), 'history.json');
 const DOWNLOADS_PATH = path.join(app.getPath('userData'), 'downloads.json');
+const PASSWORDS_PATH = path.join(app.getPath('userData'), 'passwords.json');
 
 // ===== Download Manager State =====
 interface DownloadItem {
@@ -71,6 +72,29 @@ function loadDownloads(): DownloadItem[] {
 
 function saveDownloads(): void {
   fs.writeFileSync(DOWNLOADS_PATH, JSON.stringify(downloads, null, 2));
+}
+
+// ===== Password Manager =====
+interface PasswordEntry {
+  id: string;
+  domain: string;
+  username: string;
+  password: string;
+  createdAt: number;
+}
+let passwords: PasswordEntry[] = [];
+
+function loadPasswords(): PasswordEntry[] {
+  try {
+    if (fs.existsSync(PASSWORDS_PATH)) {
+      return JSON.parse(fs.readFileSync(PASSWORDS_PATH, 'utf8'));
+    }
+  } catch (e) {}
+  return [];
+}
+
+function savePasswords(): void {
+  fs.writeFileSync(PASSWORDS_PATH, JSON.stringify(passwords, null, 2));
 }
 
 function setupDownloadHandler(): void {
@@ -429,4 +453,46 @@ ipcMain.handle('print-page', () => {
 ipcMain.handle('focus-address-bar', () => {
   if (mainWindow) mainWindow.webContents.send('focus-address-bar');
   return true;
+});
+
+// ===== Password Manager IPC =====
+ipcMain.handle('get-passwords', () => {
+  return passwords.map(p => ({ ...p, password: '••••••' }));
+});
+ipcMain.handle('get-passwords-raw', () => passwords);
+ipcMain.handle('save-password', (_event: any, domain: string, username: string, password: string) => {
+  const existing = passwords.find(p => p.domain === domain && p.username === username);
+  if (existing) {
+    existing.password = password;
+  } else {
+    passwords.push({ id: `pw-${Date.now()}`, domain, username, password, createdAt: Date.now() });
+  }
+  savePasswords();
+  return true;
+});
+ipcMain.handle('delete-password', (_event: any, id: string) => {
+  passwords = passwords.filter(p => p.id !== id);
+  savePasswords();
+  return true;
+});
+ipcMain.handle('get-passwords-for-domain', (_event: any, domain: string) => {
+  return passwords.filter(p => p.domain === domain).map(p => ({ ...p, password: '••••••' }));
+});
+ipcMain.handle('reveal-password', (_event: any, id: string) => {
+  const pw = passwords.find(p => p.id === id);
+  return pw ? pw.password : '';
+});
+
+// ===== Screenshot IPC =====
+ipcMain.handle('capture-page', async () => {
+  if (!mainWindow) return null;
+  try {
+    const image = await mainWindow.webContents.capturePage();
+    const buffer = image.toPNG();
+    const filePath = path.join(app.getPath('downloads'), `screenshot-${Date.now()}.png`);
+    fs.writeFileSync(filePath, buffer);
+    return filePath;
+  } catch (e) {
+    return null;
+  }
 });

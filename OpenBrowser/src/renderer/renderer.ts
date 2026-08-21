@@ -46,6 +46,14 @@ declare global {
       // Focus
       focusAddressBar: () => Promise<boolean>;
       onFocusAddressBar: (cb: () => void) => void;
+      // Passwords
+      getPasswords: () => Promise<any[]>;
+      savePassword: (domain: string, username: string, password: string) => Promise<boolean>;
+      deletePassword: (id: string) => Promise<boolean>;
+      getPasswordsForDomain: (domain: string) => Promise<any[]>;
+      revealPassword: (id: string) => Promise<string>;
+      // Screenshot
+      capturePage: () => Promise<string | null>;
     };
     _gameInterval: any;
     _gameKeyHandler: any;
@@ -59,6 +67,8 @@ interface Tab {
   navHistory: string[];
   navIndex: number;
   zoom: number;
+  pinned: boolean;
+  muted: boolean;
 }
 
 interface Bookmark {
@@ -69,7 +79,7 @@ interface Bookmark {
 
 let currentTabId: number = 0;
 let tabCounter: number = 1;
-let tabs: Tab[] = [{ id: 0, title: 'تبويب جديد', url: '', navHistory: [], navIndex: -1, zoom: 1 }];
+let tabs: Tab[] = [{ id: 0, title: 'تبويب جديد', url: '', navHistory: [], navIndex: -1, zoom: 1, pinned: false, muted: false }];
 let closedTabs: { url: string; title: string }[] = [];
 let stats: any = {};
 let settings: any = {};
@@ -87,6 +97,7 @@ async function init(): Promise<void> {
   if (settings.fontSize) document.body.style.fontSize = settings.fontSize + 'px';
   initLang();
   setupEventListeners();
+  setupPasswordAutofill();
   startTimer();
 }
 
@@ -358,6 +369,7 @@ function renderWebview(url: string, tabId: number): void {
   wv.style.width = '100%';
   wv.style.height = '100%';
   wv.style.border = 'none';
+  wv.setAttribute('webpreferences', 'spellcheck=yes');
   wv.addEventListener('did-navigate', (e: any) => {
     const tab = tabs.find(t => t.id === tabId);
     if (tab) tab.url = e.url;
@@ -546,13 +558,14 @@ function updateAddressIcon(url: string): void {
 // ========== TABS ==========
 function createTab(url?: string): void {
   const id = tabCounter++;
-  tabs.push({ id, title: 'تبويب جديد', url: '', navHistory: [], navIndex: -1, zoom: 1 });
+  const isPinned = false;
+  tabs.push({ id, title: 'تبويب جديد', url: '', navHistory: [], navIndex: -1, zoom: 1, pinned: false, muted: false });
 
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
   tabEl.dataset.tabId = String(id);
   tabEl.draggable = true;
-  tabEl.innerHTML = `<span class="tab-title">تبويب جديد</span><button class="tab-close" data-close="${id}">×</button>`;
+  tabEl.innerHTML = `<span class="tab-title">تبويب جديد</span><button class="tab-mute" data-mute="${id}" title="كتم الصوت">🔊</button><button class="tab-close" data-close="${id}">×</button>`;
   document.getElementById('tabs-container')?.appendChild(tabEl);
 
   const wrapper = document.createElement('div');
@@ -565,6 +578,7 @@ function createTab(url?: string): void {
   stats.tabsOpened = (stats.tabsOpened || 0) + 1;
   window.openBrowser.saveStats(stats);
   if (url) navigateTo(url, id);
+  updateTabPositions();
 }
 
 function switchTab(id: number): void {
@@ -612,6 +626,49 @@ function closeTab(id: number): void {
   if (currentTabId === id) {
     switchTab(tabs[Math.min(idx, tabs.length - 1)].id);
   }
+  updateTabPositions();
+}
+
+function togglePinTab(id: number): void {
+  const tab = tabs.find(t => t.id === id);
+  if (!tab) return;
+  tab.pinned = !tab.pinned;
+  const tabEl = document.querySelector(`.tab[data-tab-id="${id}"]`);
+  if (tabEl) {
+    tabEl.classList.toggle('pinned', tab.pinned);
+    const closeBtn = tabEl.querySelector('.tab-close') as HTMLElement;
+    if (closeBtn) closeBtn.style.display = tab.pinned ? 'none' : '';
+    const muteBtn = tabEl.querySelector('.tab-mute') as HTMLElement;
+    if (muteBtn) muteBtn.style.display = tab.pinned ? 'none' : '';
+  }
+  updateTabPositions();
+}
+
+function toggleMuteTab(id: number): void {
+  const tab = tabs.find(t => t.id === id);
+  if (!tab) return;
+  tab.muted = !tab.muted;
+  const tabEl = document.querySelector(`.tab[data-tab-id="${id}"]`);
+  if (tabEl) {
+    const muteBtn = tabEl.querySelector('.tab-mute') as HTMLElement;
+    if (muteBtn) muteBtn.textContent = tab.muted ? '🔇' : '🔊';
+  }
+  const wv = document.querySelector(`.webview-wrapper[data-tab-id="${id}"] webview`) as any;
+  if (wv && wv.setAudioMuted) {
+    wv.setAudioMuted(tab.muted);
+  }
+}
+
+function updateTabPositions(): void {
+  const container = document.getElementById('tabs-container');
+  if (!container) return;
+  const pinnedTabs = tabs.filter(t => t.pinned);
+  const unpinnedTabs = tabs.filter(t => !t.pinned);
+  const sortedTabs = [...pinnedTabs, ...unpinnedTabs];
+  sortedTabs.forEach(tab => {
+    const el = document.querySelector(`.tab[data-tab-id="${tab.id}"]`);
+    if (el) container.appendChild(el);
+  });
 }
 
 function reopenClosedTab(): void {
@@ -965,15 +1022,21 @@ function doFind(forward: boolean): void {
 function showTabContextMenu(x: number, y: number, tabId: number): void {
   let existing = document.getElementById('tab-context-menu');
   if (existing) existing.remove();
+  const tab = tabs.find(t => t.id === tabId);
   const menu = document.createElement('div');
   menu.id = 'tab-context-menu';
   menu.className = 'context-menu';
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
-  menu.innerHTML = `<div class="context-menu-item" data-action="duplicate">تكرار التبويب</div><div class="context-menu-item" data-action="close-others">إغلاق الباقي</div>`;
+  const isEn = currentLang === 'en';
+  const pinLabel = tab?.pinned ? (isEn ? 'Unpin Tab' : 'إلغاء التثبيت') : (isEn ? 'Pin Tab' : 'تثبيت التبويب');
+  const muteLabel = tab?.muted ? (isEn ? 'Unmute' : 'تشغيل الصوت') : (isEn ? 'Mute' : 'كتم الصوت');
+  menu.innerHTML = `<div class="context-menu-item" data-action="pin">${pinLabel}</div><div class="context-menu-item" data-action="mute">${muteLabel}</div><div class="context-menu-item" data-action="duplicate">${isEn ? 'Duplicate Tab' : 'تكرار التبويب'}</div><div class="context-menu-item" data-action="close-others">${isEn ? 'Close Others' : 'إغلاق الباقي'}</div>`;
   document.body.appendChild(menu);
   menu.addEventListener('click', (e) => {
     const action = (e.target as HTMLElement).dataset.action;
+    if (action === 'pin') togglePinTab(tabId);
+    if (action === 'mute') toggleMuteTab(tabId);
     if (action === 'duplicate') createTab(tabs.find(t => t.id === tabId)?.url);
     if (action === 'close-others') {
       tabs.filter(t => t.id !== tabId).forEach(t => {
@@ -1023,6 +1086,8 @@ function setupEventListeners(): void {
 
   document.getElementById('btn-add-tab')?.addEventListener('click', () => createTab());
   document.getElementById('tabs-container')?.addEventListener('click', (e: Event) => {
+    const muteBtn = (e.target as HTMLElement).closest('.tab-mute') as HTMLElement;
+    if (muteBtn) { toggleMuteTab(parseInt(muteBtn.dataset.mute || '0')); return; }
     const closeBtn = (e.target as HTMLElement).closest('.tab-close') as HTMLElement;
     if (closeBtn) { closeTab(parseInt(closeBtn.dataset.close || '0')); return; }
     const tab = (e.target as HTMLElement).closest('.tab') as HTMLElement;
@@ -1105,6 +1170,18 @@ function setupEventListeners(): void {
       updateDownloadsBadge();
       const statusEl = document.querySelector(`.dl-status[data-dl-id="${d.id}"]`);
       if (statusEl) statusEl.textContent = d.status === 'completed' ? '✅' : '❌';
+    });
+  }
+
+  // ===== Screenshot Button =====
+  const ssBtn = document.getElementById('btn-screenshot');
+  if (ssBtn) {
+    ssBtn.addEventListener('click', async () => {
+      const filePath = await window.openBrowser.capturePage();
+      if (filePath) {
+        const isEn = currentLang === 'en';
+        showNotification(isEn ? 'Screenshot saved!' : 'تم حفظ لقطة الشاشة!', filePath);
+      }
     });
   }
 
@@ -1303,4 +1380,128 @@ function syncTabsFromDOM(): void {
     if (tab) newTabs.push(tab);
   });
   tabs = newTabs;
+}
+
+// ========== NOTIFICATIONS ==========
+function showNotification(message: string, detail?: string): void {
+  let existing = document.getElementById('ob-notification');
+  if (existing) existing.remove();
+  const notif = document.createElement('div');
+  notif.id = 'ob-notification';
+  notif.className = 'ob-notification';
+  notif.innerHTML = `<span class="notif-msg">${message}</span>${detail ? `<span class="notif-detail">${detail}</span>` : ''}`;
+  document.body.appendChild(notif);
+  setTimeout(() => notif.classList.add('show'), 10);
+  setTimeout(() => {
+    notif.classList.remove('show');
+    setTimeout(() => notif.remove(), 300);
+  }, 3000);
+}
+
+// ========== PASSWORD AUTOFILL ==========
+function getDomainFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.hostname;
+  } catch {
+    return '';
+  }
+}
+
+function setupPasswordAutofill(): void {
+  const urlInput = document.getElementById('url-input') as HTMLInputElement;
+  if (urlInput) {
+    urlInput.addEventListener('keydown', async (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        const url = urlInput.value.trim();
+        const domain = getDomainFromUrl(url.startsWith('http') ? url : 'https://' + url);
+        if (domain) {
+          const savedPws = await window.openBrowser.getPasswordsForDomain(domain);
+          if (savedPws.length > 0) {
+            setTimeout(() => injectPasswordAutofill(savedPws), 2000);
+          }
+        }
+      }
+    });
+  }
+
+  document.addEventListener('click', (e: Event) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' && target.getAttribute('type') === 'password') {
+      setTimeout(() => showPasswordSavePrompt(target as HTMLInputElement), 1000);
+    }
+  });
+}
+
+function injectPasswordAutofill(credentials: any[]): void {
+  const wrappers = document.querySelectorAll('.webview-wrapper.active webview');
+  wrappers.forEach((wv: any) => {
+    if (wv && wv.executeJavaScript) {
+      const js = `
+        (function(){
+          var inputs = document.querySelectorAll('input[type="password"]');
+          inputs.forEach(function(pwInput){
+            var form = pwInput.closest('form');
+            if (!form) return;
+            var userInput = form.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="email"], input[name*="login"]');
+            if (userInput && !userInput.value) {
+              userInput.value = '${credentials[0].username}';
+              userInput.dispatchEvent(new Event('input', {bubbles:true}));
+            }
+            if (!pwInput.value) {
+              pwInput.value = '••••••';
+              pwInput.dataset.autofilled = 'true';
+              pwInput.addEventListener('focus', function(){
+                if (pwInput.dataset.autofilled === 'true') {
+                  pwInput.value = '';
+                  pwInput.dataset.autofilled = 'false';
+                }
+              }, {once:true});
+            }
+          });
+        })();`;
+      wv.executeJavaScript(js).catch(() => {});
+    }
+  });
+}
+
+function showPasswordSavePrompt(input: HTMLInputElement): void {
+  const form = input.closest('form');
+  if (!form) return;
+  const userInput = form.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="email"], input[name*="login"]') as HTMLInputElement;
+  if (!userInput || !userInput.value) return;
+  let existing = document.getElementById('pw-save-prompt');
+  if (existing) existing.remove();
+
+  const prompt = document.createElement('div');
+  prompt.id = 'pw-save-prompt';
+  prompt.className = 'pw-save-prompt';
+  const isEn = currentLang === 'en';
+  prompt.innerHTML = `
+    <div class="pw-save-content">
+      <span class="pw-save-icon">🔑</span>
+      <div class="pw-save-text">
+        <strong>${isEn ? 'Save password?' : 'حفظ كلمة المرور؟'}</strong>
+        <span class="pw-save-user">${userInput.value}</span>
+      </div>
+      <button class="pw-save-btn" id="pw-save-yes">${isEn ? 'Save' : 'حفظ'}</button>
+      <button class="pw-save-btn pw-save-no" id="pw-save-no">${isEn ? 'Never' : 'لا أبداً'}</button>
+    </div>`;
+  document.body.appendChild(prompt);
+  setTimeout(() => prompt.classList.add('show'), 10);
+
+  document.getElementById('pw-save-yes')?.addEventListener('click', async () => {
+    const tab = tabs.find(t => t.id === currentTabId);
+    const domain = tab ? getDomainFromUrl(tab.url) : '';
+    if (domain) {
+      await window.openBrowser.savePassword(domain, userInput.value, input.value);
+      showNotification(isEn ? 'Password saved!' : 'تم حفظ كلمة المرور!');
+    }
+    prompt.classList.remove('show');
+    setTimeout(() => prompt.remove(), 300);
+  });
+  document.getElementById('pw-save-no')?.addEventListener('click', () => {
+    prompt.classList.remove('show');
+    setTimeout(() => prompt.remove(), 300);
+  });
 }

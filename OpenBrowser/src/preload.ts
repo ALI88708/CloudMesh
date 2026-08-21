@@ -54,5 +54,15 @@ contextBridge.exposeInMainWorld('openBrowser', {
 
   // Focus
   focusAddressBar: () => ipcRenderer.invoke('focus-address-bar'),
-  onFocusAddressBar: (cb: any) => ipcRenderer.on('focus-address-bar', () => cb())
+  onFocusAddressBar: (cb: any) => ipcRenderer.on('focus-address-bar', () => cb()),
+
+  // Password Manager
+  getPasswords: () => ipcRenderer.invoke('get-passwords'),
+  savePassword: (domain: string, username: string, password: string) => ipcRenderer.invoke('save-password', domain, username, password),
+  deletePassword: (id: string) => ipcRenderer.invoke('delete-password', id),
+  getPasswordsForDomain: (domain: string) => ipcRenderer.invoke('get-passwords-for-domain', domain),
+  revealPassword: (id: string) => ipcRenderer.invoke('reveal-password', id),
+
+  // Screenshot
+  capturePage: () => ipcRenderer.invoke('capture-page')
 });
