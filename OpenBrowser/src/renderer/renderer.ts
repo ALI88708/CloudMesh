@@ -393,6 +393,19 @@ function renderWebview(url: string, tabId: number): void {
   wv.addEventListener('did-stop-loading', () => {
     wv.executeJavaScript(FP_INJECT).catch(() => {});
   });
+  wv.addEventListener('context-menu', (e: any) => {
+    e.preventDefault();
+    const params = e.params || {};
+    const ctx: WebViewContext = {
+      linkURL: params.linkURL || '',
+      imageURL: (params.mediaType === 'image') ? (params.srcURL || '') : '',
+      selText: params.selectionText || '',
+      pageURL: params.pageURL || '',
+      isEditable: params.inputFieldType === 'text' || params.inputFieldType === 'password',
+      isImage: params.mediaType === 'image'
+    };
+    showWebViewContextMenu(e.clientX || params.x || 0, e.clientY || params.y || 0, ctx);
+  });
   wrapper.appendChild(wv);
 }
 
