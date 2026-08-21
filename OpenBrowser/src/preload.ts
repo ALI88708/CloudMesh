@@ -22,5 +22,37 @@ contextBridge.exposeInMainWorld('openBrowser', {
   updatePrivacySettings: (s: any) => ipcRenderer.invoke('update-privacy-settings', s),
   toggleAdBlocker: (e: boolean) => ipcRenderer.invoke('toggle-ad-blocker', e),
   toggleTrackerBlocker: (e: boolean) => ipcRenderer.invoke('toggle-tracker-blocker', e),
-  toggleFingerprintProtection: (e: boolean) => ipcRenderer.invoke('toggle-fingerprint-protection', e)
+  toggleFingerprintProtection: (e: boolean) => ipcRenderer.invoke('toggle-fingerprint-protection', e),
+
+  // Download Manager
+  getDownloads: () => ipcRenderer.invoke('get-downloads'),
+  cancelDownload: (id: string) => ipcRenderer.invoke('cancel-download', id),
+  openDownload: (id: string) => ipcRenderer.invoke('open-download', id),
+  showDownloadFolder: () => ipcRenderer.invoke('show-download-folder'),
+  clearDownloads: () => ipcRenderer.invoke('clear-downloads'),
+  onDownloadStarted: (cb: any) => ipcRenderer.on('download-started', (_e: any, d: any) => cb(d)),
+  onDownloadProgress: (cb: any) => ipcRenderer.on('download-progress', (_e: any, d: any) => cb(d)),
+  onDownloadDone: (cb: any) => ipcRenderer.on('download-done', (_e: any, d: any) => cb(d)),
+
+  // Real History
+  getHistory: () => ipcRenderer.invoke('get-history'),
+  addHistory: (url: string, title: string) => ipcRenderer.invoke('add-history', url, title),
+  clearHistory: () => ipcRenderer.invoke('clear-history'),
+  removeHistoryEntry: (url: string) => ipcRenderer.invoke('remove-history-entry', url),
+
+  // Incognito
+  startIncognito: () => ipcRenderer.invoke('start-incognito'),
+  stopIncognito: () => ipcRenderer.invoke('stop-incognito'),
+  getIncognitoSession: () => ipcRenderer.invoke('get-incognito-session'),
+
+  // Fullscreen
+  toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
+  isFullscreen: () => ipcRenderer.invoke('is-fullscreen'),
+
+  // Print
+  printPage: () => ipcRenderer.invoke('print-page'),
+
+  // Focus
+  focusAddressBar: () => ipcRenderer.invoke('focus-address-bar'),
+  onFocusAddressBar: (cb: any) => ipcRenderer.on('focus-address-bar', () => cb())
 });

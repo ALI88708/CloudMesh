@@ -53,7 +53,7 @@ async function build() {
   console.log('✓ renderer/renderer.js');
 
   // 4. Copy static files to dist/renderer/
-  const staticFiles = ['index.html', 'styles.css', 'logo.png'];
+  const staticFiles = ['index.html', 'styles.css', 'logo.png', 'cursor.html'];
   for (const file of staticFiles) {
     const src = path.join(__dirname, 'renderer', file);
     const dst = path.join(rendererDist, file);

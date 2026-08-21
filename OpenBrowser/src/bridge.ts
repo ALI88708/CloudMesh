@@ -1,59 +1,50 @@
 import * as http from 'http';
+import * as fs from 'fs';
+import * as path from 'path';
 
 let mainWindowRef: any = null;
+let cursorOverlayRef: any = null;
 
-// ===== RAM SCREENSHOT STORAGE =====
-const screenshotCache = new Map<string, string>(); // id -> base64 data URL
-let screenshotCounter = 0;
+// ===== LIVE STREAMING (disk-based) =====
+const LIVE_DIR = path.join(process.env.TEMP || '/tmp', 'openbrowser-live');
+let liveInterval: any = null;
+let liveFrameCount = 0;
 
-// ===== STREAMING STATE =====
-let streamInterval: any = null;
-let streamFrameCounter = 0;
-const streamBuffer = new Map<string, string>(); // frame id -> base64
-const MAX_STREAM_FRAMES = 100; // keep last 100 frames (~5 seconds at 20fps)
+// Ensure live directory exists
+if (!fs.existsSync(LIVE_DIR)) fs.mkdirSync(LIVE_DIR, { recursive: true });
+
+function saveLiveFrame(dataUrl: string): string {
+  const id = `frame-${Date.now()}-${liveFrameCount++}`;
+  const buf = Buffer.from(dataUrl.replace('data:image/png;base64,', ''), 'base64');
+  fs.writeFileSync(path.join(LIVE_DIR, `${id}.png`), buf);
+  // Also save as "latest.png" for easy access
+  fs.writeFileSync(path.join(LIVE_DIR, 'latest.png'), buf);
+  fs.writeFileSync(path.join(LIVE_DIR, 'latest.txt'), id);
+  // Cleanup old frames (keep last 200)
+  try {
+    const files = fs.readdirSync(LIVE_DIR).filter(f => f.startsWith('frame-') && f.endsWith('.png')).sort();
+    while (files.length > 200) {
+      const old = files.shift()!;
+      fs.unlinkSync(path.join(LIVE_DIR, old));
+    }
+  } catch {}
+  return id;
+}
+
+function getLiveDir(): string { return LIVE_DIR; }
 
 // ===== AUDIO STATE =====
 let audioChunks: Buffer[] = [];
 let audioRecording = false;
 let audioInterval: any = null;
 
-function storeScreenshot(dataUrl: string): string {
-  const id = `ss-${Date.now()}-${screenshotCounter++}`;
-  screenshotCache.set(id, dataUrl);
-  if (screenshotCache.size > 50) {
-    const firstKey = screenshotCache.keys().next().value;
-    if (firstKey) screenshotCache.delete(firstKey);
-  }
-  return id;
-}
-
-function getAndDeleteScreenshot(id: string): string | null {
-  const dataUrl = screenshotCache.get(id);
-  if (dataUrl) screenshotCache.delete(id); // auto-delete after viewing
-  return dataUrl || null;
-}
-
-function deleteScreenshot(id: string): boolean {
-  return screenshotCache.delete(id);
-}
-
-function clearScreenshots(): void {
-  screenshotCache.clear();
-}
-
-function storeStreamFrame(dataUrl: string): string {
-  const id = `frame-${Date.now()}-${streamFrameCounter++}`;
-  streamBuffer.set(id, dataUrl);
-  // Auto-cleanup: keep only last N frames
-  if (streamBuffer.size > MAX_STREAM_FRAMES) {
-    const firstKey = streamBuffer.keys().next().value;
-    if (firstKey) streamBuffer.delete(firstKey);
-  }
-  return id;
-}
-
 function runInRenderer(code: string): Promise<any> {
   return mainWindowRef.webContents.executeJavaScript(code);
+}
+
+function runInCursor(code: string): Promise<any> {
+  if (!cursorOverlayRef || cursorOverlayRef.isDestroyed()) return Promise.resolve(null);
+  return cursorOverlayRef.webContents.executeJavaScript(code);
 }
 
 function runInWebview(code: string): Promise<any> {
@@ -69,18 +60,50 @@ function runInWebview(code: string): Promise<any> {
 async function captureFrame(): Promise<{ id: string; dataUrl: string; size: number } | null> {
   if (!mainWindowRef) return null;
   try {
-    const img = await mainWindowRef.webContents.capturePage();
+    // Try to capture the active webview content first
+    const webviewDataUrl = await runInRenderer(`
+      (function() {
+        var wv = document.querySelector('.webview-wrapper.active webview');
+        if (!wv) return null;
+        // Use webview's capturePage if available
+        try {
+          var rect = wv.getBoundingClientRect();
+          return JSON.stringify({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+        } catch(e) { return null; }
+      })()
+    `);
+
+    let img;
+    if (webviewDataUrl) {
+      try {
+        const rect = typeof webviewDataUrl === 'string' ? JSON.parse(webviewDataUrl) : webviewDataUrl;
+        // Capture just the webview area from the main window
+        img = await mainWindowRef.webContents.capturePage({
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        });
+      } catch {
+        // Fallback to full page capture
+        img = await mainWindowRef.webContents.capturePage();
+      }
+    } else {
+      img = await mainWindowRef.webContents.capturePage();
+    }
+
     const buf = img.toPNG();
     const dataUrl = 'data:image/png;base64,' + buf.toString('base64');
-    const id = storeStreamFrame(dataUrl);
+    const id = saveLiveFrame(dataUrl);
     return { id, dataUrl, size: dataUrl.length };
   } catch (e) {
     return null;
   }
 }
 
-export function startBridge(win: any): void {
+export function startBridge(win: any, cursorWin?: any): void {
   mainWindowRef = win;
+  cursorOverlayRef = cursorWin || null;
 
   const server = http.createServer(async (req: any, res: any) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -102,101 +125,86 @@ export function startBridge(win: any): void {
         return send(res, { ok: true, browser: 'OpenBrowser', version: '1.1.0' });
       }
 
-      // ===== SCREENSHOT (RAM-based, one-time use) =====
+      // ===== SCREENSHOT (saves to disk) =====
       if (url === '/screenshot' && method === 'GET') {
         if (!mainWindowRef) return send(res, { error: 'No window' }, 400);
         try {
-          const img = await mainWindowRef.webContents.capturePage();
-          const buf = img.toPNG();
-          const dataUrl = 'data:image/png;base64,' + buf.toString('base64');
-          const id = storeScreenshot(dataUrl);
-          return send(res, { ok: true, id, dataUrl, size: dataUrl.length });
+          const frame = await captureFrame();
+          if (!frame) return send(res, { error: 'Capture failed' }, 500);
+          return send(res, { ok: true, id: frame.id, diskPath: path.join(LIVE_DIR, `${frame.id}.png`), size: frame.size });
         } catch (e: any) {
           return send(res, { error: 'Screenshot failed: ' + e.message }, 500);
         }
       }
 
-      // ===== GET & DELETE SCREENSHOT (one-time read) =====
-      if (url.startsWith('/screenshot-view/') && method === 'GET') {
-        const id = url.split('/screenshot-view/')[1];
-        const dataUrl = getAndDeleteScreenshot(id);
-        if (!dataUrl) return send(res, { error: 'Screenshot not found or already viewed' }, 404);
-        return send(res, { ok: true, id, dataUrl, size: dataUrl.length, deleted: true });
+      // ===== LIVE STREAM PATH (for reading frames directly) =====
+      if (url === '/live/path' && method === 'GET') {
+        return send(res, { ok: true, liveDir: LIVE_DIR, latest: path.join(LIVE_DIR, 'latest.png') });
       }
 
-      // ===== DELETE SCREENSHOT =====
-      if (url.startsWith('/screenshot-delete/') && method === 'DELETE') {
-        const id = url.split('/screenshot-delete/')[1];
-        const deleted = deleteScreenshot(id);
-        return send(res, { ok: true, deleted });
-      }
-
-      // ===== LIST ALL SCREENSHOTS IN RAM =====
-      if (url === '/screenshots' && method === 'GET') {
-        const ids = Array.from(screenshotCache.keys());
-        return send(res, { ok: true, count: ids.length, ids });
-      }
-
-      // ===== CLEAR SCREENSHOT RAM =====
-      if (url === '/screenshots/clear' && method === 'POST') {
-        clearScreenshots();
-        return send(res, { ok: true, message: 'Screenshot RAM cleared' });
-      }
-
-      // ===== STREAMING (20 FPS) =====
+      // ===== STREAMING (disk-based, 20 FPS) =====
       if (url === '/stream/start' && method === 'POST') {
-        if (streamInterval) return send(res, { ok: true, message: 'Stream already running' });
+        if (liveInterval) return send(res, { ok: true, message: 'Stream already running' });
         const body = await readBody(req);
         const fps = Math.min(Math.max(body.fps || 20, 1), 30);
         const interval = 1000 / fps;
-        streamFrameCounter = 0;
-        streamBuffer.clear();
-        streamInterval = setInterval(async () => {
+        liveFrameCount = 0;
+        liveInterval = setInterval(async () => {
           await captureFrame();
         }, interval);
-        return send(res, { ok: true, message: `Stream started at ${fps} FPS`, fps });
+        return send(res, { ok: true, message: `Stream started at ${fps} FPS`, fps, liveDir: LIVE_DIR });
       }
 
       if (url === '/stream/stop' && method === 'POST') {
-        if (streamInterval) {
-          clearInterval(streamInterval);
-          streamInterval = null;
+        if (liveInterval) {
+          clearInterval(liveInterval);
+          liveInterval = null;
         }
-        const frameCount = streamBuffer.size;
-        return send(res, { ok: true, message: 'Stream stopped', framesCaptured: frameCount });
+        return send(res, { ok: true, message: 'Stream stopped', framesCaptured: liveFrameCount });
       }
 
       if (url === '/stream/status' && method === 'GET') {
+        const files = fs.existsSync(LIVE_DIR) ? fs.readdirSync(LIVE_DIR).filter(f => f.startsWith('frame-') && f.endsWith('.png')).length : 0;
         return send(res, {
           ok: true,
-          streaming: !!streamInterval,
-          framesInBuffer: streamBuffer.size
+          streaming: !!liveInterval,
+          framesOnDisk: files,
+          liveDir: LIVE_DIR
         });
       }
 
-      if (url === '/stream/frames' && method === 'GET') {
-        const ids = Array.from(streamBuffer.keys());
-        return send(res, { ok: true, count: ids.length, ids });
-      }
-
-      if (url.startsWith('/stream/frame/') && method === 'GET') {
-        const id = url.split('/stream/frame/')[1];
-        const dataUrl = streamBuffer.get(id);
-        if (!dataUrl) return send(res, { error: 'Frame not found' }, 404);
+      if (url === '/stream/last' && method === 'GET') {
+        const latestFile = path.join(LIVE_DIR, 'latest.png');
+        if (!fs.existsSync(latestFile)) return send(res, { error: 'No frames' }, 404);
+        const dataUrl = 'data:image/png;base64,' + fs.readFileSync(latestFile).toString('base64');
+        const id = fs.existsSync(path.join(LIVE_DIR, 'latest.txt')) ? fs.readFileSync(path.join(LIVE_DIR, 'latest.txt'), 'utf8') : 'unknown';
         return send(res, { ok: true, id, dataUrl, size: dataUrl.length });
       }
 
-      if (url === '/stream/last' && method === 'GET') {
-        const ids = Array.from(streamBuffer.keys());
-        if (ids.length === 0) return send(res, { error: 'No frames' }, 404);
-        const lastId = ids[ids.length - 1];
-        const dataUrl = streamBuffer.get(lastId);
-        return send(res, { ok: true, id: lastId, dataUrl, size: dataUrl?.length || 0, totalFrames: ids.length });
+      if (url === '/stream/clear' && method === 'POST') {
+        try {
+          const files = fs.readdirSync(LIVE_DIR).filter(f => f.endsWith('.png') || f.endsWith('.txt'));
+          files.forEach(f => fs.unlinkSync(path.join(LIVE_DIR, f)));
+        } catch {}
+        return send(res, { ok: true, message: 'Stream buffer cleared' });
       }
 
-      if (url === '/stream/clear' && method === 'POST') {
-        streamBuffer.clear();
-        return send(res, { ok: true, message: 'Stream buffer cleared' });
+      // ===== LIVE VIEW (capture + return + save to disk) =====
+      if (url === '/live' && method === 'GET') {
+        const frame = await captureFrame();
+        if (!frame) return send(res, { error: 'Failed to capture' }, 500);
+        return send(res, { ok: true, id: frame.id, diskPath: path.join(LIVE_DIR, `${frame.id}.png`), size: frame.size });
+      }
+
+      if (url === '/live/small' && method === 'GET') {
+        if (!mainWindowRef) return send(res, { error: 'No window' }, 500);
+        try {
+          const frame = await captureFrame();
+          if (!frame) return send(res, { error: 'Failed to capture' }, 500);
+          return send(res, { ok: true, id: frame.id, diskPath: path.join(LIVE_DIR, `${frame.id}.png`), size: frame.size });
+        } catch (e: any) {
+          return send(res, { error: e.message }, 500);
+        }
       }
 
       // ===== AUDIO CAPTURE =====
@@ -693,6 +701,92 @@ export function startBridge(win: any): void {
         const ms = body.ms || 2000;
         await new Promise(r => setTimeout(r, Math.min(ms, 10000)));
         return send(res, { ok: true, waited: ms });
+      }
+
+      // ===== AI VIRTUAL CURSOR (OVERLAY WINDOW) =====
+      if (url === '/cursor/move' && method === 'POST') {
+        const body = await readBody(req);
+        const x = body.x ?? 500;
+        const y = body.y ?? 300;
+        const instant = body.instant === true;
+        await runInCursor(`window.api.move(${x}, ${y}, ${instant})`);
+        const result = await runInCursor(`JSON.stringify(window.api.pos())`);
+        let parsed: any;
+        try { parsed = typeof result === 'string' ? JSON.parse(result) : result; } catch { parsed = {}; }
+        return send(res, { ok: true, cursor: parsed });
+      }
+
+      if (url === '/cursor/click' && method === 'POST') {
+        const body = await readBody(req);
+        const x = body.x;
+        const y = body.y;
+        
+        // 1. Move cursor visually
+        if (x !== undefined && y !== undefined) {
+          await runInCursor(`window.api.click(${x}, ${y})`);
+        } else {
+          await runInCursor(`window.api.click()`);
+        }
+
+        // 2. Calculate relative position inside webview and click there
+        const cx = x !== undefined ? x : 400;
+        const cy = y !== undefined ? y : 300;
+        
+        const clickResult = await runInRenderer(`
+          (function() {
+            var wv = document.querySelector('.webview-wrapper.active webview');
+            if (!wv) return JSON.stringify({error: 'no webview'});
+            
+            var rect = wv.getBoundingClientRect();
+            var relX = ${cx} - rect.left;
+            var relY = ${cy} - rect.top;
+            
+            // Check if click is inside webview bounds
+            if (relX < 0 || relY < 0 || relX > rect.width || relY > rect.height) {
+              return JSON.stringify({error: 'outside webview', relX: relX, relY: relY});
+            }
+            
+            // Dispatch click inside webview at relative coordinates
+            wv.executeJavaScript(
+              '(function() { ' +
+              '  var el = document.elementFromPoint(' + relX + ',' + relY + '); ' +
+              '  if (!el) return JSON.stringify({error: "no element at " + relX + "," + relY}); ' +
+              '  var opts = {clientX: ' + relX + ', clientY: ' + relY + ', screenX: ' + relX + ', screenY: ' + relY + ', bubbles: true, cancelable: true, view: window}; ' +
+              '  el.dispatchEvent(new PointerEvent("pointerdown", {...opts, pointerId: 1, pointerType: "mouse"})); ' +
+              '  el.dispatchEvent(new MouseEvent("mousedown", opts)); ' +
+              '  setTimeout(function() { ' +
+              '    el.dispatchEvent(new PointerEvent("pointerup", {...opts, pointerId: 1, pointerType: "mouse"})); ' +
+              '    el.dispatchEvent(new MouseEvent("mouseup", opts)); ' +
+              '    el.dispatchEvent(new MouseEvent("click", opts)); ' +
+              '  }, 50); ' +
+              '  return JSON.stringify({ok: true, tag: el.tagName, id: el.id || "", cls: (el.className || "").toString().substring(0,30), relX: ' + relX + ', relY: ' + relY + '}); ' +
+              '})()'
+            );
+            
+            return JSON.stringify({ok: true, relX: relX, relY: relY, webviewRect: {w: rect.width, h: rect.height}});
+          })()
+        `);
+
+        let parsed: any;
+        try { parsed = typeof clickResult === 'string' ? JSON.parse(clickResult) : clickResult; } catch { parsed = {raw: String(clickResult)}; }
+        return send(res, { ok: true, click: parsed });
+      }
+
+      if (url === '/cursor/show' && method === 'GET') {
+        await runInCursor(`window.api.show()`);
+        return send(res, { ok: true, message: 'Cursor shown' });
+      }
+
+      if (url === '/cursor/hide' && method === 'GET') {
+        await runInCursor(`window.api.hide()`);
+        return send(res, { ok: true, message: 'Cursor hidden' });
+      }
+
+      if (url === '/cursor/pos' && method === 'GET') {
+        const result = await runInCursor(`JSON.stringify(window.api.pos())`);
+        let parsed: any;
+        try { parsed = typeof result === 'string' ? JSON.parse(result) : result; } catch { parsed = {}; }
+        return send(res, { ok: true, cursor: parsed });
       }
 
       send(res, { error: 'Unknown endpoint' }, 404);

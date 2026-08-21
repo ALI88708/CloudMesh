@@ -20,6 +20,32 @@ declare global {
       toggleAdBlocker: (e: boolean) => Promise<boolean>;
       toggleTrackerBlocker: (e: boolean) => Promise<boolean>;
       toggleFingerprintProtection: (e: boolean) => Promise<boolean>;
+      // Downloads
+      getDownloads: () => Promise<any[]>;
+      cancelDownload: (id: string) => Promise<boolean>;
+      openDownload: (id: string) => Promise<boolean>;
+      showDownloadFolder: () => Promise<boolean>;
+      clearDownloads: () => Promise<boolean>;
+      onDownloadStarted: (cb: (d: any) => void) => void;
+      onDownloadProgress: (cb: (d: any) => void) => void;
+      onDownloadDone: (cb: (d: any) => void) => void;
+      // History
+      getHistory: () => Promise<any[]>;
+      addHistory: (url: string, title: string) => Promise<boolean>;
+      clearHistory: () => Promise<boolean>;
+      removeHistoryEntry: (url: string) => Promise<boolean>;
+      // Incognito
+      startIncognito: () => Promise<boolean>;
+      stopIncognito: () => Promise<boolean>;
+      getIncognitoSession: () => Promise<string | null>;
+      // Fullscreen
+      toggleFullscreen: () => Promise<boolean>;
+      isFullscreen: () => Promise<boolean>;
+      // Print
+      printPage: () => Promise<boolean>;
+      // Focus
+      focusAddressBar: () => Promise<boolean>;
+      onFocusAddressBar: (cb: () => void) => void;
     };
     _gameInterval: any;
     _gameKeyHandler: any;
@@ -49,6 +75,8 @@ let stats: any = {};
 let settings: any = {};
 let bookmarks: Bookmark[] = [];
 let startTime: number = Date.now();
+let isIncognito: boolean = false;
+let downloadsPanelOpen: boolean = false;
 
 // ========== INIT ==========
 async function init(): Promise<void> {
@@ -180,11 +208,8 @@ function renderSettingsPage(): string {
 }
 
 function renderHistoryPage(): string {
-  const hist = (stats.visitHistory || []).map((url: string, i: number) => {
-    const domain = url.replace(/https?:\/\//, '').split('/')[0];
-    return `<div class="history-row" data-url="${url}"><span class="hr-num">${i + 1}</span><span class="hr-url">${url}</span><span class="hr-domain">${domain}</span></div>`;
-  }).join('');
-  return `<div class="internal-page history-page"><div class="ip-header"><div class="ip-icon">📋</div><h1>سجل الزيارات</h1><p class="ip-sub">${(stats.visitHistory || []).length} صفحة في السجل</p></div><div class="ip-content"><div class="history-controls"><input type="text" class="ip-input" id="history-search" placeholder="بحث في السجل..."><button class="ip-btn danger" id="clear-history">مسح السجل</button></div><div class="history-list-internal" id="history-list">${hist || '<div class="empty-state">لا يوجد سجل بعد</div>'}</div></div></div>`;
+  const isEn = currentLang === 'en';
+  return `<div class="internal-page history-page"><div class="ip-header"><div class="ip-icon">📋</div><h1>${isEn ? 'Browsing History' : 'سجل الزيارات'}</h1><p class="ip-sub" id="history-count">...</p></div><div class="ip-content"><div class="history-controls"><input type="text" class="ip-input" id="history-search" placeholder="${isEn ? 'Search history...' : 'بحث في السجل...'}"><button class="ip-btn danger" id="clear-history">${isEn ? 'Clear History' : 'مسح السجل'}</button></div><div class="history-list-internal" id="history-list"><div class="empty-state">${isEn ? 'Loading...' : 'جاري التحميل...'}</div></div></div></div>`;
 }
 
 function renderAboutPage(): string {
@@ -206,7 +231,9 @@ function renderHelpPage(): string {
     { keys: 'Ctrl+T', desc: isEn ? 'New Tab' : 'تبويب جديد' },
     { keys: 'Ctrl+W', desc: isEn ? 'Close Tab' : 'إغلاق تبويب' },
     { keys: 'Ctrl+L', desc: isEn ? 'Address Bar' : 'شريط العناوين' },
-    { keys: 'F5', desc: isEn ? 'Reload' : 'تحديث' }
+    { keys: 'Ctrl+P', desc: isEn ? 'Print Page' : 'طباعة الصفحة' },
+    { keys: 'F5', desc: isEn ? 'Reload' : 'تحديث' },
+    { keys: 'F11', desc: isEn ? 'Fullscreen' : 'شاشة كاملة' }
   ];
   const pagesHtml = pages.map(p => `<div class="help-row" data-url="${p.url}"><span class="help-icon">${p.icon}</span><div class="help-info"><span class="help-title">${p.title}</span><span class="help-desc">${p.desc}</span></div><span class="help-url">${p.url}</span></div>`).join('');
   const shortcutsHtml = shortcuts.map(s => `<div class="shortcut-row"><kbd>${s.keys}</kbd><span>${s.desc}</span></div>`).join('');
@@ -304,10 +331,8 @@ function navigateTo(url: string, tabId?: number, isBackForward?: boolean): void 
 
   stats.pagesVisited = (stats.pagesVisited || 0) + 1;
   stats.lastVisit = new Date().toISOString();
-  if (!stats.visitHistory) stats.visitHistory = [];
-  stats.visitHistory.unshift(url);
-  if (stats.visitHistory.length > 100) stats.visitHistory.pop();
   window.openBrowser.saveStats(stats);
+  window.openBrowser.addHistory(url, tab.title);
   updateStats();
 }
 
@@ -421,20 +446,39 @@ function setupInternalPageEvents(url: string, tabId: number): void {
   }
 
   if (pageId === 'history') {
+    window.openBrowser.getHistory().then((hist: any[]) => {
+      const list = document.getElementById('history-list');
+      const countEl = document.getElementById('history-count');
+      if (countEl) countEl.textContent = hist.length + (currentLang === 'en' ? ' pages visited' : ' صفحة في السجل');
+      if (!list) return;
+      if (hist.length === 0) {
+        list.innerHTML = '<div class="empty-state">' + (currentLang === 'en' ? 'No history yet' : 'لا يوجد سجل بعد') + '</div>';
+        return;
+      }
+      list.innerHTML = hist.map((h: any, i: number) => {
+        const domain = h.url.replace(/https?:\/\//, '').split('/')[0];
+        const date = new Date(h.timestamp).toLocaleDateString();
+        return `<div class="history-row" data-url="${h.url}"><span class="hr-num">${i + 1}</span><span class="hr-url">${h.title || h.url}</span><span class="hr-domain">${domain}</span><span class="hr-date">${date}</span></div>`;
+      }).join('');
+      list.querySelectorAll('.history-row').forEach(row => {
+        row.addEventListener('click', () => navigateTo((row as HTMLElement).dataset.url || ''));
+      });
+    });
     document.getElementById('history-search')?.addEventListener('input', (e: Event) => {
       const q = (e.target as HTMLInputElement).value.toLowerCase();
       document.querySelectorAll('.history-row').forEach(row => {
-        (row as HTMLElement).style.display = ((row as HTMLElement).dataset.url || '').toLowerCase().includes(q) ? '' : 'none';
+        const url = ((row as HTMLElement).dataset.url || '').toLowerCase();
+        const title = (row.querySelector('.hr-url') as HTMLElement)?.textContent?.toLowerCase() || '';
+        (row as HTMLElement).style.display = (url.includes(q) || title.includes(q)) ? '' : 'none';
       });
     });
-    document.querySelectorAll('.history-row').forEach(row => {
-      row.addEventListener('click', () => navigateTo((row as HTMLElement).dataset.url || ''));
-    });
     document.getElementById('clear-history')?.addEventListener('click', () => {
-      stats.visitHistory = [];
-      window.openBrowser.saveStats(stats);
-      const list = document.getElementById('history-list');
-      if (list) list.innerHTML = '<div class="empty-state">' + t('noHistory') + '</div>';
+      window.openBrowser.clearHistory().then(() => {
+        const list = document.getElementById('history-list');
+        if (list) list.innerHTML = '<div class="empty-state">' + (currentLang === 'en' ? 'No history yet' : 'لا يوجد سجل بعد') + '</div>';
+        const countEl = document.getElementById('history-count');
+        if (countEl) countEl.textContent = '0 ' + (currentLang === 'en' ? 'pages visited' : 'صفحة في السجل');
+      });
     });
   }
 
@@ -507,6 +551,7 @@ function createTab(url?: string): void {
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
   tabEl.dataset.tabId = String(id);
+  tabEl.draggable = true;
   tabEl.innerHTML = `<span class="tab-title">تبويب جديد</span><button class="tab-close" data-close="${id}">×</button>`;
   document.getElementById('tabs-container')?.appendChild(tabEl);
 
@@ -1019,6 +1064,8 @@ function setupEventListeners(): void {
     if (e.ctrlKey && e.key === '-') { e.preventDefault(); setZoom('out'); }
     if (e.ctrlKey && e.key === '0') { e.preventDefault(); setZoom('reset'); }
     if (e.key === 'F5') { e.preventDefault(); const wv = document.querySelector(`.webview-wrapper[data-tab-id="${currentTabId}"] webview`) as any; if (wv) wv.reload(); }
+    if (e.key === 'F11') { e.preventDefault(); window.openBrowser.toggleFullscreen(); }
+    if (e.ctrlKey && e.key === 'p') { e.preventDefault(); window.openBrowser.printPage(); }
     if (e.ctrlKey && e.key === 'f') {
       e.preventDefault();
       const bar = document.getElementById('find-bar');
@@ -1036,6 +1083,43 @@ function setupEventListeners(): void {
         ntpInput.blur();
       }
     }
+  });
+
+  // ===== Download Manager Button =====
+  const dlBtn = document.getElementById('btn-downloads');
+  if (dlBtn) {
+    dlBtn.addEventListener('click', toggleDownloadsPanel);
+    window.openBrowser.onDownloadStarted((d: any) => {
+      dlBtn.classList.add('has-new');
+      updateDownloadsBadge();
+    });
+    window.openBrowser.onDownloadProgress((d: any) => {
+      const bar = document.querySelector(`.dl-progress[data-dl-id="${d.id}"]`) as HTMLElement;
+      if (bar) {
+        const pct = d.total > 0 ? (d.received / d.total * 100) : 0;
+        bar.style.width = pct + '%';
+      }
+    });
+    window.openBrowser.onDownloadDone((d: any) => {
+      dlBtn.classList.remove('has-new');
+      updateDownloadsBadge();
+      const statusEl = document.querySelector(`.dl-status[data-dl-id="${d.id}"]`);
+      if (statusEl) statusEl.textContent = d.status === 'completed' ? '✅' : '❌';
+    });
+  }
+
+  // ===== Incognito Button =====
+  const incBtn = document.getElementById('btn-incognito');
+  if (incBtn) {
+    incBtn.addEventListener('click', toggleIncognito);
+  }
+
+  // ===== Tab Drag Reorder =====
+  setupTabDrag();
+
+  // ===== Focus Address Bar from main process =====
+  window.openBrowser.onFocusAddressBar(() => {
+    urlInput?.focus();
   });
 }
 
@@ -1072,5 +1156,151 @@ init();
 };
 
 (window as any)._bridgeGetHistory = function(): string[] {
-  return stats.visitHistory || [];
+  return (stats.visitHistory || []).slice(0, 50);
 };
+
+// ========== DOWNLOAD MANAGER ==========
+function toggleDownloadsPanel(): void {
+  downloadsPanelOpen = !downloadsPanelOpen;
+  let panel = document.getElementById('downloads-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'downloads-panel';
+    panel.className = 'downloads-panel';
+    document.body.appendChild(panel);
+  }
+  if (downloadsPanelOpen) {
+    renderDownloadsPanel();
+    panel.classList.add('open');
+  } else {
+    panel.classList.remove('open');
+  }
+}
+
+async function renderDownloadsPanel(): Promise<void> {
+  const panel = document.getElementById('downloads-panel');
+  if (!panel) return;
+  const isEn = currentLang === 'en';
+  const downloads = await window.openBrowser.getDownloads();
+  const items = downloads.map((d: any) => {
+    const pct = d.totalBytes > 0 ? Math.round(d.receivedBytes / d.totalBytes * 100) : 0;
+    const statusIcon = d.status === 'completed' ? '✅' : d.status === 'cancelled' ? '🚫' : d.status === 'failed' ? '❌' : '⏳';
+    const size = d.totalBytes > 0 ? formatBytes(d.totalBytes) : '?';
+    return `<div class="dl-item"><div class="dl-info"><span class="dl-name">${d.filename}</span><span class="dl-meta">${size} • ${statusIcon} ${d.status}</span></div><div class="dl-bar-container"><div class="dl-progress" data-dl-id="${d.id}" style="width:${pct}%"></div></div><div class="dl-actions"><button class="dl-btn" data-action="open" data-dl-id="${d.id}" title="${isEn ? 'Open' : 'فتح'}">📂</button><button class="dl-btn" data-action="cancel" data-dl-id="${d.id}" title="${isEn ? 'Cancel' : 'إلغاء'}">✕</button></div></div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="dl-header">
+      <span class="dl-title">${isEn ? 'Downloads' : 'التنزيلات'} (${downloads.length})</span>
+      <button class="dl-close-btn" id="dl-close">✕</button>
+    </div>
+    <div class="dl-list">${items || '<div class="empty-state">' + (isEn ? 'No downloads' : 'لا يوجد تنزيلات') + '</div>'}</div>
+    <div class="dl-footer">
+      <button class="dl-footer-btn" id="dl-open-folder">${isEn ? 'Open Folder' : 'فتح المجلد'}</button>
+      <button class="dl-footer-btn danger" id="dl-clear-all">${isEn ? 'Clear All' : 'مسح الكل'}</button>
+    </div>`;
+
+  document.getElementById('dl-close')?.addEventListener('click', () => {
+    downloadsPanelOpen = false;
+    panel.classList.remove('open');
+  });
+  document.getElementById('dl-open-folder')?.addEventListener('click', () => window.openBrowser.showDownloadFolder());
+  document.getElementById('dl-clear-all')?.addEventListener('click', async () => {
+    await window.openBrowser.clearDownloads();
+    renderDownloadsPanel();
+  });
+  panel.querySelectorAll('.dl-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const action = (btn as HTMLElement).dataset.action;
+      const id = (btn as HTMLElement).dataset.dlId || '';
+      if (action === 'open') await window.openBrowser.openDownload(id);
+      if (action === 'cancel') await window.openBrowser.cancelDownload(id);
+      renderDownloadsPanel();
+    });
+  });
+}
+
+function updateDownloadsBadge(): void {
+  window.openBrowser.getDownloads().then((downloads: any[]) => {
+    const active = downloads.filter((d: any) => d.status === 'downloading').length;
+    const badge = document.getElementById('dl-badge');
+    if (badge) {
+      badge.textContent = active > 0 ? String(active) : '';
+      badge.style.display = active > 0 ? 'flex' : 'none';
+    }
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+// ========== INCOGNITO MODE ==========
+async function toggleIncognito(): Promise<void> {
+  isIncognito = !isIncognito;
+  const btn = document.getElementById('btn-incognito');
+  if (btn) btn.classList.toggle('active', isIncognito);
+  if (isIncognito) {
+    await window.openBrowser.startIncognito();
+    document.body.classList.add('incognito');
+  } else {
+    await window.openBrowser.stopIncognito();
+    document.body.classList.remove('incognito');
+  }
+}
+
+// ========== TAB DRAG REORDER ==========
+function setupTabDrag(): void {
+  const container = document.getElementById('tabs-container');
+  if (!container) return;
+  let draggedTab: HTMLElement | null = null;
+
+  container.addEventListener('dragstart', (e: Event) => {
+    const me = e as DragEvent;
+    const tab = (me.target as HTMLElement).closest('.tab') as HTMLElement;
+    if (!tab) return;
+    draggedTab = tab;
+    tab.classList.add('dragging');
+    me.dataTransfer!.effectAllowed = 'move';
+  });
+
+  container.addEventListener('dragover', (e: Event) => {
+    e.preventDefault();
+    const me = e as DragEvent;
+    me.dataTransfer!.dropEffect = 'move';
+    const target = (me.target as HTMLElement).closest('.tab') as HTMLElement;
+    if (!target || target === draggedTab) return;
+    const rect = target.getBoundingClientRect();
+    const midX = rect.left + rect.width / 2;
+    if (me.clientX < midX) {
+      container.insertBefore(draggedTab!, target);
+    } else {
+      container.insertBefore(draggedTab!, target.nextSibling);
+    }
+  });
+
+  container.addEventListener('dragend', (e: Event) => {
+    if (draggedTab) draggedTab.classList.remove('dragging');
+    draggedTab = null;
+    syncTabsFromDOM();
+  });
+
+  container.addEventListener('drop', (e: Event) => {
+    e.preventDefault();
+  });
+}
+
+function syncTabsFromDOM(): void {
+  const container = document.getElementById('tabs-container');
+  if (!container) return;
+  const tabElements = container.querySelectorAll('.tab');
+  const newTabs: Tab[] = [];
+  tabElements.forEach(el => {
+    const id = parseInt((el as HTMLElement).dataset.tabId || '0');
+    const tab = tabs.find(t => t.id === id);
+    if (tab) newTabs.push(tab);
+  });
+  tabs = newTabs;
+}
