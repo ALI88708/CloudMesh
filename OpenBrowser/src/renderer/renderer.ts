@@ -393,18 +393,67 @@ function renderWebview(url: string, tabId: number): void {
   wv.addEventListener('did-stop-loading', () => {
     wv.executeJavaScript(FP_INJECT).catch(() => {});
   });
-  wv.addEventListener('context-menu', (e: any) => {
-    e.preventDefault();
-    const params = e.params || {};
-    const ctx: WebViewContext = {
-      linkURL: params.linkURL || '',
-      imageURL: (params.mediaType === 'image') ? (params.srcURL || '') : '',
-      selText: params.selectionText || '',
-      pageURL: params.pageURL || '',
-      isEditable: params.inputFieldType === 'text' || params.inputFieldType === 'password',
-      isImage: params.mediaType === 'image'
-    };
-    showWebViewContextMenu(e.clientX || params.x || 0, e.clientY || params.y || 0, ctx);
+  wv.addEventListener('ipc-message', (e: any) => {
+    if (e.channel === 'context-menu-data') {
+      const data = e.args[0];
+      const ctx: WebViewContext = {
+        linkURL: data.linkURL || '',
+        imageURL: data.imageURL || '',
+        selText: data.selText || '',
+        pageURL: data.pageURL || '',
+        isEditable: data.isEditable || false,
+        isImage: data.isImage || false
+      };
+      showWebViewContextMenu(data.x || 0, data.y || 0, ctx);
+    }
+  });
+  wv.addEventListener('dom-ready', () => {
+    const CONTEXT_INJECT = `
+      (function(){
+        document.addEventListener('contextmenu', function(e){
+          e.preventDefault();
+          var target = e.target;
+          var linkURL = '';
+          var el = target;
+          while(el && el !== document){
+            if(el.tagName === 'A' && el.href){ linkURL = el.href; break; }
+            el = el.parentElement;
+          }
+          var imageURL = '';
+          if(target.tagName === 'IMG' && target.src){ imageURL = target.src; }
+          var isEditable = target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.contentEditable === 'true';
+          var selText = window.getSelection().toString() || '';
+          window.postMessage({
+            type: 'openbrowser-contextmenu',
+            x: e.clientX,
+            y: e.clientY,
+            linkURL: linkURL,
+            imageURL: imageURL,
+            selText: selText,
+            pageURL: location.href,
+            isEditable: isEditable,
+            isImage: target.tagName === 'IMG'
+          }, '*');
+        }, true);
+      })();
+    `;
+    wv.executeJavaScript(CONTEXT_INJECT).catch(() => {});
+  });
+  wv.addEventListener('console-message', (e: any) => {
+    if (e.message && e.message.startsWith('openbrowser-contextmenu|')) {
+      try {
+        const data = JSON.parse(e.message.split('|')[1]);
+        const ctx: WebViewContext = {
+          linkURL: data.linkURL || '',
+          imageURL: data.imageURL || '',
+          selText: data.selText || '',
+          pageURL: data.pageURL || '',
+          isEditable: data.isEditable || false,
+          isImage: data.isImage || false
+        };
+        showWebViewContextMenu(data.x || 0, data.y || 0, ctx);
+      } catch (err) {}
+    }
   });
   wrapper.appendChild(wv);
 }
