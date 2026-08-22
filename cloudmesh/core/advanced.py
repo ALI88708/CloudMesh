@@ -273,6 +273,8 @@ class CloudMeshAPI:
         self.port = port
         self._running = False
         self.api_key = api_key or secrets.token_hex(32)
+        from core.ddos import DDoSProtection
+        self._ddos = DDoSProtection(rate_max=60, rate_window=60, ban_threshold=10)
 
     def _handle(self, request):
         import urllib.parse
@@ -342,13 +344,25 @@ class CloudMeshAPI:
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                ip = self.client_address[0]
+                allowed, reason = api._ddos.check_connection(ip)
+                if not allowed:
+                    self.send_response(429)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": reason}).encode())
+                    api._ddos.release_connection(ip)
+                    return
                 api_key = self.headers.get("X-Api-Key", "")
                 if not secrets.compare_digest(api_key, _api_key):
+                    api._ddos.on_auth_failure(ip)
                     self.send_response(401)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
                     self.wfile.write(json.dumps({"error": "Unauthorized"}).encode())
+                    api._ddos.release_connection(ip)
                     return
+                api._ddos.on_auth_success(ip)
                 result = api._handle(self)
                 status = 200
                 if isinstance(result, tuple):
@@ -358,6 +372,7 @@ class CloudMeshAPI:
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(result, indent=2).encode())
+                api._ddos.release_connection(ip)
 
             def log_message(self, format, *args):
                 pass

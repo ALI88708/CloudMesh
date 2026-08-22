@@ -690,3 +690,94 @@ class TestShamirPanic:
         assert info["threshold"] == 2
         assert info["n_shares"] == 3
         assert len(info["shares"]) == 3
+
+
+class TestDDoSProtection:
+    def test_rate_limiter_allows_within_limit(self):
+        from core.ddos import RateLimiter
+        rl = RateLimiter(max_requests=5, window=60)
+        for _ in range(5):
+            assert rl.is_allowed("10.0.0.1") is True
+        assert rl.is_allowed("10.0.0.1") is False
+
+    def test_rate_limiter_resets_after_window(self):
+        from core.ddos import RateLimiter
+        rl = RateLimiter(max_requests=2, window=0.1)
+        assert rl.is_allowed("10.0.0.2") is True
+        assert rl.is_allowed("10.0.0.2") is True
+        assert rl.is_allowed("10.0.0.2") is False
+        import time; time.sleep(0.15)
+        assert rl.is_allowed("10.0.0.2") is True
+
+    def test_connection_limiter_blocks_overflow(self):
+        from core.ddos import ConnectionLimiter
+        cl = ConnectionLimiter(max_per_ip=2, max_total=10)
+        assert cl.can_accept("10.0.0.3") is True
+        assert cl.can_accept("10.0.0.3") is True
+        assert cl.can_accept("10.0.0.3") is False
+
+    def test_connection_limiter_releases(self):
+        from core.ddos import ConnectionLimiter
+        cl = ConnectionLimiter(max_per_ip=1, max_total=1)
+        assert cl.can_accept("10.0.0.4") is True
+        assert cl.can_accept("10.0.0.4") is False
+        cl.release("10.0.0.4")
+        assert cl.can_accept("10.0.0.4") is True
+
+    def test_blacklister_bans_after_threshold(self, tmp_path):
+        from core.ddos import IPBlacklister
+        from collections import defaultdict
+        bl = IPBlacklister(fail_threshold=3, ban_duration=60)
+        bl._bans = {}
+        bl._failures = defaultdict(int)
+        bl._save_bans = lambda: None
+        assert bl.is_banned("10.0.0.5") is False
+        bl.record_failure("10.0.0.5")
+        bl.record_failure("10.0.0.5")
+        banned = bl.record_failure("10.0.0.5")
+        assert banned is True
+        assert bl.is_banned("10.0.0.5") is True
+
+    def test_blacklister_success_resets_failures(self):
+        from core.ddos import IPBlacklister
+        from collections import defaultdict
+        bl = IPBlacklister(fail_threshold=3, ban_duration=60)
+        bl._bans = {}
+        bl._failures = defaultdict(int)
+        bl._save_bans = lambda: None
+        bl.record_failure("10.0.0.6")
+        bl.record_failure("10.0.0.6")
+        bl.record_success("10.0.0.6")
+        banned = bl.record_failure("10.0.0.6")
+        assert banned is False
+
+    def test_packet_validator_rejects_oversized(self):
+        from core.ddos import PacketValidator
+        ok, msg = PacketValidator.validate(b"x" * (1024 * 1024 + 1))
+        assert ok is False
+
+    def test_packet_validator_rejects_bad_json(self):
+        from core.ddos import PacketValidator
+        ok, msg = PacketValidator.validate(b"not json at all!!!")
+        assert ok is False
+
+    def test_packet_validator_accepts_valid(self):
+        from core.ddos import PacketValidator
+        ok, msg = PacketValidator.validate(b'{"action": "ping", "auth": "test"}')
+        assert ok is True
+        assert msg["action"] == "ping"
+
+    def test_ddos_protection_full_flow(self):
+        from core.ddos import DDoSProtection
+        from collections import defaultdict
+        dd = DDoSProtection(rate_max=10, rate_window=60, ban_threshold=2, conn_per_ip=2)
+        dd.blacklister._bans = {}
+        dd.blacklister._failures = defaultdict(int)
+        dd.blacklister._save_bans = lambda: None
+        assert dd.check_connection("10.0.0.7")[0] is True
+        dd.release_connection("10.0.0.7")
+        dd.on_auth_failure("10.0.0.7")
+        dd.on_auth_failure("10.0.0.7")
+        allowed, reason = dd.check_connection("10.0.0.7")
+        assert allowed is False
+        assert "banned" in reason.lower()

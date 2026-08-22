@@ -312,6 +312,9 @@ class NodeAgent:
         self._spa_open = False
         self._spa_lock = threading.Lock()
         self._spa_event = threading.Event()
+
+        from core.ddos import DDoSProtection
+        self._ddos = DDoSProtection()
         self._spac = None
 
     def _on_spa_knock(self, window):
@@ -450,19 +453,31 @@ class NodeAgent:
         return {"success": False, "message": f"Job status: {job['status']}"}
 
     def _handle(self, client, addr):
+        ip = addr[0]
         try:
+            allowed, reason = self._ddos.check_connection(ip)
+            if not allowed:
+                _log(f"DDoS: Rejected {ip}: {reason}")
+                self._send_msg(client, {"type": "error", "message": "Rejected"})
+                return
+
             req = self._recv_msg(client)
             if req is None:
                 return
 
             auth_key = req.get("auth", "") or ""
             if not hmac_mod.compare_digest(auth_key, self.auth_key):
+                is_banned = self._ddos.on_auth_failure(ip)
                 is_tripwire, tripwire_name = _check_tripwire(auth_key)
                 if is_tripwire:
-                    _log(f"TRIPWIRE TRIGGERED! Key '{tripwire_name}' used from {addr[0]}")
-                    _log_tripwire_breach(auth_key, addr[0])
+                    _log(f"TRIPWIRE TRIGGERED! Key '{tripwire_name}' used from {ip}")
+                    _log_tripwire_breach(auth_key, ip)
+                if is_banned:
+                    _log(f"DDoS: IP {ip} banned after repeated auth failures")
                 self._send_msg(client, {"type": "error", "message": "Auth failed"})
                 return
+
+            self._ddos.on_auth_success(ip)
 
             action = req.get("action", "")
             if action == "ping":
@@ -545,6 +560,7 @@ class NodeAgent:
             except Exception:
                 pass
         finally:
+            self._ddos.release_connection(ip)
             try:
                 client.close()
             except Exception:
