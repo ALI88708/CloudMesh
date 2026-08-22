@@ -75,5 +75,8 @@ contextBridge.exposeInMainWorld('openBrowser', {
   getClipboardText: () => ipcRenderer.invoke('get-clipboard-text'),
 
   // Inspect
-  inspectElement: (x: number, y: number) => ipcRenderer.invoke('inspect-element', x, y)
+  inspectElement: (x: number, y: number) => ipcRenderer.invoke('inspect-element', x, y),
+
+  // Context Menu (from main process webContents)
+  onWebViewContextMenu: (cb: any) => ipcRenderer.on('webview-context-menu', (_e: any, ctx: any) => cb(ctx))
 });

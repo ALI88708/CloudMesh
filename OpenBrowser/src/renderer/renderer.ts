@@ -63,6 +63,8 @@ declare global {
       getClipboardText: () => Promise<string>;
       // Inspect
       inspectElement: (x: number, y: number) => Promise<boolean>;
+      // Context Menu
+      onWebViewContextMenu: (cb: (ctx: any) => void) => void;
     };
     _gameInterval: any;
     _gameKeyHandler: any;
@@ -392,7 +394,6 @@ function renderWebview(url: string, tabId: number): void {
   wv.addEventListener('did-start-loading', () => {});
   wv.addEventListener('did-stop-loading', () => {
     wv.executeJavaScript(FP_INJECT).catch(() => {});
-    injectContextMenuScript(wv);
   });
   wv.addEventListener('console-message', (e: any) => {
     const msg = e.message || '';
@@ -407,50 +408,32 @@ function renderWebview(url: string, tabId: number): void {
           isEditable: data.isEditable || false,
           isImage: data.isImage || false
         };
-        showWebViewContextMenu(data.x || 0, data.y || 0, ctx);
+        const wrapper = wv.parentElement as HTMLElement;
+        const wvRect = wrapper ? wrapper.getBoundingClientRect() : { left: 0, top: 48 };
+        const absX = (data.x || 0) + wvRect.left;
+        const absY = (data.y || 0) + wvRect.top;
+        showWebViewContextMenu(absX, absY, ctx);
       } catch (err) {}
     }
   });
-  wrapper.appendChild(wv);
-}
-
-function injectContextMenuScript(wv: any): void {
-  if (!wv || !wv.executeJavaScript) return;
-  const script = `
-    if (!window.__obCtxInjected) {
-      window.__obCtxInjected = true;
-      document.addEventListener('contextmenu', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        var target = e.target;
-        var linkURL = '';
-        var el = target;
-        while (el && el !== document) {
-          if (el.tagName === 'A' && el.href) { linkURL = el.href; break; }
-          el = el.parentElement;
-        }
-        var imageURL = '';
-        if (target.tagName === 'IMG' && target.src) { imageURL = target.src; }
-        var isEditable = target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.contentEditable === 'true';
-        var selText = '';
-        try { selText = window.getSelection().toString() || ''; } catch(ex) {}
-        var payload = JSON.stringify({
-          x: e.clientX,
-          y: e.clientY,
-          linkURL: linkURL,
-          imageURL: imageURL,
-          selText: selText,
-          pageURL: location.href,
-          isEditable: isEditable,
-          isImage: target.tagName === 'IMG'
-        });
-        console.log('OBCtx:' + payload);
-      }, true);
-    }
-  `;
-  wv.executeJavaScript(script).catch((err: any) => {
-    console.log('context menu inject failed:', err);
+  (wv as any).addEventListener('context-menu', (e: any) => {
+    e.preventDefault();
+    const p = e.params || {};
+    const ctx: WebViewContext = {
+      linkURL: p.linkURL || '',
+      imageURL: (p.mediaType === 'image') ? (p.srcURL || '') : '',
+      selText: p.selectionText || '',
+      pageURL: p.pageURL || '',
+      isEditable: (p.inputFieldType === 'text' || p.inputFieldType === 'password' || p.isEditable === true),
+      isImage: (p.mediaType === 'image')
+    };
+    const wrapper = wv.parentElement as HTMLElement;
+    const wvRect = wrapper ? wrapper.getBoundingClientRect() : { left: 0, top: 48 };
+    const absX = (p.x || 0) + wvRect.left;
+    const absY = (p.y || 0) + wvRect.top;
+    showWebViewContextMenu(absX, absY, ctx);
   });
+  wrapper.appendChild(wv);
 }
 
 function setupInternalPageEvents(url: string, tabId: number): void {
@@ -1575,22 +1558,25 @@ function showPasswordSavePrompt(input: HTMLInputElement): void {
 
 // ========== WEBVIEW CONTEXT MENU ==========
 function setupWebviewContextMenu(): void {
-  document.addEventListener('contextmenu', (e: MouseEvent) => {
-    const wv = (e.target as HTMLElement).closest('webview') as any;
-    if (!wv) return;
-    e.preventDefault();
-
-    const ctx = (wv as any).contextMenuURL || '';
-    const selText = (wv as any).contextMenuSelectionText || '';
-    const isImage = (wv as any).contextMenuMediaType === 'image';
-    const isEditable = (wv as any).contextMenuInputFieldType === 'text' || (wv as any).contextMenuInputFieldType === 'password';
-    const linkURL = (wv as any).contextMenuLinkURL || '';
-    const imageURL = isImage ? (wv as any).contextMenuSrcURL || '' : '';
-    const pageURL = (wv as any).getURL ? (wv as any).getURL() : '';
-
-    showWebViewContextMenu(e.clientX, e.clientY, {
-      linkURL, imageURL, selText, pageURL, isEditable, isImage
-    });
+  // Main process sends context menu data for webview right-clicks
+  window.openBrowser.onWebViewContextMenu((ctx: any) => {
+    const data: WebViewContext = {
+      linkURL: ctx.linkURL || '',
+      imageURL: (ctx.mediaType === 'image') ? (ctx.srcURL || '') : '',
+      selText: ctx.selectionText || '',
+      pageURL: ctx.pageURL || '',
+      isEditable: (ctx.inputFieldType === 'text' || ctx.inputFieldType === 'password' || ctx.isEditable === true),
+      isImage: (ctx.mediaType === 'image')
+    };
+    const toolbar = document.getElementById('toolbar');
+    const toolbarH = toolbar ? toolbar.offsetHeight : 48;
+    const wvWrapper = document.querySelector(`.webview-wrapper[data-tab-id="${currentTabId}"]`) as HTMLElement;
+    let offsetX = 0, offsetY = toolbarH;
+    if (wvWrapper) {
+      offsetX = wvWrapper.offsetLeft || 0;
+      offsetY = toolbarH + (wvWrapper.offsetTop || 0);
+    }
+    showWebViewContextMenu((ctx.x || 0) + offsetX, (ctx.y || 0) + offsetY, data);
   });
 }
 

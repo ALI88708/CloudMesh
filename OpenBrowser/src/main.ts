@@ -321,6 +321,27 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+// Handle context menu for all webContents (webviews + iframes)
+app.on('web-contents-created', (_event: any, wc: any) => {
+  wc.on('context-menu', (_e: any, info: any) => {
+    if (!mainWindow) return;
+    const ctx = {
+      x: info.x || 0,
+      y: info.y || 0,
+      linkURL: info.linkURL || '',
+      srcURL: info.srcURL || '',
+      mediaType: info.mediaType || '',
+      selectionText: info.selectionText || '',
+      pageURL: info.pageURL || '',
+      inputFieldType: info.inputFieldType || '',
+      isEditable: info.isEditable || false
+    };
+    try {
+      mainWindow.webContents.send('webview-context-menu', ctx);
+    } catch (err) {}
+  });
+});
+
 // IPC Handlers
 ipcMain.handle('get-settings', () => loadSettings());
 ipcMain.handle('save-settings', (_event: any, settings: AppSettings) => {
