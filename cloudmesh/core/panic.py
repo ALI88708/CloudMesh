@@ -18,6 +18,7 @@ class PanicManager:
         self.secret_key_file = self.base_dir / ".secret.key"
         self.node_keys_file = self.base_dir / ".node_keys.json"
         self.panic_log_file = self.base_dir / ".panic_log.json"
+        self.pending_file = self.base_dir / ".panic_pending.json"
 
     def _log_panic(self, actions):
         entries = []
@@ -34,6 +35,17 @@ class PanicManager:
         entries = entries[-100:]
         self.panic_log_file.write_text(json.dumps(entries, indent=2))
 
+    def _load_pending(self):
+        if self.pending_file.exists():
+            try:
+                return json.loads(self.pending_file.read_text())
+            except Exception:
+                return {}
+        return {}
+
+    def _save_pending(self, pending):
+        self.pending_file.write_text(json.dumps(pending, indent=2))
+
     def dry_run(self):
         actions = []
         if self.secret_key_file.exists():
@@ -45,7 +57,7 @@ class PanicManager:
             try:
                 nodes = json.loads(self.node_keys_file.read_text())
                 for name in nodes:
-                    actions.append(("rotate_node_key", f"Will rotate auth key for node '{name}'"))
+                    actions.append(("rotate_node_key", f"Will rotate auth key for node '{name}' (local + remote)"))
                 actions.append(("backup_node_keys", "Will backup .node_keys.json"))
             except Exception:
                 actions.append(("rotate_node_keys", "Will regenerate .node_keys.json"))
@@ -70,12 +82,30 @@ class PanicManager:
 
         if self.node_keys_file.exists():
             try:
+                from core.node_client import NodeClient
                 nodes = json.loads(self.node_keys_file.read_text())
                 shutil.copy2(self.node_keys_file, self.node_keys_file.with_suffix(".json.bak"))
-                for name in nodes:
+                pending = self._load_pending()
+                for name, info in nodes.items():
                     new_auth = secrets.token_hex(32)
-                    nodes[name]["key"] = new_auth
+                    client = NodeClient(info["host"], info["port"], info["key"])
+                    try:
+                        result = client.send({"action": "rotate_key", "new_key": new_auth}, timeout=5)
+                        if result.get("data", {}).get("success"):
+                            nodes[name]["key"] = new_auth
+                            actions.append(f"Rotated '{name}' — confirmed remotely")
+                        else:
+                            pending[name] = {"host": info["host"], "port": info["port"],
+                                             "old_key": info["key"], "new_key": new_auth}
+                            actions.append(f"Rotated '{name}' locally, remote confirm FAILED — retry needed")
+                    except Exception as e:
+                        pending[name] = {"host": info["host"], "port": info["port"],
+                                         "old_key": info["key"], "new_key": new_auth}
+                        actions.append(f"Node '{name}' unreachable ({e}) — rotation PENDING")
                 self.node_keys_file.write_text(json.dumps(nodes, indent=2))
+                if pending:
+                    self._save_pending(pending)
+                    actions.append(f"{len(pending)} node(s) pending — use 'cm panic retry-pending' later")
                 actions.append(f"Rotated auth keys for {len(nodes)} node(s) (backup saved as .node_keys.json.bak)")
             except Exception as e:
                 actions.append(f"Error rotating node keys: {e}")
@@ -85,6 +115,43 @@ class PanicManager:
         self._log_panic(actions)
         actions.append(f"Panic event logged at {datetime.now().isoformat()}")
 
+        return actions
+
+    def retry_pending(self):
+        pending = self._load_pending()
+        if not pending:
+            return ["No pending rotations"]
+
+        from core.node_client import NodeClient
+        actions = []
+        remaining = {}
+
+        for name, info in pending.items():
+            client = NodeClient(info["host"], info["port"], info["old_key"])
+            try:
+                result = client.send({"action": "rotate_key", "new_key": info["new_key"]}, timeout=5)
+                if result.get("data", {}).get("success"):
+                    if self.node_keys_file.exists():
+                        nodes = json.loads(self.node_keys_file.read_text())
+                        if name in nodes:
+                            nodes[name]["key"] = info["new_key"]
+                            self.node_keys_file.write_text(json.dumps(nodes, indent=2))
+                    actions.append(f"Retry SUCCESS: '{name}' rotated remotely")
+                else:
+                    remaining[name] = info
+                    actions.append(f"Retry FAILED: '{name}' — still pending")
+            except Exception as e:
+                remaining[name] = info
+                actions.append(f"Retry FAILED: '{name}' ({e}) — still pending")
+
+        if remaining:
+            self._save_pending(remaining)
+            actions.append(f"{len(remaining)} node(s) still pending")
+        else:
+            self.pending_file.unlink(missing_ok=True)
+            actions.append("All pending rotations completed — pending file removed")
+
+        self._log_panic(actions)
         return actions
 
 

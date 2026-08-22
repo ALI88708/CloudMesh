@@ -271,7 +271,7 @@ class SpacListener:
                 source_ip = addr[0]
                 if self._validate_packet(data, source_ip):
                     _log(f"SPA: Valid knock from {source_ip} — opening TCP {self.tcp_port} for {self.window}s")
-                    self.on_open(self.window)
+                    self.on_open(self.window, source_ip)
             except socket.timeout:
                 continue
             except Exception as e:
@@ -317,7 +317,7 @@ class NodeAgent:
         self._ddos = DDoSProtection()
         self._spac = None
 
-    def _on_spa_knock(self, window):
+    def _on_spa_knock(self, window, source_ip):
         with self._spa_lock:
             self._spa_open = True
             self._spa_event.set()
@@ -325,10 +325,11 @@ class NodeAgent:
         port = self.port
         try:
             subprocess.run(
-                ["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"],
+                ["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(port),
+                 "-s", source_ip, "-j", "ACCEPT"],
                 capture_output=True, timeout=5
             )
-            _log(f"SPA: iptables ACCEPT rule added for TCP {port}")
+            _log(f"SPA: iptables ACCEPT rule added for TCP {port} from {source_ip}")
         except Exception as e:
             _log(f"SPA: iptables failed: {e}")
 
@@ -336,10 +337,11 @@ class NodeAgent:
             time.sleep(window)
             try:
                 subprocess.run(
-                    ["iptables", "-D", "INPUT", "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"],
+                    ["iptables", "-D", "INPUT", "-p", "tcp", "--dport", str(port),
+                     "-s", source_ip, "-j", "ACCEPT"],
                     capture_output=True, timeout=5
                 )
-                _log(f"SPA: iptables ACCEPT rule removed for TCP {port}")
+                _log(f"SPA: iptables ACCEPT rule removed for TCP {port} from {source_ip}")
             except Exception as e:
                 _log(f"SPA: iptables cleanup failed: {e}")
             with self._spa_lock:
@@ -551,6 +553,15 @@ class NodeAgent:
                     resp = {"type": "rotate_keys", "data": {"success": True, "new_key": new_key}}
                 except Exception as e:
                     resp = {"type": "rotate_keys", "data": {"success": False, "message": str(e)}}
+            elif action == "rotate_key":
+                new_key = req.get("new_key", "")
+                if not new_key or len(new_key) < 32:
+                    resp = {"type": "rotate_key", "data": {"success": False, "message": "Invalid new key"}}
+                else:
+                    KEY_FILE.write_text(new_key)
+                    self.auth_key = new_key
+                    _log("Auth key rotated via authenticated rotate_key request")
+                    resp = {"type": "rotate_key", "data": {"success": True}}
             else:
                 resp = {"type": "error", "message": f"Unknown: {action}"}
             self._send_msg(client, resp)
@@ -602,20 +613,14 @@ class NodeAgent:
             _log("WARNING: SPA disabled — TCP port is visible to scanners. Use --spa for production.")
 
         if self.spa_mode and platform.system() != "Windows":
-            try:
-                subprocess.run(
-                    ["iptables", "-C", "INPUT", "-p", "tcp", "--dport", str(self.port), "-j", "DROP"],
-                    capture_output=True, timeout=5
-                )
-            except subprocess.CalledProcessError:
-                try:
-                    subprocess.run(
-                        ["iptables", "-A", "INPUT", "-p", "tcp", "--dport", str(self.port), "-j", "DROP"],
-                        capture_output=True, timeout=5
-                    )
-                    _log(f"SPA: iptables DROP rule added for TCP {self.port}")
-                except Exception as e:
-                    _log(f"SPA: iptables DROP failed: {e}")
+            result = subprocess.run(
+                ["iptables", "-A", "INPUT", "-p", "tcp", "--dport", str(self.port), "-j", "DROP"],
+                capture_output=True, timeout=5
+            )
+            if result.returncode != 0:
+                _log("FATAL: SPA mode requested but iptables DROP rule failed — refusing to start exposed")
+                return
+            _log(f"SPA: iptables DROP rule added for TCP {self.port}")
 
         if platform.system() != "Windows":
             signal.signal(signal.SIGTERM, lambda s, f: setattr(self, "_running", False))

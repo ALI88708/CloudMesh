@@ -2686,6 +2686,12 @@ def cmd_panic(args):
                     console.print(f"  [red]![/] {name}: {e}")
             console.print("\n[red bold]All node keys rotated. Update your local node_keys.json![/]")
             return
+        elif args.panic_action == "retry-pending":
+            console.print(Panel("[bold yellow]Retrying pending key rotations...[/]", border_style="yellow"))
+            actions = panic.retry_pending()
+            for action in actions:
+                console.print(f"  [green]+[/] {action}")
+            return
 
     panic = PanicManager()
     if args.dry_run:
@@ -3262,6 +3268,7 @@ def main():
     panic_exec.add_argument("--share", "-s", type=int, nargs="+", required=True, help="Share IDs to use (need >= 2)")
     panic_sub.add_parser("shares", help="Show current share status")
     panic_sub.add_parser("rotate", help="Rotate keys on all remote nodes")
+    panic_sub.add_parser("retry-pending", help="Retry rotations that failed (nodes were offline)")
 
     tw_p = subparsers.add_parser("tripwire", help="Tripwire key management")
     tw_sub = tw_p.add_subparsers(dest="tripwire_action")

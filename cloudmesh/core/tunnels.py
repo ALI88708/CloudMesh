@@ -1,5 +1,5 @@
 import json, os, subprocess, signal, time
-from core.ssh_util import build_ssh_cmd, warn_host_key_disabled
+from core.ssh_util import build_ssh_cmd
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
@@ -60,14 +60,13 @@ def start_tunnel(name):
         if a.get("name") == name:
             return f"Tunnel '{name}' is already running"
 
-    ssh_cmd = ["ssh", "-f", "-N", "-o", "ConnectTimeout=5"]
-    warn_host_key_disabled(tunnel["host"])
-    ssh_cmd += ["-o", "StrictHostKeyChecking=no"]
-    ssh_cmd += ["-L", f"{tunnel['local_port']}:{tunnel['remote_host']}:{tunnel['remote_port']}"]
-    if tunnel.get("key"):
-        ssh_cmd += ["-i", tunnel["key"]]
-    ssh_cmd += ["-p", str(tunnel.get("ssh_port", 22))]
-    ssh_cmd += [f"{tunnel['user']}@{tunnel['host']}"]
+    ssh_cmd = build_ssh_cmd(
+        tunnel["host"], tunnel["user"], tunnel.get("key"), cmd=None,
+        extra_flags=["-f", "-N", "-L",
+                     f"{tunnel['local_port']}:{tunnel['remote_host']}:{tunnel['remote_port']}",
+                     "-p", str(tunnel.get("ssh_port", 22))],
+        strict=tunnel.get("strict_host_key", True)
+    )
 
     try:
         result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=10)
