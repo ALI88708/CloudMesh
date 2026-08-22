@@ -1527,8 +1527,10 @@ def cmd_doctor(args):
         content = api_src.read_text()
         api_ok = "compare_digest" in content
         bind_ok = '"127.0.0.1"' in content
+        ddos_ok = "DDoSProtection" in content
         checks.append(("API: hmac.compare_digest", api_ok, "Uses timing-safe comparison"))
         checks.append(("API: localhost binding", bind_ok, "Bound to 127.0.0.1"))
+        checks.append(("API: DDoS protection", ddos_ok, "Rate limiting enabled"))
     else:
         checks.append(("API source", False, "advanced.py not found"))
 
@@ -1537,10 +1539,38 @@ def cmd_doctor(args):
         ncontent = node_src.read_text()
         auth_ok = "compare_digest" in ncontent
         path_ok = "relative_to" in ncontent and "realpath" in ncontent
+        ddos_node = "DDoSProtection" in ncontent
+        spa_ok = "spa_mode" in ncontent
         checks.append(("Node: hmac.compare_digest", auth_ok, "Uses timing-safe comparison"))
         checks.append(("Node: path traversal guard", path_ok, "Validates paths with realpath+relative_to"))
+        checks.append(("Node: DDoS protection", ddos_node, "Anti-DDoS enabled"))
+        checks.append(("Node: SPA support", spa_ok, "Single Packet Authorization"))
     else:
         checks.append(("Node source", False, "cloudmesh_node.py not found"))
+
+    ddos_src = Path(__file__).parent / "core" / "ddos.py"
+    checks.append(("DDoS module", ddos_src.exists(), "core/ddos.py present"))
+
+    ssh_src = Path(__file__).parent / "core" / "ssh_util.py"
+    if ssh_src.exists():
+        sc = ssh_src.read_text()
+        checks.append(("SSH: centralized", "MITMWarning" in sc, "MITM warnings enabled"))
+    else:
+        checks.append(("SSH: centralized", False, "ssh_util.py not found"))
+
+    fw_src = Path(__file__).parent / "core" / "firewall.py"
+    if fw_src.exists():
+        fc = fw_src.read_text()
+        checks.append(("Firewall: allowlist", "ALLOWED_RULES" in fc, "Rule validation enabled"))
+    else:
+        checks.append(("Firewall", False, "firewall.py not found"))
+
+    db_src = Path(__file__).parent / "core" / "database.py"
+    if db_src.exists():
+        dc = db_src.read_text()
+        checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))
+    else:
+        checks.append(("Database", False, "database.py not found"))
 
     tests_dir = Path(__file__).parent / "tests"
     has_tests = (tests_dir / "test_security.py").exists()
@@ -1552,6 +1582,27 @@ def cmd_doctor(args):
         checks.append(("Encryption key", key_size > 10, f"Key file present ({key_size} bytes)"))
     else:
         checks.append(("Encryption key", False, ".secret.key missing"))
+
+    node_keys = Path(__file__).parent / ".node_keys.json"
+    if node_keys.exists():
+        try:
+            nk = json.loads(node_keys.read_text())
+            checks.append(("Cloud nodes", len(nk) > 0, f"{len(nk)} node(s) configured"))
+        except Exception:
+            checks.append(("Cloud nodes", False, "Corrupt .node_keys.json"))
+    else:
+        checks.append(("Cloud nodes", False, "No nodes configured"))
+
+    sched = Path(__file__).parent / ".schedule.json"
+    if sched.exists():
+        try:
+            s = json.loads(sched.read_text())
+            active = sum(1 for v in s.values() if v.get("enabled"))
+            checks.append(("Schedules", True, f"{active} active schedule(s)"))
+        except Exception:
+            checks.append(("Schedules", False, "Corrupt schedule file"))
+    else:
+        checks.append(("Schedules", True, "No schedules"))
 
     table = Table(box=box.ROUNDED)
     table.add_column("Check", style="bold")
@@ -1695,6 +1746,501 @@ def cmd_status(args):
         console.print(table)
         online = sum(1 for v in results.values() if v["status"] == "online")
         console.print(f"\n[dim]{online}/{len(results)} server(s) online[/]")
+
+
+def cmd_exec(args):
+    keys = _load_node_keys()
+    command = args.command
+
+    if args.all_nodes:
+        names = list(keys.keys())
+    elif args.nodes:
+        names = [n.strip() for n in args.nodes.split(",")]
+    elif args.name:
+        names = [args.name]
+    else:
+        console.print("[red]Specify --name, --nodes, or --all[/]")
+        return
+
+    if not names:
+        console.print("[dim]No nodes configured.[/]")
+        return
+
+    console.print(f"[cyan]Executing on {len(names)} node(s): {command}[/]")
+
+    import concurrent.futures
+    results = {}
+
+    def run_on_node(n):
+        if n not in keys:
+            return n, {"success": False, "error": "Node not found"}
+        info = keys[n]
+        client = NodeClient(info["host"], info["port"], info["key"])
+        result = client.execute(command)
+        return n, result
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(names), 10)) as pool:
+        futures = {pool.submit(run_on_node, n): n for n in names}
+        for future in concurrent.futures.as_completed(futures):
+            name, result = future.result()
+            results[name] = result
+
+    if getattr(args, "as_json", False):
+        console.print(json.dumps(results, indent=2))
+        return
+
+    table = Table(title="Execution Results", box=box.ROUNDED)
+    table.add_column("Node", style="bold")
+    table.add_column("Status")
+    table.add_column("Exit Code")
+    table.add_column("Output")
+    for name, res in results.items():
+        if res.get("success"):
+            table.add_row(name, "[green]OK[/]", str(res.get("exit_code", 0)), (res.get("stdout", "") or "")[:80])
+        else:
+            table.add_row(name, "[red]FAIL[/]", "-", (res.get("error", res.get("stderr", "")) or "")[:80])
+    console.print(table)
+    ok = sum(1 for r in results.values() if r.get("success"))
+    console.print(f"\n[dim]{ok}/{len(results)} succeeded[/]")
+
+
+def cmd_watch(args):
+    import time
+    import subprocess as _sp
+
+    interval = args.interval
+    keys = _load_node_keys()
+    security, server_mgr, monitor, *_ = init_components()
+
+    console.print(f"[cyan]Watching every {interval}s — Press Ctrl+C to stop[/]\n")
+
+    try:
+        while True:
+            _sp.run(["cls" if sys.platform == "win32" else "clear"], shell=False)
+            now = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            console.print(Panel(f"[bold]CloudMesh Watch[/] — {now}", border_style="bright_blue"))
+
+            names_ssh = server_mgr.list_servers()
+            names_node = list(keys.keys())
+
+            if names_ssh:
+                table = Table(title="SSH Servers", box=box.SIMPLE_HEAVY)
+                table.add_column("Name", style="bold", min_width=15)
+                table.add_column("CPU", justify="right")
+                table.add_column("RAM", justify="right")
+                table.add_column("Disk", justify="right")
+                table.add_column("Weight", justify="right")
+                for name in names_ssh:
+                    try:
+                        m = monitor.get_all_metrics(name)
+                        if m:
+                            cpu = m.get("cpu_percent", 0)
+                            ram = (m.get("ram") or {}).get("percent", 0)
+                            disk = (m.get("disk") or {}).get("percent", 0)
+                            w = monitor.calculate_weight(m)
+                            cc = "red" if cpu > 80 else "yellow" if cpu > 50 else "green"
+                            rc = "red" if ram > 80 else "yellow" if ram > 50 else "green"
+                            dc = "red" if disk > 80 else "yellow" if disk > 50 else "green"
+                            table.add_row(name, f"[{cc}]{cpu}%[/]", f"[{rc}]{ram}%[/]", f"[{dc}]{disk}%[/]", str(w))
+                        else:
+                            table.add_row(name, "[red]?[/]", "[red]?[/]", "[red]?[/]", "?")
+                    except Exception:
+                        table.add_row(name, "[red]ERR[/]", "-", "-", "-")
+                console.print(table)
+
+            if names_node:
+                table = Table(title="Cloud Nodes", box=box.SIMPLE_HEAVY)
+                table.add_column("Name", style="bold", min_width=15)
+                table.add_column("CPU", justify="right")
+                table.add_column("RAM", justify="right")
+                table.add_column("Disk", justify="right")
+                table.add_column("Status")
+                for name in names_node:
+                    info = keys[name]
+                    try:
+                        client = NodeClient(info["host"], info["port"], info["key"])
+                        metrics = client.get_metrics()
+                        if metrics:
+                            cpu = metrics.get("cpu_percent", 0)
+                            ram = (metrics.get("ram") or {}).get("percent", 0)
+                            disk = (metrics.get("disk") or {}).get("percent", 0)
+                            cc = "red" if cpu > 80 else "yellow" if cpu > 50 else "green"
+                            rc = "red" if ram > 80 else "yellow" if ram > 50 else "green"
+                            dc = "red" if disk > 80 else "yellow" if disk > 50 else "green"
+                            table.add_row(name, f"[{cc}]{cpu}%[/]", f"[{rc}]{ram}%[/]", f"[{dc}]{disk}%[/]", "[green]ON[/]")
+                        else:
+                            table.add_row(name, "-", "-", "-", "[yellow]?[/]")
+                    except Exception:
+                        table.add_row(name, "-", "-", "-", "[red]OFF[/]")
+                console.print(table)
+
+            total = len(names_ssh) + len(names_node)
+            console.print(f"\n[dim]{total} server(s) | Refreshing in {interval}s | Ctrl+C to stop[/]")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Watch stopped[/]")
+
+
+def cmd_keys(args):
+    home = Path.home()
+    ssh_dir = home / ".ssh"
+    keys_file = Path(__file__).parent / ".ssh_keys.json"
+
+    def load_keys():
+        if keys_file.exists():
+            try:
+                return json.loads(keys_file.read_text())
+            except Exception:
+                return {}
+        return {}
+
+    def save_keys(data):
+        keys_file.write_text(json.dumps(data, indent=2))
+
+    if args.action == "generate":
+        key_name = args.name or "cloudmesh_key"
+        key_path = ssh_dir / key_name
+        if key_path.exists() and not args.force:
+            console.print(f"[red]Key {key_path} already exists. Use --force to overwrite.[/]")
+            return
+        ssh_dir.mkdir(exist_ok=True)
+        bits = args.bits or 4096
+        console.print(f"[cyan]Generating {bits}-bit SSH key: {key_path}[/]")
+        result = __import__("subprocess").run(
+            ["ssh-keygen", "-t", "ed25519" if bits == 256 else "rsa", "-b", str(bits),
+             "-f", str(key_path), "-N", args.passphrase or "", "-C", f"cloudmesh@{key_name}"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            saved = load_keys()
+            saved[key_name] = {"path": str(key_path), "pub": str(key_path) + ".pub", "bits": bits, "created": __import__("datetime").datetime.now().isoformat()}
+            save_keys(saved)
+            console.print(f"[green]Key generated: {key_path}[/]")
+            console.print(f"[green]Public key: {key_path}.pub[/]")
+        else:
+            console.print(f"[red]Key generation failed: {result.stderr}[/]")
+
+    elif args.action == "list":
+        saved = load_keys()
+        ssh_dir = home / ".ssh"
+        all_keys = []
+        if ssh_dir.exists():
+            for f in ssh_dir.iterdir():
+                if f.suffix == "" and not f.name.endswith(".pub") and f.name not in (".", ".."):
+                    try:
+                        result = __import__("subprocess").run(
+                            ["ssh-keygen", "-l", "-f", str(f)],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if result.returncode == 0:
+                            all_keys.append({"path": str(f), "info": result.stdout.strip()})
+                    except Exception:
+                        pass
+        if saved:
+            for name, info in saved.items():
+                all_keys.append({"path": info.get("path", "?"), "info": f"[managed: {name}] bits={info.get('bits', '?')}"})
+
+        if not all_keys:
+            console.print("[dim]No SSH keys found in ~/.ssh[/]")
+            return
+        table = Table(title="SSH Keys", box=box.ROUNDED)
+        table.add_column("Path", style="bold")
+        table.add_column("Info")
+        for k in all_keys:
+            console.print(f"  {k['path']}: {k['info']}")
+        console.print(f"\n[dim]{len(all_keys)} key(s) found[/]")
+
+    elif args.action == "show":
+        pub_path = Path(args.pub_file)
+        if not pub_path.exists():
+            console.print(f"[red]File not found: {pub_path}[/]")
+            return
+        content = pub_path.read_text().strip()
+        console.print(Panel(content, title=f"Public Key: {pub_path.name}", border_style="cyan"))
+
+    elif args.action == "deploy":
+        _, server_mgr, *_ = init_components()
+        pub_path = Path(args.pub_file)
+        if not pub_path.exists():
+            console.print(f"[red]Public key not found: {pub_path}[/]")
+            return
+        pub_content = pub_path.read_text().strip()
+        names = [args.server] if args.server else server_mgr.list_servers()
+        if not names:
+            console.print("[dim]No servers configured[/]")
+            return
+        console.print(f"[cyan]Deploying key to {len(names)} server(s)...[/]")
+        for name in names:
+            try:
+                result = server_mgr.execute(name, f"mkdir -p ~/.ssh && echo '{pub_content}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys")
+                if result.get("exit_code") == 0:
+                    console.print(f"  [green]{name}: Deployed[/]")
+                else:
+                    console.print(f"  [red]{name}: Failed — {result.get('stderr', '')[:80]}[/]")
+            except Exception as e:
+                console.print(f"  [red]{name}: Error — {e}[/]")
+
+    elif args.action == "remove-managed":
+        name = args.name
+        saved = load_keys()
+        if name not in saved:
+            console.print(f"[red]Managed key '{name}' not found[/]")
+            return
+        del saved[name]
+        save_keys(saved)
+        console.print(f"[green]Removed '{name}' from managed keys[/]")
+
+    else:
+        console.print("[dim]Use: cm keys generate|list|show|deploy|remove-managed[/]")
+
+
+def cmd_config(args):
+    config_dir = Path(__file__).parent
+    config_files = {
+        "servers": config_dir / "data" / "servers.json",
+        "node_keys": config_dir / ".node_keys.json",
+        "secret_key": config_dir / ".secret.key",
+        "groups": config_dir / "data" / "groups.json",
+        "aliases": config_dir / ".aliases.json",
+        "templates": config_dir / ".templates.json",
+        "profiles": config_dir / ".profiles",
+        "schedule": config_dir / ".schedule.json",
+        "webhooks": config_dir / "data" / "webhooks.json",
+        "watchers": config_dir / "data" / "watchers.json",
+        "tunnels": config_dir / "data" / "tunnels.json",
+        "ssl_domains": config_dir / "data" / "ssl_domains.json",
+        "log_sources": config_dir / "data" / "log_sources.json",
+        "plugins": config_dir / "data" / "plugins.json",
+        "acl": config_dir / "data" / "acl.json",
+        "alerts": config_dir / "alerts.json",
+    }
+
+    if args.action == "list":
+        table = Table(title="Config Files", box=box.ROUNDED)
+        table.add_column("Name", style="bold")
+        table.add_column("Path")
+        table.add_column("Size")
+        table.add_column("Modified")
+        for name, path in config_files.items():
+            if path.exists():
+                size = path.stat().st_size
+                mtime = __import__("datetime").datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                table.add_row(name, str(path), f"{size} B", mtime)
+            else:
+                table.add_row(name, str(path), "[dim]missing[/]", "-")
+        console.print(table)
+
+    elif args.action == "export":
+        import shutil as _sh
+        out_dir = Path(args.output) if args.output else Path(f"cloudmesh_backup_{__import__('time').strftime('%Y%m%d_%H%M%S')}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        exported = 0
+        for name, path in config_files.items():
+            if path.exists():
+                if path.is_file():
+                    _sh.copy2(str(path), str(out_dir / path.name))
+                    exported += 1
+                elif path.is_dir():
+                    _sh.copytree(str(path), str(out_dir / path.name), dirs_exist_ok=True)
+                    exported += 1
+        console.print(f"[green]Exported {exported} config file(s) to {out_dir}[/]")
+
+    elif args.action == "import":
+        import shutil as _sh
+        src_dir = Path(args.source)
+        if not src_dir.exists():
+            console.print(f"[red]Source directory not found: {src_dir}[/]")
+            return
+        imported = 0
+        for f in src_dir.iterdir():
+            for name, path in config_files.items():
+                if f.name == path.name or f.name == path.name.replace(".json", ""):
+                    if path.is_file():
+                        _sh.copy2(str(f), str(path))
+                        imported += 1
+                        console.print(f"  [green]Restored {name}[/]")
+                    break
+        console.print(f"[green]Imported {imported} config file(s)[/]")
+
+    elif args.action == "show":
+        name = args.name
+        if name not in config_files:
+            console.print(f"[red]Unknown config: {name}. Available: {', '.join(config_files.keys())}[/]")
+            return
+        path = config_files[name]
+        if not path.exists():
+            console.print(f"[dim]{name}: not found[/]")
+            return
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text())
+                console.print(Panel(json.dumps(data, indent=2)[:2000], title=f"Config: {name}", border_style="cyan"))
+            except Exception:
+                content = path.read_text()[:2000]
+                console.print(Panel(content, title=f"Config: {name}", border_style="cyan"))
+        else:
+            console.print(f"[dim]{name}: directory with {len(list(path.iterdir()))} items[/]")
+
+    else:
+        console.print("[dim]Use: cm config list|export|import|show[/]")
+
+
+def cmd_completions(args):
+    shell = args.shell or "bash"
+    cm_path = Path(__file__).parent.parent / "cm.bat"
+    if not cm_path.exists():
+        cm_path = Path(__file__).parent.parent / "cm"
+
+    if shell == "bash":
+        script = f'''#!/bin/bash
+_cloudmesh_completions() {{
+    local cur prev commands
+    COMPREPLY=()
+    cur="${{COMP_WORDS[COMP_CWORD]}}"
+    prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+    commands="server monitor dashboard run plan transfer sync history deploy alerts group service compare cmdlog slice autosync interactive backup ping uptime top disk network who find logs export import encrypt decrypt speed scan cleanup report alias version doctor update status discover bench schedule notify api panic tripwire weather trust profile audit ssh template map docker firewall ssl logagg reshistory plugins acl webhooks watcher tunnel database node exec keys config completions"
+    if [[ $cur == -* ]]; then
+        COMPREPLY=( $(compgen -W "--help --version --json --yes --all --name --nodes --interval --force" -- "$cur") )
+    else
+        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+    fi
+    return 0
+}}
+complete -F _cloudmesh_completions cm 2>/dev/null
+complete -F _cloudmesh_completions cloudmesh 2>/dev/null
+'''
+        out_path = Path(args.output) if args.output else Path("cloudmesh-completions.bash")
+        out_path.write_text(script)
+        console.print(f"[green]Bash completions saved to {out_path}[/]")
+        console.print(f"[dim]Source it: source {out_path}[/]")
+
+    elif shell == "zsh":
+        script = f'''#compdef cm cloudmesh
+
+_cloudmesh() {{
+    local -a commands
+    commands=(
+        'server:Manage servers/devices'
+        'monitor:Monitor resources'
+        'dashboard:Show dashboard'
+        'run:Run command on servers'
+        'plan:Distribution plan'
+        'transfer:Transfer files'
+        'sync:Sync directories'
+        'history:Resource history'
+        'deploy:Deploy packages'
+        'alerts:Manage alerts'
+        'group:Manage device groups'
+        'service:Background service'
+        'compare:Compare devices'
+        'cmdlog:Command log'
+        'slice:File distribution'
+        'autosync:Auto-sync directories'
+        'interactive:Interactive mode'
+        'backup:Backup management'
+        'ping:Ping all servers'
+        'uptime:Show uptime'
+        'top:Top processes'
+        'disk:Disk usage'
+        'network:Network info'
+        'who:Logged in users'
+        'find:Search files'
+        'logs:Recent logs'
+        'export:Export config'
+        'import:Import config'
+        'encrypt:Encrypt file'
+        'decrypt:Decrypt file'
+        'speed:Network speed test'
+        'scan:Scan subnet'
+        'cleanup:Clean old files'
+        'report:Generate report'
+        'alias:Manage aliases'
+        'version:Version info'
+        'doctor:Security check'
+        'update:Update from GitHub'
+        'status:Server status'
+        'discover:Auto-discover nodes'
+        'bench:Benchmark'
+        'schedule:Schedule commands'
+        'notify:Notifications'
+        'api:REST API server'
+        'panic:Emergency key rotate'
+        'tripwire:Tripwire keys'
+        'weather:Resource forecast'
+        'trust:Distributed trust'
+        'profile:Config profiles'
+        'audit:Security audit'
+        'ssh:Quick SSH command'
+        'template:Command templates'
+        'map:Network map'
+        'docker:Docker management'
+        'firewall:Firewall rules'
+        'ssl:SSL certificate check'
+        'logagg:Log aggregation'
+        'reshistory:Resource history'
+        'plugins:Plugin management'
+        'acl:Access control'
+        'webhooks:Webhook management'
+        'watcher:Process watchers'
+        'tunnel:SSH tunnels'
+        'database:Database management'
+        'node:Cloud node management'
+        'exec:Execute on nodes'
+        'keys:SSH key management'
+        'config:Config management'
+        'completions:Shell completions'
+    )
+    _arguments -s -S \\
+        '1:command:->commands' \\
+        '*::arg:->args'
+    case $state in
+        commands) _describe 'command' commands ;;
+        args) _cloudmesh_args ;;
+    esac
+}}
+_cloudmesh_args() {{
+    local -a subcommands
+    case $words[1] in
+        server) subcommands='add remove list test info' ;;
+        node) subcommands='add remove list test info monitor exec install dashboard gpu job' ;;
+        keys) subcommands='generate list show deploy remove-managed' ;;
+        config) subcommands='list export import show' ;;
+    esac
+    _describe 'subcommand' subcommands
+}}
+_cloudmesh "$@"
+'''
+        out_path = Path(args.output) if args.output else Path("cloudmesh-completions.zsh")
+        out_path.write_text(script)
+        console.print(f"[green]Zsh completions saved to {out_path}[/]")
+        console.print(f"[dim]Source it: source {out_path}[/]")
+
+    elif shell == "powershell":
+        script = '''Register-ArgumentCompleter -Native -CommandName cm -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $commands = @(
+        "server", "monitor", "dashboard", "run", "plan", "transfer", "sync",
+        "history", "deploy", "alerts", "group", "service", "compare", "cmdlog",
+        "slice", "autosync", "interactive", "backup", "ping", "uptime", "top",
+        "disk", "network", "who", "find", "logs", "export", "import", "encrypt",
+        "decrypt", "speed", "scan", "cleanup", "report", "alias", "version",
+        "doctor", "update", "status", "discover", "bench", "schedule", "notify",
+        "api", "panic", "tripwire", "weather", "trust", "profile", "audit",
+        "ssh", "template", "map", "docker", "firewall", "ssl", "logagg",
+        "reshistory", "plugins", "acl", "webhooks", "watcher", "tunnel",
+        "database", "node", "exec", "keys", "config", "completions"
+    )
+    $commands | Where-Object { $_ -like "$wordToComplete*" } |
+        ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+}
+'''
+        out_path = Path(args.output) if args.output else Path("cloudmesh-completions.ps1")
+        out_path.write_text(script)
+        console.print(f"[green]PowerShell completions saved to {out_path}[/]")
+        console.print(f"[dim]Import it: . {out_path}[/]")
+
+    else:
+        console.print(f"[red]Unsupported shell: {shell}. Use bash, zsh, or powershell[/]")
 
 def cmd_discover(args):
     console.print(f"[cyan]Scanning {args.subnet}.1-255 on port {args.port}...[/]")
@@ -2391,7 +2937,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 1.5.0")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.0.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -2629,6 +3175,46 @@ def main():
 
     sts = subparsers.add_parser("status", help="Quick status of all servers")
     sts.add_argument("--json", "-j", action="store_true", dest="as_json", help="Output as JSON")
+
+    exec_p = subparsers.add_parser("exec", help="Execute command on nodes")
+    exec_p.add_argument("command", help="Command to execute")
+    exec_p.add_argument("--name", "-n", help="Target node name")
+    exec_p.add_argument("--nodes", help="Comma-separated node names")
+    exec_p.add_argument("--all", dest="all_nodes", action="store_true", help="Execute on all nodes")
+    exec_p.add_argument("--json", "-j", action="store_true", dest="as_json", help="Output as JSON")
+
+    watch_p = subparsers.add_parser("watch", help="Real-time monitoring dashboard")
+    watch_p.add_argument("--interval", "-i", type=int, default=3, help="Refresh interval in seconds")
+
+    keys_p = subparsers.add_parser("keys", help="SSH key management")
+    keys_sub = keys_p.add_subparsers(dest="action")
+    kgen = keys_sub.add_parser("generate", help="Generate SSH key pair")
+    kgen.add_argument("--name", "-n", help="Key name")
+    kgen.add_argument("--bits", "-b", type=int, help="Key bits (256 for ed25519, 4096 for rsa)")
+    kgen.add_argument("--passphrase", "-p", default="", help="Key passphrase")
+    kgen.add_argument("--force", "-f", action="store_true", help="Overwrite existing key")
+    keys_sub.add_parser("list", help="List SSH keys")
+    ksh = keys_sub.add_parser("show", help="Show public key")
+    ksh.add_argument("pub_file", help="Path to public key file")
+    kdep = keys_sub.add_parser("deploy", help="Deploy public key to servers")
+    kdep.add_argument("pub_file", help="Path to public key file")
+    kdep.add_argument("--server", "-s", help="Target server (all if omitted)")
+    krm = keys_sub.add_parser("remove-managed", help="Remove managed key entry")
+    krm.add_argument("--name", "-n", required=True, help="Managed key name")
+
+    cfg_p = subparsers.add_parser("config", help="Configuration management")
+    cfg_sub = cfg_p.add_subparsers(dest="action")
+    cfg_sub.add_parser("list", help="List all config files")
+    cfg_exp = cfg_sub.add_parser("export", help="Export all config to directory")
+    cfg_exp.add_argument("--output", "-o", help="Output directory")
+    cfg_imp = cfg_sub.add_parser("import", help="Import config from directory")
+    cfg_imp.add_argument("source", help="Source directory")
+    cfg_shw = cfg_sub.add_parser("show", help="Show config file contents")
+    cfg_shw.add_argument("name", help="Config name (use 'config list' to see names)")
+
+    comp_p = subparsers.add_parser("completions", help="Generate shell completions")
+    comp_p.add_argument("--shell", "-s", choices=["bash", "zsh", "powershell"], default="bash", help="Shell type")
+    comp_p.add_argument("--output", "-o", help="Output file path")
 
     # === 10 ADVANCED KILLER FEATURES ===
     dsc = subparsers.add_parser("discover", help="Auto-discover nodes on network")
@@ -3237,6 +3823,11 @@ def main():
         "doctor": lambda: cmd_doctor(args),
         "update": lambda: cmd_update(args),
         "status": lambda: cmd_status(args),
+        "exec": lambda: cmd_exec(args),
+        "watch": lambda: cmd_watch(args),
+        "keys": lambda: cmd_keys(args),
+        "config": lambda: cmd_config(args),
+        "completions": lambda: cmd_completions(args),
         "discover": lambda: cmd_discover(args),
         "bench": lambda: cmd_bench(args),
         "schedule": lambda: cmd_schedule(args),
