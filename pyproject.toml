@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudmesh"
-version = "1.4.0"
+version = "2.0.0"
 description = "Unified multi-cloud resource manager — CLI tool connecting servers into one pool"
 readme = "README.md"
 license = {text = "MIT"}
