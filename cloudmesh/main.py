@@ -1571,7 +1571,130 @@ def cmd_doctor(args):
         console.print("[yellow]Some checks failed — review above[/]")
 
 
-# === 10 ADVANCED KILLER FEATURES ===
+def cmd_update(args):
+    import subprocess
+    import shutil
+
+    repo_dir = Path(__file__).parent.parent
+    if not (repo_dir / ".git").exists():
+        console.print("[red]Not a git repository. Cannot self-update.[/]")
+        return
+
+    console.print("[cyan]Checking for updates...[/]")
+    try:
+        result = subprocess.run(
+            ["git", "fetch", "origin", "main"],
+            cwd=str(repo_dir), capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            console.print(f"[red]Fetch failed: {result.stderr.strip()}[/]")
+            return
+
+        behind = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD..origin/main"],
+            cwd=str(repo_dir), capture_output=True, text=True, timeout=10
+        )
+        behind_count = int(behind.stdout.strip()) if behind.returncode == 0 else 0
+
+        if behind_count == 0:
+            console.print("[green]Already up to date![/]")
+            return
+
+        console.print(f"[yellow]Found {behind_count} new commit(s)[/]")
+
+        if not args.yes:
+            from rich.prompt import Confirm
+            if not Confirm.ask("Pull and install?", default=True):
+                console.print("[dim]Update cancelled[/]")
+                return
+
+        console.print("[cyan]Pulling latest changes...[/]")
+        pull = subprocess.run(
+            ["git", "pull", "origin", "main"],
+            cwd=str(repo_dir), capture_output=True, text=True, timeout=30
+        )
+        if pull.returncode != 0:
+            console.print(f"[red]Pull failed: {pull.stderr.strip()}[/]")
+            return
+
+        console.print("[cyan]Reinstalling dependencies...[/]")
+        req = repo_dir / "cloudmesh" / "requirements.txt"
+        if req.exists():
+            pip = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-r", str(req), "-q"],
+                capture_output=True, text=True, timeout=120
+            )
+            if pip.returncode != 0:
+                console.print(f"[yellow]pip install warning: {pip.stderr.strip()[:200]}[/]")
+
+        new_ver = "unknown"
+        vf = repo_dir / "cloudmesh" / "core" / "features.py"
+        if vf.exists():
+            for line in vf.read_text().splitlines():
+                if '"version"' in line and ':' in line:
+                    new_ver = line.split('"version"')[1].split('"')[1]
+                    break
+
+        console.print(f"[green bold]Updated to CloudMesh v{new_ver}[/]")
+    except subprocess.TimeoutExpired:
+        console.print("[red]Network timeout — try again later[/]")
+    except Exception as e:
+        console.print(f"[red]Update failed: {e}[/]")
+
+
+def cmd_status(args):
+    mgr = ServerManager()
+    servers = mgr.list_servers()
+    if not servers:
+        if getattr(args, "as_json", False):
+            console.print("{}")
+        else:
+            console.print("[dim]No servers configured. Use `cm server add` to add one.[/]")
+        return
+
+    results = {}
+    table = Table(title="CloudMesh Status", box=box.ROUNDED)
+    table.add_column("Name", style="bold")
+    table.add_column("Host")
+    table.add_column("Status")
+    table.add_column("CPU")
+    table.add_column("RAM")
+    table.add_column("Disk")
+
+    for name, info in servers.items():
+        host = info.get("host", "?")
+        entry = {"host": host, "status": "offline", "cpu": None, "ram": None, "disk": None}
+        try:
+            client = NodeClient(host, info.get("port", 9999), info.get("auth_key", ""))
+            pong = client.send({"action": "ping"})
+            if pong and pong.get("type") == "pong":
+                metrics = client.send({"action": "metrics"})
+                if metrics and metrics.get("type") == "metrics":
+                    m = metrics["data"]
+                    cpu = f"{m.get('cpu_percent', 0):.0f}%"
+                    ram = f"{m.get('ram_percent', 0):.0f}%"
+                    disk = f"{m.get('disk_percent', 0):.0f}%"
+                    entry["status"] = "online"
+                    entry["cpu"] = m.get("cpu_percent", 0)
+                    entry["ram"] = m.get("ram_percent", 0)
+                    entry["disk"] = m.get("disk_percent", 0)
+                    table.add_row(name, host, "[green]ONLINE[/]", cpu, ram, disk)
+                else:
+                    entry["status"] = "online"
+                    table.add_row(name, host, "[green]ONLINE[/]", "-", "-", "-")
+            else:
+                entry["status"] = "unreachable"
+                table.add_row(name, host, "[red]UNREACHABLE[/]", "-", "-", "-")
+        except Exception:
+            table.add_row(name, host, "[red]OFFLINE[/]", "-", "-", "-")
+        results[name] = entry
+
+    if getattr(args, "as_json", False):
+        console.print(json.dumps(results, indent=2))
+    else:
+        console.print(table)
+        online = sum(1 for v in results.values() if v["status"] == "online")
+        console.print(f"\n[dim]{online}/{len(results)} server(s) online[/]")
 
 def cmd_discover(args):
     console.print(f"[cyan]Scanning {args.subnet}.1-255 on port {args.port}...[/]")
@@ -2268,7 +2391,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 1.3.0")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 1.5.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -2501,6 +2624,12 @@ def main():
 
     doc = subparsers.add_parser("doctor", help="Security & health check")
 
+    upd = subparsers.add_parser("update", help="Update CloudMesh from GitHub")
+    upd.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+
+    sts = subparsers.add_parser("status", help="Quick status of all servers")
+    sts.add_argument("--json", "-j", action="store_true", dest="as_json", help="Output as JSON")
+
     # === 10 ADVANCED KILLER FEATURES ===
     dsc = subparsers.add_parser("discover", help="Auto-discover nodes on network")
     dsc.add_argument("subnet", help="Subnet to scan (e.g. 192.168.1)")
@@ -2553,11 +2682,25 @@ def main():
     tw_plant = tw_sub.add_parser("plant", help="Plant a tripwire key")
     tw_plant.add_argument("--node", "-n", required=True, help="Tripwire name")
     tw_plant.add_argument("--host", "-H", required=True, help="Fake host IP")
-    tw_plant.add_argument("--port", "-p", type=int, default=9999)
+    tw_plant.add_argument("-p", dest="port", type=int, default=9999)
     tw_sub.add_parser("list", help="List planted tripwires")
     tw_rm = tw_sub.add_parser("remove", help="Remove a tripwire")
     tw_rm.add_argument("--node", "-n", required=True)
     tw_sub.add_parser("check", help="Check if any tripwire was triggered")
+
+    tw_alias = subparsers.add_parser("tw", help="[alias] Tripwire key management")
+    tw_alias_sub = tw_alias.add_subparsers(dest="tripwire_action")
+    tw_alias_sub.add_parser("plant", help="Plant a tripwire key")
+    tw_alias_sub.add_parser("list", help="List planted tripwires")
+    tw_alias_sub.add_parser("remove", help="Remove a tripwire")
+    tw_alias_sub.add_parser("check", help="Check if any tripwire was triggered")
+
+    triw_alias = subparsers.add_parser("triw", help="[alias] Tripwire key management")
+    triw_alias_sub = triw_alias.add_subparsers(dest="tripwire_action")
+    triw_alias_sub.add_parser("plant", help="Plant a tripwire key")
+    triw_alias_sub.add_parser("list", help="List planted tripwires")
+    triw_alias_sub.add_parser("remove", help="Remove a tripwire")
+    triw_alias_sub.add_parser("check", help="Check if any tripwire was triggered")
 
     wea = subparsers.add_parser("weather", help="Resource weather forecast")
     wea.add_argument("--server", "-s", help="Show forecast for specific server")
@@ -3092,6 +3235,8 @@ def main():
         "alias": lambda: cmd_alias(args),
         "version": lambda: cmd_version(args),
         "doctor": lambda: cmd_doctor(args),
+        "update": lambda: cmd_update(args),
+        "status": lambda: cmd_status(args),
         "discover": lambda: cmd_discover(args),
         "bench": lambda: cmd_bench(args),
         "schedule": lambda: cmd_schedule(args),
