@@ -3655,10 +3655,6 @@ def main():
     gpunode = subparsers.add_parser("gpunode", help="[alias] GPU on node")
     gpunode.add_argument("--name", "-n")
 
-    execnode = subparsers.add_parser("exec", help="[alias] Exec on node")
-    execnode.add_argument("--name", "-n", required=True)
-    execnode.add_argument("node_cmd")
-
     installnode = subparsers.add_parser("nodeinstall", help="[alias] Install node")
     installnode.add_argument("--host", "-H", required=True)
     installnode.add_argument("--user", "-u", default="root")
