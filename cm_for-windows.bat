@@ -13,10 +13,27 @@ set VENV_DIR=%INSTALL_DIR%\venv
 set VENV_PYTHON=%VENV_DIR%\Scripts\python.exe
 set CM_BAT=%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\cm.bat
 
+set LOG=%TEMP%\cm_install_log.txt
+echo [%date% %time%] Installer started > "!LOG!"
+echo [%date% %time%] USERPROFILE=!USERPROFILE! >> "!LOG!"
+echo [%date% %time%] INSTALL_DIR=!INSTALL_DIR! >> "!LOG!"
+echo [%date% %time%] CLOUDMESH_DIR=!CLOUDMESH_DIR! >> "!LOG!"
+echo [%date% %time%] CM_BAT=!CM_BAT! >> "!LOG!"
+
 set IS_INSTALLED=0
-if exist "%CLOUDMESH_DIR%\main.py" set IS_INSTALLED=1
-if exist "%VENV_DIR%\Scripts\python.exe" set IS_INSTALLED=1
-if exist "%CM_BAT%" set IS_INSTALLED=1
+if exist "!CLOUDMESH_DIR!\main.py" (
+    set IS_INSTALLED=1
+    echo [%date% %time%] Detected: main.py exists >> "!LOG!"
+)
+if exist "!VENV_DIR!\Scripts\python.exe" (
+    set IS_INSTALLED=1
+    echo [%date% %time%] Detected: venv exists >> "!LOG!"
+)
+if exist "!CM_BAT!" (
+    set IS_INSTALLED=1
+    echo [%date% %time%] Detected: cm.bat exists >> "!LOG!"
+)
+echo [%date% %time%] IS_INSTALLED=!IS_INSTALLED! >> "!LOG!"
 
 :menu
 cls
@@ -34,6 +51,7 @@ if "!IS_INSTALLED!"=="1" (
     echo   [3] Uninstall     - Remove CloudMesh completely
     echo.
     set /p "CHOICE=   Choose [1-3]: "
+    echo [%date% %time%] User chose: !CHOICE! >> "!LOG!"
     if "!CHOICE!"=="1" goto :do_update
     if "!CHOICE!"=="2" goto :do_fresh
     if "!CHOICE!"=="3" goto :do_uninstall
@@ -44,6 +62,7 @@ if "!IS_INSTALLED!"=="1" (
     echo   [2] Exit
     echo.
     set /p "CHOICE=   Choose [1-2]: "
+    echo [%date% %time%] User chose: !CHOICE! >> "!LOG!"
     if "!CHOICE!"=="1" goto :do_fresh
     if "!CHOICE!"=="2" goto :do_exit
 )
@@ -54,6 +73,7 @@ timeout /t 2 >nul
 goto :menu
 
 :do_exit
+echo [%date% %time%] Exiting >> "!LOG!"
 exit /b 0
 
 :do_uninstall
@@ -81,6 +101,7 @@ cls
 echo.
 echo   Updating CloudMesh...
 echo.
+echo [%date% %time%] Starting update >> "!LOG!"
 
 set BACKUP_DIR=%TEMP%\cloudmesh_backup
 if not exist "!BACKUP_DIR!" mkdir "!BACKUP_DIR!"
@@ -95,6 +116,7 @@ cls
 echo.
 echo   Fresh Install - Downloading CloudMesh...
 echo.
+echo [%date% %time%] Starting fresh install >> "!LOG!"
 if "!IS_INSTALLED!"=="1" (
     if exist "%CLOUDMESH_DIR%" rmdir /s /q "%CLOUDMESH_DIR%" 2>nul
     if exist "%VENV_DIR%" rmdir /s /q "%VENV_DIR%" 2>nul
@@ -103,10 +125,16 @@ if "!IS_INSTALLED!"=="1" (
 goto :do_download
 
 :do_download
+echo [%date% %time%] In do_download >> "!LOG!"
+echo   Creating directories...
+
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 if not exist "%CLOUDMESH_DIR%" mkdir "%CLOUDMESH_DIR%"
+echo   [OK] Dirs created >> "!LOG!"
 
+echo.
 echo   [1/4] Downloading from GitHub...
+
 echo [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 > "%TEMP%\cm_dl.ps1"
 echo $ProgressPreference = 'SilentlyContinue' >> "%TEMP%\cm_dl.ps1"
 echo try { >> "%TEMP%\cm_dl.ps1"
@@ -120,16 +148,20 @@ echo } catch { >> "%TEMP%\cm_dl.ps1"
 echo     Write-Host '[ERROR] Download failed:' $_.Exception.Message >> "%TEMP%\cm_dl.ps1"
 echo     exit 1 >> "%TEMP%\cm_dl.ps1"
 echo } >> "%TEMP%\cm_dl.ps1"
+echo [%date% %time%] cm_dl.ps1 written >> "!LOG!"
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\cm_dl.ps1"
+echo [%date% %time%] Download result: !ERRORLEVEL! >> "!LOG!"
 if !ERRORLEVEL! NEQ 0 (
     echo.
     echo   [ERROR] Download failed! Check internet.
+    echo [%date% %time%] Download FAILED >> "!LOG!"
     del "%TEMP%\cm_dl.ps1" 2>nul
     pause
     goto :menu
 )
 del "%TEMP%\cm_dl.ps1" 2>nul
+echo   [OK] Downloaded
 echo.
 
 echo   [2/4] Extracting files...
@@ -144,12 +176,15 @@ echo if (Test-Path $destPath) { Remove-Item -Recurse -Force $destPath } >> "%TEM
 echo Copy-Item -Path (Join-Path $d.FullName 'cloudmesh') -Destination $destPath -Recurse -Force >> "%TEMP%\cm_ex.ps1"
 echo Remove-Item -Recurse -Force $out >> "%TEMP%\cm_ex.ps1"
 echo Remove-Item -Force $zip >> "%TEMP%\cm_ex.ps1"
+echo [%date% %time%] cm_ex.ps1 written >> "!LOG!"
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\cm_ex.ps1"
+echo [%date% %time%] Extract result: !ERRORLEVEL! >> "!LOG!"
 del "%TEMP%\cm_ex.ps1" 2>nul
 
 if not exist "%CLOUDMESH_DIR%\main.py" (
     echo   [ERROR] Extract failed!
+    echo [%date% %time%] Extract FAILED - main.py missing >> "!LOG!"
     pause
     goto :menu
 )
@@ -179,6 +214,7 @@ if exist "%CLOUDMESH_DIR%\node\cloudmesh_node.py" (
 echo.
 
 echo   [4/4] Creating venv and cm shortcut...
+echo [%date% %time%] Checking Python >> "!LOG!"
 python --version >nul 2>&1
 if !ERRORLEVEL! NEQ 0 (
     python3 --version >nul 2>&1
@@ -186,24 +222,30 @@ if !ERRORLEVEL! NEQ 0 (
 if !ERRORLEVEL! NEQ 0 (
     echo   [WARNING] Python not found. Install Python to use CloudMesh.
     echo   [INFO] https://www.python.org/downloads/
-    echo.
+    echo [%date% %time%] Python NOT found >> "!LOG!"
     set IS_INSTALLED=1
     pause
     goto :menu
 )
+echo [%date% %time%] Python found >> "!LOG!"
 
 if not exist "%VENV_DIR%" (
+    echo [%date% %time%] Creating venv... >> "!LOG!"
     python -m venv "%VENV_DIR%" 2>nul
     if !ERRORLEVEL! NEQ 0 (
         python3 -m venv "%VENV_DIR%" 2>nul
     )
+    echo [%date% %time%] Venv created: !ERRORLEVEL! >> "!LOG!"
 )
 
 if exist "%VENV_PYTHON%" (
+    echo [%date% %time%] Installing deps... >> "!LOG!"
     "%VENV_PYTHON%" -m pip install -q psutil rich paramiko cryptography pycryptodome 2>nul
     echo   [OK] Dependencies installed
+    echo [%date% %time%] Deps installed >> "!LOG!"
 ) else (
     echo   [WARNING] Could not create Python environment
+    echo [%date% %time%] VENV_PYTHON NOT found >> "!LOG!"
 )
 echo.
 
@@ -222,6 +264,7 @@ echo   [OK] cm command ready
 echo.
 
 set IS_INSTALLED=1
+echo [%date% %time%] Installation complete! >> "!LOG!"
 
 echo   +==========================================+
 echo   ^|    CloudMesh Installed Successfully!    ^|
@@ -233,6 +276,8 @@ echo   cm interactive         Interactive TUI
 echo   cm version             Show version
 echo.
 echo   Location: %CLOUDMESH_DIR%
+echo.
+echo   Log file: !LOG!
 echo.
 pause
 goto :menu
