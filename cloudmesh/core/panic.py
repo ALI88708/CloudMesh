@@ -90,7 +90,7 @@ class PanicManager:
                     new_auth = secrets.token_hex(32)
                     client = NodeClient(info["host"], info["port"], info["key"])
                     try:
-                        result = client.rotate_key(new_auth, timeout=5)
+                        result = client.rotate_key(new_auth)
                         if result.get("success"):
                             nodes[name]["key"] = new_auth
                             actions.append(f"Rotated '{name}' — confirmed remotely")
@@ -129,7 +129,7 @@ class PanicManager:
         for name, info in pending.items():
             client = NodeClient(info["host"], info["port"], info["old_key"])
             try:
-                result = client.rotate_key(info["new_key"], timeout=5)
+                result = client.rotate_key(info["new_key"])
                 if result.get("success"):
                     if self.node_keys_file.exists():
                         nodes = json.loads(self.node_keys_file.read_text())
