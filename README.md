@@ -126,6 +126,20 @@ cm completions bash    # Enable shell completions
 
 ---
 
+## Versioning Policy
+
+CloudMesh follows [Semantic Versioning](https://semver.org/):
+
+| Type | Format | When | Example |
+|------|--------|------|---------|
+| **Patch** | `2.0.x` | Security fixes, small bug fixes — no behavior changes | 2.0.1, 2.0.2 |
+| **Minor** | `2.x.0` | New features added on top of stable base — backward compatible | 2.1.0, 2.2.0 |
+| **Major** | `x.0.0` | Breaking changes that break compatibility with previous versions | 3.0.0 |
+
+**Rule of thumb:** Patches ship when ready. Minors ship with new features. Majors only when absolutely necessary.
+
+---
+
 ## Changelog - All Versions
 
 ### v2.0.0 (Latest)
