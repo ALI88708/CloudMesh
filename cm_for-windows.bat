@@ -1,5 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
+chcp 65001 >nul 2>&1
 title CloudMesh Installer
 color 0B
 
@@ -33,13 +34,13 @@ if exist "%VENV_DIR%\Scripts\python.exe" set IS_INSTALLED=1
 :menu
 cls
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║        CloudMesh Installer v2.0          ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |        CloudMesh Installer v2.0          |
+echo  +==========================================+
 echo.
 
 if "!IS_INSTALLED!"=="1" (
-    echo   [✓] CloudMesh is already installed
+    echo   [OK] CloudMesh is already installed
     echo.
     echo   [1] Fresh Install (overwrite)
     echo   [2] Update (keep config)
@@ -75,9 +76,9 @@ goto :menu
 :do_exit
 cls
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║           Goodbye! 👋                    ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |           Goodbye!                         |
+echo  +==========================================+
 echo.
 endlocal
 exit /b 0
@@ -88,9 +89,9 @@ exit /b 0
 :do_uninstall
 cls
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║         Uninstalling CloudMesh           ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |         Uninstalling CloudMesh           |
+echo  +==========================================+
 echo.
 set /p "CONFIRM=   Are you sure? (y/n): "
 if /i not "!CONFIRM!"=="y" goto :menu
@@ -129,9 +130,9 @@ del "%TEMP%\cm_ex.ps1" 2>nul
 echo   [OK] Cleanup complete
 
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║     CloudMesh has been uninstalled!      ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |     CloudMesh has been uninstalled!      |
+echo  +==========================================+
 echo.
 set IS_INSTALLED=0
 pause
@@ -143,9 +144,9 @@ goto :menu
 :do_reset
 cls
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║           Factory Reset                  ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |           Factory Reset                  |
+echo  +==========================================+
 echo.
 echo   [WARNING] This will delete ALL data:
 echo     - Auth keys
@@ -172,9 +173,9 @@ goto :do_fresh
 :do_update
 cls
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║          Updating CloudMesh              ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |          Updating CloudMesh              |
+echo  +==========================================+
 echo.
 
 set BACKUP_DIR=%TEMP%\cloudmesh_backup
@@ -203,9 +204,9 @@ goto :do_download_only
 :do_fresh
 cls
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║          Fresh Install                   ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |          Fresh Install                   |
+echo  +==========================================+
 echo.
 goto :do_download_only
 
@@ -306,9 +307,9 @@ goto :setup_all
 :: ============================================
 :setup_all
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║        Setting up CloudMesh              ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |        Setting up CloudMesh              |
+echo  +==========================================+
 echo.
 
 :: Check Python
@@ -454,9 +455,9 @@ echo.
 
 :controller_setup
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║      Controller Setup Complete!          ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |      Controller Setup Complete!          |
+echo  +==========================================+
 echo.
 
 if not exist "%VENV_PYTHON%" (
@@ -489,9 +490,9 @@ echo.
 set IS_INSTALLED=1
 
 echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║    CloudMesh Installed Successfully!     ║
-echo  ╚══════════════════════════════════════════╝
+echo  +==========================================+
+echo  |    CloudMesh Installed Successfully!     |
+echo  +==========================================+
 echo.
 echo   Quick Start:
 echo   cm --help              Show all commands

@@ -367,13 +367,13 @@ CMEOF
 while true; do
     clear
     echo ""
-    echo -e "${BLUE}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║        CloudMesh Installer v2.0          ║${NC}"
-    echo -e "${BLUE}╚══════════════════════════════════════════╝${NC}"
+    echo -e "${BLUE}+==========================================+${NC}"
+    echo -e "${BLUE}|        CloudMesh Installer v2.0          |${NC}"
+    echo -e "${BLUE}+==========================================+${NC}"
     echo ""
 
     if [ "$IS_INSTALLED" -eq 1 ]; then
-        echo -e "   ${GREEN}[✓] CloudMesh is already installed${NC}"
+        echo -e "   ${GREEN}[OK] CloudMesh is already installed${NC}"
         echo ""
         echo "   [1] Fresh Install (overwrite)"
         echo "   [2] Update (keep config)"
@@ -388,9 +388,9 @@ while true; do
                 download_from_github || { read -p "Press Enter to continue..."; continue; }
                 do_setup
                 echo ""
-                echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-                echo -e "${GREEN}║    CloudMesh Installed Successfully!     ║${NC}"
-                echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+                echo -e "${GREEN}+==========================================+${NC}"
+                echo -e "${GREEN}|    CloudMesh Installed Successfully!     |${NC}"
+                echo -e "${GREEN}+==========================================+${NC}"
                 echo ""
                 echo "  Quick Start:"
                 echo "  cm --help              Show all commands"
@@ -475,9 +475,9 @@ while true; do
                 do_setup
                 IS_INSTALLED=1
                 echo ""
-                echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-                echo -e "${GREEN}║    CloudMesh Installed Successfully!     ║${NC}"
-                echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+                echo -e "${GREEN}+==========================================+${NC}"
+                echo -e "${GREEN}|    CloudMesh Installed Successfully!     |${NC}"
+                echo -e "${GREEN}+==========================================+${NC}"
                 echo ""
                 echo "  Quick Start:"
                 echo "  cm --help              Show all commands"
