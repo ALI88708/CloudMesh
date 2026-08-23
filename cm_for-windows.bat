@@ -1,7 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title CloudMesh Installer
-color 0B
+title CloudMesh Installer - MRSX PRO
 
 :: ============================================
 :: CONFIG
@@ -34,8 +33,7 @@ if exist "%VENV_DIR%\Scripts\python.exe" set IS_INSTALLED=1
 cls
 echo.
 echo   +==========================================+
-echo   |        CloudMesh Installer v2.0          |
-echo   |            Created by MRSX PRO           |
+echo   ^|        CloudMesh Installer v2.0         ^|
 echo   +==========================================+
 echo.
 
@@ -84,7 +82,7 @@ exit /b 0
 cls
 echo.
 echo   +==========================================+
-echo   |         Uninstalling CloudMesh           |
+echo   ^|         Uninstalling CloudMesh          ^|
 echo   +==========================================+
 echo.
 set /p "CONFIRM=   Are you sure? (y/n): "
@@ -96,7 +94,7 @@ if exist "%CLOUDMESH_DIR%" (
     rmdir /s /q "%CLOUDMESH_DIR%" 2>nul
     echo   [OK] Program files removed
 ) else (
-    echo   [OK] Program files not found (skip)
+    echo   [OK] Program files not found (skip^)
 )
 
 echo   [2/4] Removing node agent...
@@ -104,7 +102,7 @@ if exist "%NODE_DIR%" (
     rmdir /s /q "%NODE_DIR%" 2>nul
     echo   [OK] Node agent removed
 ) else (
-    echo   [OK] Node agent not found (skip)
+    echo   [OK] Node agent not found (skip^)
 )
 
 echo   [3/4] Removing virtual environment...
@@ -112,15 +110,13 @@ if exist "%VENV_DIR%" (
     rmdir /s /q "%VENV_DIR%" 2>nul
     echo   [OK] Virtual environment removed
 ) else (
-    echo   [OK] Virtual environment not found (skip)
+    echo   [OK] Virtual environment not found (skip^)
 )
 
 echo   [4/4] Cleaning up...
 if exist "%INSTALL_DIR%" rmdir /s /q "%INSTALL_DIR%" 2>nul
 if exist "%CM_BAT%" del "%CM_BAT%" 2>nul
 del "%TEMP%\cloudmesh.zip" 2>nul
-del "%TEMP%\cm_dl.ps1" 2>nul
-del "%TEMP%\cm_ex.ps1" 2>nul
 echo   [OK] Cleanup complete
 
 echo.
@@ -137,7 +133,7 @@ goto :menu
 cls
 echo.
 echo   +==========================================+
-echo   |          Updating CloudMesh              |
+echo   ^|          Updating CloudMesh             ^|
 echo   +==========================================+
 echo.
 
@@ -168,7 +164,7 @@ goto :do_download_only
 cls
 echo.
 echo   +==========================================+
-echo   |          Fresh Install                   |
+echo   ^|          Fresh Install                  ^|
 echo   +==========================================+
 echo.
 
@@ -206,7 +202,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
          Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing; ^
          if (-not (Test-Path $dest) -or (Get-Item $dest).Length -eq 0) { throw 'empty' } ^
      } catch { ^
-         Write-Host '[ERROR] Download failed: ' $_.Exception.Message; ^
+         Write-Host '[ERROR] Download failed:' $_.Exception.Message; ^
          exit 1 ^
      }"
 
@@ -284,7 +280,7 @@ goto :setup_all
 :: ============================================
 :setup_all
 echo   +==========================================+
-echo   |        Setting up CloudMesh              |
+echo   ^|        Setting up CloudMesh             ^|
 echo   +==========================================+
 echo.
 
@@ -305,7 +301,7 @@ if !ERRORLEVEL! EQU 0 (
 
 py --version >nul 2>&1
 if !ERRORLEVEL! EQU 0 (
-    for /f "tokens=2" %%v in ('py --version 2^>^&1') do echo   [OK] Python (py) found: %%v
+    for /f "tokens=2" %%v in ('py --version 2^>^&1') do echo   [OK] Python (py^) found: %%v
     goto :py_ok
 )
 
@@ -368,7 +364,7 @@ if not exist "!TLS_CERT!" (
     where openssl >nul 2>&1
     if !ERRORLEVEL! EQU 0 (
         openssl req -x509 -newkey rsa:2048 -nodes -keyout "!TLS_KEY!" -out "!TLS_CERT!" -days 3650 -subj "/CN=cloudmesh-node-%COMPUTERNAME%" 2>nul
-        echo   [OK] TLS certificate generated (10 years)
+        echo   [OK] TLS certificate generated (10 years^)
     ) else (
         echo   [INFO] openssl not found, running without TLS
         set TLS_CERT=
@@ -415,7 +411,7 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4" ^| findstr /v 
 
 echo   Node Location: %NODE_DIR%
 echo   Auth Key: !AUTH_KEY!
-echo   Bind: 127.0.0.1 (local only)
+echo   Bind: 127.0.0.1 (local only^)
 echo.
 echo   === Add from Controller ===
 echo   cm add -n %COMPUTERNAME% -H !IP_ADDRESS! -p 9999 -k !AUTH_KEY!
@@ -428,7 +424,7 @@ if /i "!START_NODE!"=="y" (
 :skip_node
 echo.
 echo   +==========================================+
-echo   |      Setting up Controller...            |
+echo   ^|      Setting up Controller...           ^|
 echo   +==========================================+
 echo.
 
@@ -441,7 +437,7 @@ if not exist "%VENV_DIR%" (
         goto :menu
     )
     echo   [OK] Virtual environment created
-    echo   Installing requirements (this may take a few minutes)...
+    echo   Installing requirements (this may take a few minutes^)...
     "%VENV_PYTHON%" -m pip install -q -r "%CLOUDMESH_DIR%\requirements.txt"
     if !ERRORLEVEL! NEQ 0 (
         echo   [WARNING] Some dependencies failed to install
@@ -481,7 +477,7 @@ set IS_INSTALLED=1
 
 echo.
 echo   +==========================================+
-echo   |    CloudMesh Installed Successfully!     |
+echo   ^|    CloudMesh Installed Successfully!    ^|
 echo   +==========================================+
 echo.
 echo   Quick Start:
