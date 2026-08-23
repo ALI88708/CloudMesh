@@ -197,3 +197,12 @@ class NodeClient:
             "auth": key,
         }, timeout=10, spa=spa, spa_port=spa_port)
         return resp.get("data", resp)
+
+    def rotate_key(self, new_key, auth_key=None, spa=False, spa_port=9998):
+        key = auth_key or self.auth_key
+        resp = self._send({
+            "action": "rotate_key",
+            "auth": key,
+            "new_key": new_key,
+        }, timeout=10, spa=spa, spa_port=spa_port)
+        return resp.get("data", resp)

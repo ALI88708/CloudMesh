@@ -2676,10 +2676,11 @@ def cmd_panic(args):
                 key = srv.get("auth_key", "")
                 client = NodeClient(host, port, key)
                 try:
-                    result = client.rotate_keys()
+                    import secrets as _secrets
+                    new_auth = _secrets.token_hex(32)
+                    result = client.rotate_key(new_auth)
                     if result.get("success"):
-                        new_key = result.get("new_key", "")[:16]
-                        console.print(f"  [green]+[/] {name}: rotated (key: {new_key}...)")
+                        console.print(f"  [green]+[/] {name}: rotated successfully")
                     else:
                         console.print(f"  [red]![/] {name}: {result.get('message', 'failed')}")
                 except Exception as e:

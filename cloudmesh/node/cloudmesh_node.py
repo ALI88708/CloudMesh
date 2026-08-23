@@ -538,21 +538,6 @@ class NodeAgent:
                         resp = {"type": "download", "data": {"success": True, "content": content, "size": len(content)}}
                     except Exception as e:
                         resp = {"type": "download", "data": {"success": False, "message": str(e)}}
-            elif action == "rotate_keys":
-                keys_file = os.path.join(os.path.dirname(__file__), "..", "data", ".node_keys.json")
-                try:
-                    with open(keys_file) as f:
-                        keys = json.load(f)
-                    new_key = secrets.token_hex(32)
-                    keys["active"] = new_key
-                    keys["previous"] = keys.get("active", "")
-                    keys["rotated"] = datetime.now().isoformat()
-                    with open(keys_file, "w") as f:
-                        json.dump(keys, f, indent=2)
-                    _log(f"Keys rotated by controller command")
-                    resp = {"type": "rotate_keys", "data": {"success": True, "new_key": new_key}}
-                except Exception as e:
-                    resp = {"type": "rotate_keys", "data": {"success": False, "message": str(e)}}
             elif action == "rotate_key":
                 new_key = req.get("new_key", "")
                 if not new_key or len(new_key) < 32:
