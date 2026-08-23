@@ -369,40 +369,21 @@ while true; do
     echo ""
     echo -e "${BLUE}+==========================================+${NC}"
     echo -e "${BLUE}|        CloudMesh Installer v2.0          |${NC}"
+    echo -e "${BLUE}|            Created by MRSX PRO           |${NC}"
     echo -e "${BLUE}+==========================================+${NC}"
     echo ""
 
     if [ "$IS_INSTALLED" -eq 1 ]; then
         echo -e "   ${GREEN}[OK] CloudMesh is already installed${NC}"
         echo ""
-        echo "   [1] Fresh Install (overwrite)"
-        echo "   [2] Update (keep config)"
-        echo "   [3] Factory Reset"
-        echo "   [4] Uninstall"
-        echo "   [5] Exit"
+        echo "   [1] Update        - Keep data, get latest version"
+        echo "   [2] Reinstall     - Delete everything, install fresh"
+        echo "   [3] Uninstall     - Remove CloudMesh completely"
         echo ""
-        read -p "   Choose [1-5]: " CHOICE
+        read -p "   Choose [1-3]: " CHOICE
 
         case "$CHOICE" in
             1)
-                download_from_github || { read -p "Press Enter to continue..."; continue; }
-                do_setup
-                echo ""
-                echo -e "${GREEN}+==========================================+${NC}"
-                echo -e "${GREEN}|    CloudMesh Installed Successfully!     |${NC}"
-                echo -e "${GREEN}+==========================================+${NC}"
-                echo ""
-                echo "  Quick Start:"
-                echo "  cm --help              Show all commands"
-                echo "  cm interactive         Interactive TUI"
-                echo "  cm version             Show version"
-                echo "  cm ping                Test connections"
-                echo "  cm discover 192.168.1  Scan network"
-                echo "  cm bench               Benchmark"
-                echo ""
-                read -p "Press Enter to continue..."
-                ;;
-            2)
                 echo ""
                 echo -e "${BLUE}============================================${NC}"
                 echo -e "${BLUE}   Updating CloudMesh...${NC}"
@@ -426,7 +407,8 @@ while true; do
                 echo ""
                 read -p "Press Enter to continue..."
                 ;;
-            3)
+            2)
+                echo ""
                 echo -e "${YELLOW}[WARNING] This will delete ALL data!${NC}"
                 read -p "   Are you sure? (y/n): " CONFIRM
                 if [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ]; then
@@ -440,21 +422,27 @@ while true; do
 
                     download_from_github || { read -p "Press Enter to continue..."; continue; }
                     do_setup
-                    echo -e "${GREEN}[OK] Factory Reset complete!${NC}"
+                    IS_INSTALLED=1
+                    echo ""
+                    echo -e "${GREEN}+==========================================+${NC}"
+                    echo -e "${GREEN}|    CloudMesh Installed Successfully!     |${NC}"
+                    echo -e "${GREEN}+==========================================+${NC}"
+                    echo ""
+                    echo "  Quick Start:"
+                    echo "  cm --help              Show all commands"
+                    echo "  cm interactive         Interactive TUI"
+                    echo "  cm version             Show version"
+                    echo "  cm ping                Test connections"
+                    echo "  cm discover 192.168.1  Scan network"
+                    echo "  cm bench               Benchmark"
                     echo ""
                 fi
                 read -p "Press Enter to continue..."
                 ;;
-            4)
+            3)
                 do_uninstall
                 IS_INSTALLED=0
                 read -p "Press Enter to continue..."
-                ;;
-            5)
-                echo ""
-                echo -e "${BLUE}Goodbye!${NC}"
-                echo ""
-                exit 0
                 ;;
             *)
                 echo -e "${RED}[ERROR] Invalid choice!${NC}"
