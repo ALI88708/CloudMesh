@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 title CloudMesh Installer - MRSX PRO
 
-set GITHUB_USER=MrAli88708
+set GITHUB_USER=ALI88708
 set GITHUB_REPO=CloudMesh
 set GITHUB_BRANCH=main
 

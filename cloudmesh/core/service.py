@@ -6,6 +6,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from .advanced import NotifyManager
+
 
 class ServiceMode:
     def __init__(self, server_manager, resource_monitor, alert_manager, history_manager):
@@ -69,7 +71,8 @@ class ServiceMode:
             triggered = self.alerts.check_alerts()
             if triggered:
                 for a in triggered:
-                    self._log(f"ALERT: {a['rule']} on {a['server']} - {a['metric']}={a['value']}%")
+                    sev = a.get("severity", "warning").upper()
+                    self._log(f"ALERT[{sev}]: {a['rule']} on {a['server']} - {a['metric']}={a['value']}%")
         except Exception as e:
             self._log(f"Error in check cycle: {e}")
 

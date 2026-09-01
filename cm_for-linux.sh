@@ -10,7 +10,7 @@ set -e
 # ============================================
 # CONFIG
 # ============================================
-GITHUB_USER="MrAli88708"
+GITHUB_USER="ALI88708"
 GITHUB_REPO="CloudMesh"
 GITHUB_BRANCH="main"
 

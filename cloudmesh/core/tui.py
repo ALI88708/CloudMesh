@@ -21,7 +21,7 @@ class InteractiveTUI:
         console.clear()
         while True:
             self._show_menu()
-            choice = Prompt.ask("\n[bold cyan]Choose[/]", choices=["1","2","3","4","5","6","7","8","9","0"])
+            choice = Prompt.ask("\n[bold cyan]Choose[/]", choices=["1","2","3","4","5","6","7","8","9","10","11","0"])
             if choice == "0":
                 console.print("[dim]Goodbye![/]")
                 break
@@ -40,6 +40,8 @@ class InteractiveTUI:
         console.print("  [bold cyan]7[/] - Manage groups")
         console.print("  [bold cyan]8[/] - Compare devices")
         console.print("  [bold cyan]9[/] - Command history")
+        console.print("  [bold cyan]10[/] - GPU telemetry")
+        console.print("  [bold cyan]11[/] - Alerts & notifications")
         console.print("  [bold cyan]0[/] - Exit")
         console.print()
 
@@ -54,6 +56,8 @@ class InteractiveTUI:
             "7": self._manage_groups,
             "8": self._compare,
             "9": self._history,
+            "10": self._gpu,
+            "11": self._alerts,
         }
         action = actions.get(choice)
         if action:
@@ -242,3 +246,86 @@ class InteractiveTUI:
         for e in entries:
             table.add_row(e["timestamp"][:19], e["command"])
         console.print(table)
+
+    def _gpu(self):
+        servers = self.server_mgr.list_servers()
+        if not servers:
+            console.print("[dim]No devices configured.[/]")
+            return
+        table = Table(title="GPU Telemetry", box=box.ROUNDED)
+        table.add_column("Device", style="bold")
+        table.add_column("GPU Model")
+        table.add_column("Util %")
+        table.add_column("Memory")
+        table.add_column("Temp")
+        shown = False
+        for name in servers:
+            try:
+                gpu = self.monitor.get_gpu(name)
+                if not gpu:
+                    continue
+                shown = True
+                table.add_row(
+                    name,
+                    gpu.get("name", "?"),
+                    str(gpu.get("utilization_percent")),
+                    f"{gpu.get('memory_used_mb')}/{gpu.get('memory_total_mb')} MB",
+                    f"{gpu.get('temperature_c')}°C",
+                )
+            except Exception:
+                continue
+        if shown:
+            console.print(table)
+        else:
+            console.print("[dim]No GPU data available on any device.[/]")
+
+    def _alerts(self):
+        from .alerts import AlertManager
+        from .advanced import NotifyManager
+        alert_mgr = AlertManager(self.monitor, notifier=NotifyManager())
+        print("  [bold]1[/] List alert rules")
+        print("  [bold]2[/] Check alerts now")
+        print("  [bold]3[/] Show alert history")
+        print("  [bold]4[/] Add alert rule (name,metric,threshold[,node][,severity][,cooldown])")
+        ch = Prompt.ask("Choice", choices=["1","2","3","4"])
+        if ch == "1":
+            rules = alert_mgr.list_rules()
+            if not rules:
+                console.print("[dim]No alert rules.[/]")
+                return
+            for r in rules:
+                console.print(f"  [bold]{r['name']}[/]: {r['metric']} {r.get('operator','gt')} "
+                              f"{r['threshold']}% [{r.get('severity','warning')}] "
+                              f"(cooldown {r.get('cooldown',300)}s) on {r.get('server') or 'all'}")
+        elif ch == "2":
+            triggered = alert_mgr.check_alerts()
+            if not triggered:
+                console.print("[green]No alerts triggered.[/]")
+            else:
+                for a in triggered:
+                    console.print(f"[red]ALERT: {a['rule']} on {a['server']} - {a['metric']}={a['value']}%[/]")
+        elif ch == "3":
+            hist = alert_mgr.get_history(limit=10)
+            if not hist:
+                console.print("[dim]No alert history.[/]")
+                return
+            for a in hist:
+                console.print(f"  [{a['timestamp'][:19]}] {a['rule']} on {a['server']}: "
+                              f"{a['metric']}={a['value']}%")
+        elif ch == "4":
+            spec = Prompt.ask("Rule (name,metric,threshold[,node][,severity][,cooldown])")
+            parts = [p.strip() for p in spec.split(",")]
+            if len(parts) < 3:
+                console.print("[red]Need name,metric,threshold[/]")
+                return
+            try:
+                threshold = float(parts[2])
+            except ValueError:
+                console.print("[red]Threshold must be a number[/]")
+                return
+            server = parts[3] if len(parts) > 3 and parts[3] else None
+            severity = parts[4] if len(parts) > 4 and parts[4] else "warning"
+            cooldown = int(parts[5]) if len(parts) > 5 and parts[5] else 300
+            alert_mgr.add_rule(parts[0], parts[1], threshold, server=server,
+                               severity=severity, cooldown=cooldown)
+            console.print(f"[green]Alert '{parts[0]}' added.[/]")

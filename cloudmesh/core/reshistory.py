@@ -1,4 +1,4 @@
-import json, os, time
+import json, os, time, signal
 from core.ssh_util import run_ssh
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -112,3 +112,75 @@ def clear_history(server_name=None):
         history = {}
     _save_history(history)
     return "History cleared"
+
+
+# === Auto-record background recording ===
+
+_AUTO_PID_FILE = os.path.join(DATA_DIR, ".reshistory_auto.pid")
+
+
+def _auto_loop(interval):
+    while True:
+        try:
+            snapshot()
+        except Exception:
+            pass
+        time.sleep(interval)
+
+
+def start_auto(interval=60):
+    if auto_status().get("running"):
+        return f"Auto-recording already running (PID {auto_status().get('pid')})"
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    code = (
+        "import sys; sys.path.insert(0, '%s'); "
+        "from core.reshistory import _auto_loop; "
+        "_auto_loop(%d)" % (root, int(interval))
+    )
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", code],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+    )
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(_AUTO_PID_FILE, "w") as f:
+        f.write(str(proc.pid))
+    return f"Auto-recording started (PID {proc.pid}, every {interval}s)"
+
+
+def auto_status():
+    if not os.path.exists(_AUTO_PID_FILE):
+        return {"running": False, "pid": None}
+    with open(_AUTO_PID_FILE) as f:
+        pid = f.read().strip()
+    if not pid:
+        return {"running": False, "pid": None}
+    try:
+        os.kill(int(pid), 0)
+        return {"running": True, "pid": int(pid)}
+    except (OSError, ProcessLookupError, ValueError):
+        try:
+            os.remove(_AUTO_PID_FILE)
+        except OSError:
+            pass
+        return {"running": False, "pid": None}
+
+
+def stop_auto():
+    status = auto_status()
+    if not status.get("running"):
+        return "Auto-recording is not running"
+    pid = status["pid"]
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    try:
+        os.remove(_AUTO_PID_FILE)
+    except OSError:
+        pass
+    return f"Auto-recording stopped (PID {pid})"

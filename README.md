@@ -1,5 +1,10 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ALI88708/CloudMesh/main/1.png">
+  <img src="https://raw.githubusercontent.com/ALI88708/CloudMesh/main/1.png" alt="CloudMesh" width="200">
+</picture>
+
 # CloudMesh
 
 ### One Console to Control Them All
@@ -9,24 +14,17 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 #### Made By MRSX PRO
 
-[![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)]()
-[![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)]()
-[![Version](https://img.shields.io/badge/Version-2.0.0-brightgreen?style=for-the-badge)]()
-[![Tests](https://img.shields.io/badge/Tests-58%20Passed-brightgreen?style=for-the-badge)]()
-[![Stars](https://img.shields.io/github/stars/MrAli88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/MrAli88708/CloudMesh/stargazers)
-[![Security](https://img.shields.io/badge/Security-Hardened-red?style=for-the-badge)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
+[![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
+[![Version](https://img.shields.io/badge/Version-2.1.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-63%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
+[![Security](https://img.shields.io/badge/Security-Hardened-red?style=for-the-badge)](SECURITY.md)
+[![Status](https://img.shields.io/badge/Auth-bcrypt%20%2B%20Lockout-purple?style=for-the-badge)](SECURITY.md)
 
 <br>
-
-```
- __  __           _        ____
-|  \/  | ___  ___| |__    / ___|___  _ __ ___
-| |\/| |/ _ \/ __| '_ \  | |   / _ \| '__/ _ \
-| |  | |  __/\__ \ | | | | |__| (_) | | |  __/
-|_|  |_|\___||___/_| |_|  \____\___/|_|  \___|
-```
 
 **155+ commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **DDoS protection** | **Ghost Ports** | **Tripwire Keys** | **Shamir Panic** | **Remote Panic** | **Shell Completions**
 
@@ -76,7 +74,7 @@ cm --help
 ### Linux (Installer)
 Download [Python](https://www.python.org/) and install it first, then:
 ```bash
-curl -sL https://raw.githubusercontent.com/MrAli88708/CloudMesh/main/cm_for-linux.sh -o cm.sh
+curl -sL https://raw.githubusercontent.com/ALI88708/CloudMesh/main/cm_for-linux.sh -o cm.sh
 chmod +x cm.sh && ./cm.sh
 ```
 
@@ -916,14 +914,14 @@ MIT License - Free to use, modify, and distribute.
 
 **Created and Developed by MRSX PRO**
 
-**GitHub:** [MrAli88708](https://github.com/MrAli88708)
+**GitHub:** [ALI88708](https://github.com/ALI88708)
 
-**Repository:** [CloudMesh](https://github.com/MrAli88708/CloudMesh)
+**Repository:** [CloudMesh](https://github.com/ALI88708/CloudMesh)
 
 All rights reserved. This project is maintained by **MRSX PRO**.
 
 Star this repo if CloudMesh helps you! It motivates us to keep building.
 
-[Star on GitHub](https://github.com/MrAli88708/CloudMesh)
+[Star on GitHub](https://github.com/ALI88708/CloudMesh)
 
 </div>

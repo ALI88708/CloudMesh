@@ -40,6 +40,26 @@ def _usage_bar(percent):
     return f"[{color}]{'█' * filled}{'░' * empty}[/] {percent}%"
 
 
+def _temp_color(temp_c):
+    if temp_c is None:
+        return "white"
+    if temp_c < 60:
+        return "green"
+    elif temp_c < 80:
+        return "yellow"
+    else:
+        return "red"
+
+
+def _gpu_mem_str(gpu):
+    used = gpu.get("memory_used_mb")
+    total = gpu.get("memory_total_mb")
+    if used is None or total is None:
+        return "N/A"
+    pct = round((used / total) * 100, 1) if total > 0 else 0
+    return f"{used:.0f}/{total:.0f} MB ({pct}%)"
+
+
 class Dashboard:
     def __init__(self, scheduler):
         self.scheduler = scheduler
@@ -98,6 +118,44 @@ class Dashboard:
             padding=(1, 2),
         )
 
+    def build_gpu_table(self, servers_data):
+        rows = []
+        for name, data in servers_data.items():
+            metrics = data.get("metrics")
+            if not metrics:
+                continue
+            gpu = metrics.get("gpu")
+            if not gpu:
+                continue
+            rows.append((name, gpu))
+
+        if not rows:
+            return None
+
+        table = Table(
+            title="GPU Telemetry",
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold magenta",
+            border_style="magenta",
+        )
+        table.add_column("Server", style="bold white", min_width=15)
+        table.add_column("GPU Model", min_width=20)
+        table.add_column("Utilization", min_width=25)
+        table.add_column("Memory", min_width=20)
+        table.add_column("Temp", min_width=8)
+
+        for name, gpu in rows:
+            util = gpu.get("utilization_percent")
+            util_bar = _usage_bar(util) if util is not None else "[dim]N/A[/]"
+            temp = gpu.get("temperature_c")
+            tc = _temp_color(temp)
+            temp_str = f"[{tc}]{temp}°C[/]" if temp is not None else "[dim]N/A[/]"
+            table.add_row(name, gpu.get("name", "unknown"), util_bar,
+                          _gpu_mem_str(gpu), temp_str)
+
+        return table
+
     def build_distribution_panel(self, plan):
         lines = []
         for name, data in plan.items():
@@ -130,6 +188,11 @@ class Dashboard:
         console.print(table)
         console.print()
 
+        gpu_table = self.build_gpu_table(summary["servers"])
+        if gpu_table:
+            console.print(gpu_table)
+            console.print()
+
         summary_panel = self.build_summary_panel(summary)
         console.print(summary_panel)
 
@@ -156,6 +219,11 @@ class Dashboard:
 
                     table = self.build_server_table(summary["servers"])
                     renderables.append(table)
+
+                    gpu_table = self.build_gpu_table(summary["servers"])
+                    if gpu_table:
+                        renderables.append(gpu_table)
+
                     renderables.append(self.build_summary_panel(summary))
 
                     layout = Layout()

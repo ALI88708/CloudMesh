@@ -1,8 +1,86 @@
-# CloudMesh - The Complete Guide
+# CloudMesh - Contributions & Complete Guide
 
 ### Made By MRSX PRO
 
-This is the **complete, exhaustive reference guide** for CloudMesh. Everything you need to know about the tool — every command, every feature, every concept — is explained here in extreme detail. Read this file once and you will know CloudMesh better than most developers know their own tools.
+This is the **complete, exhaustive reference guide** for CloudMesh — every command, every feature, every concept — plus the official contributing guidelines for the project.
+
+---
+
+# How to Contribute
+
+Thank you for considering contributing to CloudMesh! This project is **open source**, built and maintained by **MRSX PRO**, and contributions from the community are welcome.
+
+## Ways to Contribute
+
+- **Report bugs** — open an [issue](https://github.com/ALI88708/CloudMesh/issues) with reproduction steps, expected vs actual behavior, and the output of `cm doctor`.
+- **Request features** — describe the feature, its use case, and how it fits the CLI/TUI-first design.
+- **Fix bugs / add features** — follow the workflow below.
+- **Improve documentation** — typos, missing examples, clearer wording.
+- **Security research** — responsibly disclose through the process in [SECURITY.md](SECURITY.md).
+
+## Development Setup
+
+```bash
+git clone https://github.com/ALI88708/CloudMesh.git
+cd CloudMesh
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# Linux
+source venv/bin/activate
+pip install -r cloudmesh/requirements.txt
+pip install -e .
+cm --help
+```
+
+## Code Style
+
+- Follow PEP 8.
+- Do **not** add comments unless they explain a non-obvious decision.
+- Keep functions small and focused.
+- Use the existing module structure (`cloudmesh/core/*.py`) — do not create new top-level packages for small helpers.
+
+## Testing
+
+```bash
+python -m pytest cloudmesh/tests -q
+```
+
+- All new features must come with tests.
+- Security-related changes **must** extend `cloudmesh/tests/test_security.py` (currently **58 tests**).
+- Keep the whole suite green before opening a Pull Request.
+
+## Branch & Commit Workflow
+
+1. Create a branch: `git checkout -b feature/your-feature` or `fix/your-fix`.
+2. Make focused commits with clear messages:
+   - `feat: add <feature>` — new functionality
+   - `fix: correct <bug>` — bug fixes
+   - `sec: harden <area>` — security improvements
+   - `docs: update <file>` — documentation
+   - `test: add tests for <area>`
+3. Never commit secrets, `.secret.key`, or `config.json`.
+4. Push and open a Pull Request against `main`.
+
+## Pull Request Checklist
+
+- [ ] Code follows existing style and conventions
+- [ ] Tests pass locally (`python -m pytest cloudmesh/tests -q`)
+- [ ] New features are documented in the guide sections below and in the README
+- [ ] Security-sensitive changes notify maintainers in the PR description
+- [ ] No unrelated changes bundled in
+
+## Versioning
+
+CloudMesh follows **Semantic Versioning (SemVer)**:
+
+- `MAJOR` (e.g. 3.0.0) — breaking changes only
+- `MINOR` (e.g. 2.1.0) — new features on a stable base
+- `PATCH` (e.g. 2.0.1) — security fixes and small bug fixes
+
+## Code of Conduct
+
+Be respectful and constructive. Harassment and discrimination are not tolerated in any form.
 
 ---
 
@@ -174,7 +252,7 @@ cm --help
 
 ```bash
 # Install Python first, then:
-curl -sL https://raw.githubusercontent.com/MrAli88708/CloudMesh/main/cm_for-linux.sh -o cm.sh
+curl -sL https://raw.githubusercontent.com/ALI88708/CloudMesh/main/cm_for-linux.sh -o cm.sh
 chmod +x cm.sh && ./cm.sh
 ```
 
@@ -2180,7 +2258,7 @@ cloudmesh/
 ### Development Setup
 
 ```bash
-git clone https://github.com/MrAli88708/CloudMesh.git
+git clone https://github.com/ALI88708/CloudMesh.git
 cd CloudMesh
 python -m venv venv
 source venv/bin/activate  # Linux
@@ -2223,9 +2301,9 @@ python -m pytest cloudmesh/tests/test_security.py -v
 
 **Created and Developed by MRSX PRO**
 
-**GitHub:** [MrAli88708](https://github.com/MrAli88708)
+**GitHub:** [ALI88708](https://github.com/ALI88708)
 
-**Repository:** [CloudMesh](https://github.com/MrAli88708/CloudMesh)
+**Repository:** [CloudMesh](https://github.com/ALI88708/CloudMesh)
 
 All rights reserved. This project is maintained by **MRSX PRO**.
 

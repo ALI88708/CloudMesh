@@ -781,3 +781,62 @@ class TestDDoSProtection:
         allowed, reason = dd.check_connection("10.0.0.7")
         assert allowed is False
         assert "banned" in reason.lower()
+
+
+# ─────────────────────────────────────────────
+# 30. Command Blocklist (Node Agent) Tests
+# ─────────────────────────────────────────────
+
+class TestCommandBlocklist:
+    def test_destructive_commands_blocked(self):
+        src = open("cloudmesh/node/cloudmesh_node.py").read()
+        assert "rm -rf /" in src
+        assert "mkfs" in src
+        assert "dd if=" in src
+        assert "_command_allowed" in src
+
+    def test_validate_mode_whitelist(self):
+        src = open("cloudmesh/node/cloudmesh_node.py").read()
+        assert "_SAFE_MODES = (\"w\", \"a\", \"wb\", \"ab\")" in src
+        assert "def _validate_mode" in src
+
+
+# ─────────────────────────────────────────────
+# 31. Restore Backup Path Traversal Tests
+# ─────────────────────────────────────────────
+
+class TestRestoreBackup:
+    def _make(self, tmp_path, monkeypatch):
+        from core.security import SecurityManager
+        base = tmp_path / "cm"
+        base.mkdir(exist_ok=True)
+        mgr = SecurityManager(base_dir=str(base))
+        (base / "backups").mkdir(exist_ok=True)
+        return mgr, base
+
+    def test_restore_rejects_path_traversal(self, tmp_path, monkeypatch):
+        mgr, base = self._make(tmp_path, monkeypatch)
+        # A file outside the backups dir
+        outside = tmp_path / "evil.json"
+        outside.write_text("{\"a\": 1}")
+        try:
+            mgr.restore_backup(str(outside))
+            raised = False
+        except ValueError:
+            raised = True
+        assert raised is True
+
+    def test_restore_accepts_file_inside_backups(self, tmp_path, monkeypatch):
+        mgr, base = self._make(tmp_path, monkeypatch)
+        good = base / "backups" / "config_backup_test.json"
+        good.write_text("{\"servers\": {}}")
+        mgr.restore_backup(str(good))
+
+    def test_restore_rejects_relative_traversal(self, tmp_path, monkeypatch):
+        mgr, base = self._make(tmp_path, monkeypatch)
+        try:
+            mgr.restore_backup("../../../../etc/passwd")
+            raised = False
+        except (ValueError, FileNotFoundError):
+            raised = True
+        assert raised is True

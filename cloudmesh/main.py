@@ -218,7 +218,10 @@ def cmd_logagg(args):
 
 
 def cmd_reshistory(args):
-    from core.reshistory import snapshot, show_history, summary, clear_history
+    from core.reshistory import (
+        snapshot, show_history, summary, clear_history,
+        start_auto, stop_auto, auto_status,
+    )
     if args.action == "snapshot":
         result = snapshot()
         console.print(f"[green]{result}[/]")
@@ -253,6 +256,23 @@ def cmd_reshistory(args):
     elif args.action == "clear":
         result = clear_history(getattr(args, "server", None))
         console.print(f"[green]{result}[/]")
+    elif args.action == "auto":
+        auto = getattr(args, "auto_action", None)
+        if auto == "start":
+            interval = getattr(args, "interval", 60) or 60
+            result = start_auto(interval)
+            console.print(f"[green]{result}[/]")
+        elif auto == "stop":
+            result = stop_auto()
+            console.print(f"[yellow]{result}[/]")
+        elif auto == "status":
+            status = auto_status()
+            if status.get("running"):
+                console.print(f"[green]Auto-recording is RUNNING (PID {status['pid']})[/]")
+            else:
+                console.print("[dim]Auto-recording is stopped[/]")
+        else:
+            console.print("[red]Usage: cm reshistory auto <start|stop|status>[/]")
     else:
         console.print("[red]Usage: cm reshistory <action>[/]")
 
@@ -519,7 +539,8 @@ def init_components():
     transfer = FileTransfer(server_mgr)
     history = HistoryManager(monitor)
     deployer = PackageDeployer(server_mgr)
-    alert_mgr = AlertManager(monitor)
+    notifier = NotifyManager()
+    alert_mgr = AlertManager(monitor, notifier=notifier)
     groups_mgr = GroupsManager(security)
     cmd_log = CommandLog()
     return security, server_mgr, monitor, scheduler, dashboard, transfer, history, deployer, alert_mgr, groups_mgr, cmd_log
@@ -784,14 +805,26 @@ def cmd_deploy(args):
 def cmd_alerts(args):
     _, _, _, _, _, _, _, _, alert_mgr, *_ = init_components()
     if args.add:
-        parts = args.add.split(",")
+        parts = [p.strip() for p in args.add.split(",")]
         if len(parts) < 3:
-            console.print("[red]Format: name,metric,threshold (e.g. high-cpu,cpu,80)[/]")
+            console.print("[red]Format: name,metric,threshold[,node][,severity][,cooldown][,operator][/]")
+            console.print("[dim]severity: info, warning, critical | cooldown: seconds[/]")
             return
-        name, metric, threshold = parts[0], parts[1], float(parts[2])
-        server = parts[3] if len(parts) > 3 else None
-        alert_mgr.add_rule(name, metric, threshold, server=server)
-        console.print(f"[green]Alert '{name}' added: {metric} > {threshold}%[/]")
+        name, metric = parts[0], parts[1]
+        try:
+            threshold = float(parts[2])
+        except ValueError:
+            console.print("[red]Threshold must be a number[/]")
+            return
+        server = parts[3] if len(parts) > 3 and parts[3] else None
+        severity = parts[4] if len(parts) > 4 and parts[4] else "warning"
+        cooldown = int(parts[5]) if len(parts) > 5 and parts[5] else None
+        operator = parts[6] if len(parts) > 6 and parts[6] else "gt"
+        alert_mgr.add_rule(name, metric, threshold, server=server,
+                           severity=severity, cooldown=cooldown or 300,
+                           operator=operator)
+        console.print(f"[green]Alert '{name}' added: {metric} {operator} {threshold}% "
+                      f"(severity={severity}, cooldown={cooldown or 300}s)[/]")
     elif args.remove:
         alert_mgr.remove_rule(args.remove)
         console.print(f"[green]Alert '{args.remove}' removed.[/]")
@@ -803,10 +836,19 @@ def cmd_alerts(args):
         table = Table(title="Alert Rules", box=box.ROUNDED)
         table.add_column("Name", style="bold")
         table.add_column("Metric")
+        table.add_column("Operator")
         table.add_column("Threshold")
+        table.add_column("Severity")
+        table.add_column("Cooldown")
         table.add_column("Server")
+        sev_colors = {"info": "cyan", "warning": "yellow", "critical": "red"}
         for r in rules:
-            table.add_row(r["name"], r["metric"], f"{r['threshold']}%", r.get("server") or "all")
+            sev = r.get("severity", "warning")
+            table.add_row(r["name"], r["metric"], r.get("operator", "gt"),
+                          f"{r['threshold']}%",
+                          f"[{sev_colors.get(sev, 'white')}]{sev}[/]",
+                          f"{r.get('cooldown', 300)}s",
+                          r.get("server") or "all")
         console.print(table)
     elif args.check:
         triggered = alert_mgr.check_alerts()
@@ -814,14 +856,20 @@ def cmd_alerts(args):
             console.print("[green]No alerts triggered.[/]")
         else:
             for a in triggered:
-                console.print(f"[red]ALERT: {a['rule']} on {a['server']} - {a['metric']}={a['value']}% > {a['threshold']}%[/]")
+                sev = a.get("severity", "warning")
+                color = {"info": "cyan", "warning": "yellow", "critical": "red"}.get(sev, "white")
+                console.print(f"[{color}]ALERT[{sev.upper()}]: {a['rule']} on {a['server']} - "
+                              f"{a['metric']}={a['value']}% > {a['threshold']}%[/]")
     elif args.history:
         hist = alert_mgr.get_history(limit=args.limit)
         if not hist:
             console.print("[dim]No alert history.[/]")
             return
         for a in hist[-10:]:
-            console.print(f"  [{a['timestamp'][:19]}] {a['rule']} on {a['server']}: {a['metric']}={a['value']}%")
+            sev = a.get("severity", "warning")
+            color = {"info": "cyan", "warning": "yellow", "critical": "red"}.get(sev, "white")
+            console.print(f"  [{a['timestamp'][:19]}] [{color}]{sev.upper()}[/] "
+                          f"{a['rule']} on {a['server']}: {a['metric']}={a['value']}%")
     else:
         console.print("[dim]Use --add, --remove, --list-rules, --check, or --history[/]")
 
@@ -1847,6 +1895,34 @@ def cmd_watch(args):
                     except Exception:
                         table.add_row(name, "[red]ERR[/]", "-", "-", "-")
                 console.print(table)
+                gpu_table = Table(title="GPU Telemetry (SSH)", box=box.SIMPLE_HEAVY)
+                gpu_table.add_column("Name", style="bold", min_width=15)
+                gpu_table.add_column("Model", min_width=16)
+                gpu_table.add_column("Util", justify="right")
+                gpu_table.add_column("Mem Used/Tot", justify="right")
+                gpu_table.add_column("Temp", justify="right")
+                gpu_shown = False
+                for name in names_ssh:
+                    try:
+                        gpu = monitor.get_gpu(name)
+                        if not gpu:
+                            continue
+                        gpu_shown = True
+                        util = gpu.get("utilization_percent")
+                        uc = "red" if (util or 0) > 80 else "yellow" if (util or 0) > 50 else "green"
+                        temp = gpu.get("temperature_c")
+                        tc = "red" if (temp or 0) > 80 else "yellow" if (temp or 0) > 60 else "green"
+                        gpu_table.add_row(
+                            name,
+                            gpu.get("name", "?"),
+                            f"[{uc}]{util}%[/]",
+                            f"{gpu.get('memory_used_mb')}/{gpu.get('memory_total_mb')} MB",
+                            f"[{tc}]{temp}°C[/]",
+                        )
+                    except Exception:
+                        continue
+                if gpu_shown:
+                    console.print(gpu_table)
 
             if names_node:
                 table = Table(title="Cloud Nodes", box=box.SIMPLE_HEAVY)
@@ -2944,7 +3020,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.0.0")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.1.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -3008,7 +3084,7 @@ def main():
     dep.add_argument("--server", help="Target node for script")
 
     alrt = subparsers.add_parser("alerts", help="Manage alerts")
-    alrt.add_argument("--add", "-a", help="Add rule: name,metric,threshold[,node]")
+    alrt.add_argument("--add", "-a", help="Add rule: name,metric,threshold[,node][,severity][,cooldown][,operator]")
     alrt.add_argument("--remove", "-r", help="Remove rule by name")
     alrt.add_argument("--list-rules", action="store_true")
     alrt.add_argument("--check", action="store_true", help="Check all rules now")
@@ -3452,6 +3528,12 @@ def main():
     rhsum.add_argument("server")
     rhcl = rh_sub.add_parser("clear", help="Clear history")
     rhcl.add_argument("--server", "-s")
+    rh_auto = rh_sub.add_parser("auto", help="Auto-record in background")
+    rh_auto_sub = rh_auto.add_subparsers(dest="auto_action")
+    rh_auto_start = rh_auto_sub.add_parser("start", help="Start background recording")
+    rh_auto_start.add_argument("--interval", "-i", type=int, default=60, help="Seconds between snapshots")
+    rh_auto_sub.add_parser("stop", help="Stop background recording")
+    rh_auto_sub.add_parser("status", help="Check auto-recording status")
 
     plg_p = subparsers.add_parser("plugins", help="Custom plugins")
     plg_sub = plg_p.add_subparsers(dest="action")
@@ -3867,7 +3949,6 @@ def main():
         "info": lambda: cmd_node_info(args),
         "monnode": lambda: cmd_node_monitor(args),
         "gpunode": lambda: cmd_node_gpu(args),
-        "exec": lambda: cmd_node_exec(args),
         "nodeinstall": lambda: cmd_node_install(args),
         "dcls": lambda: _alias_docker(args, "containers"),
         "dcstats": lambda: _alias_docker(args, "stats"),

@@ -5,9 +5,12 @@ import subprocess
 import threading
 import http.server
 import hashlib
+import secrets
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+
+from .features import get_version
 
 
 # === 1. AUTO-DISCOVERY ===
@@ -287,12 +290,12 @@ class CloudMeshAPI:
             return {"error": "Unauthorized"}, 401
 
         if path == "/api/status":
-            return {"status": "ok", "version": "1.3.0", "time": datetime.now().isoformat()}
+            return {"status": "ok", "version": get_version().get("version", "unknown"), "time": datetime.now().isoformat()}
         elif path == "/api/health":
             return {
                 "status": "healthy",
                 "uptime": "ok",
-                "version": "1.3.0",
+                "version": get_version().get("version", "unknown"),
                 "node_count": len(self.node_keys),
                 "api_key_set": bool(self.api_key),
             }

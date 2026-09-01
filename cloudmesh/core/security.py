@@ -1,9 +1,12 @@
 import os
 import json
 import shutil
+import logging
 from datetime import datetime
 from pathlib import Path
 from cryptography.fernet import Fernet
+
+logger = logging.getLogger(__name__)
 
 
 class SecurityManager:
@@ -25,8 +28,8 @@ class SecurityManager:
         try:
             if os.name != "nt":
                 os.chmod(self.key_path, 0o600)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to set key permissions: %s", e)
         return key
 
     @property
@@ -43,8 +46,8 @@ class SecurityManager:
         try:
             if os.name != "nt":
                 os.chmod(self.config_path, 0o600)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to set config permissions: %s", e)
 
     def load_config(self) -> dict:
         if not self.config_path.exists():
@@ -53,7 +56,8 @@ class SecurityManager:
         try:
             decrypted = self.fernet.decrypt(encrypted)
             return json.loads(decrypted.decode())
-        except Exception:
+        except Exception as e:
+            logger.error("Failed to load config: %s", e)
             return {"servers": {}, "settings": {"monitor_interval": 5, "max_backups": 10}}
 
     def _backup_config(self):
@@ -65,11 +69,12 @@ class SecurityManager:
         try:
             decrypted = self.fernet.decrypt(self.config_path.read_bytes())
             backup_path.write_bytes(decrypted)
-        except Exception:
+        except Exception as e:
+            logger.warning("Backup decrypt failed, copying raw: %s", e)
             try:
                 shutil.copy2(self.config_path, backup_path)
-            except Exception:
-                pass
+            except Exception as e2:
+                logger.error("Backup copy failed: %s", e2)
         self._cleanup_old_backups()
 
     def _cleanup_old_backups(self):
@@ -82,6 +87,17 @@ class SecurityManager:
 
     def restore_backup(self, backup_file: str):
         backup_path = Path(backup_file)
+        if not backup_path.is_absolute():
+            backup_path = self.backups_dir / backup_path
+        backups_dir = self.backups_dir.resolve()
+        try:
+            backup_path = backup_path.resolve()
+        except OSError as e:
+            logger.error("Invalid backup path: %s", e)
+            raise ValueError("Invalid backup path")
+        if backups_dir not in backup_path.parents:
+            logger.error("Path traversal blocked: %s", backup_file)
+            raise ValueError("Restore path must be inside the backups directory")
         if not backup_path.exists():
             raise FileNotFoundError(f"Backup not found: {backup_file}")
         self._backup_config()

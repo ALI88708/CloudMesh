@@ -16,9 +16,9 @@ This document describes what security measures exist in the codebase — not wha
 
 | Version | Supported |
 |---------|-----------|
+| 2.1.x   | Yes |
 | 2.0.x   | Yes |
-| 1.5.x   | Yes |
-| < 1.5   | No |
+| < 2.0   | No |
 
 Always run the latest version for the most recent security patches:
 
@@ -400,16 +400,36 @@ Multi-user support with role-based permissions.
 - `admin`: Full access (`*`)
 - `viewer`: Read-only (`monitor`, `ping`, `list`, `info`)
 
-**Password storage:**
-- SHA-256 hash + random 16-byte salt
+**Password storage (v2.1.0):**
+- **bcrypt** with 12 rounds by default (PBKDF2-SHA256 300k iterations as fallback if bcrypt is unavailable)
 - Never stored in plaintext
 
 ```python
-salt = secrets.token_hex(16)
-pwd_hash = hashlib.sha256((salt + password).encode()).hexdigest()
+import bcrypt
+salt = bcrypt.gensalt(rounds=12)
+pwd_hash = bcrypt.hashpw(password.encode(), salt)
 ```
 
+**Brute-force lockout (v2.1.0):**
+- 5 consecutive failed attempts → account locked for **15 minutes**
+- All auth events (success/failure/lockout) are written to `data/acl_audit.log`
+- Enabling a user resets the attempt counter and lock
+
 **Limitation:** ACL is local only. It does not apply to the node agent or SSH connections. ACL only controls who can use the CLI on the controller machine.
+
+---
+
+### 15b. Node Agent Command Blocklist (v2.1.0)
+
+Remote execution and job submission through the node agent are filtered against a blocklist of destructive commands.
+
+**File:** `cloudmesh/node/cloudmesh_node.py`
+
+**Blocked patterns include:** `rm -rf /`, `mkfs`, `format c:`, `dd if=`, `shutdown`, `reboot`, `init 0/6`, fork bombs (`:(){`), `chmod -R 777 /`, and similar destructive operations.
+
+Blocked attempts are logged and return a `Command blocked by security policy` error without executing.
+
+**Upload mode validation:** only `w`, `a`, `wb`, `ab` are accepted as file modes; anything else is rejected.
 
 ---
 
@@ -589,9 +609,9 @@ cm doctor    # Run health checks
 
 **Created and Developed by MRSX PRO**
 
-**GitHub:** [MrAli88708](https://github.com/MrAli88708)
+**GitHub:** [ALI88708](https://github.com/ALI88708)
 
-**Repository:** [CloudMesh](https://github.com/MrAli88708/CloudMesh)
+**Repository:** [CloudMesh](https://github.com/ALI88708/CloudMesh)
 
 All rights reserved. This project is maintained by **MRSX PRO**.
 

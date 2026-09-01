@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudmesh"
-version = "2.0.0"
+version = "2.1.0"
 description = "Unified multi-cloud resource manager — CLI tool connecting servers into one pool"
 readme = "README.md"
 license = {text = "MIT"}
@@ -33,15 +33,16 @@ dependencies = [
     "cryptography>=41.0",
     "paramiko>=3.0",
     "pycryptodome>=3.20",
+    "bcrypt>=4.0",
 ]
 
 [project.scripts]
 cm = "cloudmesh.main:main"
 
 [project.urls]
-Homepage = "https://github.com/MrAli88708/CloudMesh"
-Repository = "https://github.com/MrAli88708/CloudMesh"
-Issues = "https://github.com/MrAli88708/CloudMesh/issues"
+Homepage = "https://github.com/ALI88708/CloudMesh"
+Repository = "https://github.com/ALI88708/CloudMesh"
+Issues = "https://github.com/ALI88708/CloudMesh/issues"
 
 [tool.setuptools]
 packages = ["cloudmesh", "cloudmesh.core", "cloudmesh.node", "cloudmesh.tests"]

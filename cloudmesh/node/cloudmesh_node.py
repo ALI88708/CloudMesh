@@ -205,6 +205,45 @@ def _safe_path(user_path):
         return None
 
 
+_SAFE_MODES = ("w", "a", "wb", "ab")
+
+
+def _validate_mode(mode):
+    return mode if mode in _SAFE_MODES else None
+
+
+BLOCKED_COMMANDS = (
+    "rm -rf /",
+    "rm -rf /*",
+    "mkfs",
+    "format c:",
+    "del /s /q c:\\",
+    "shutdown",
+    "reboot",
+    "init 0",
+    "init 6",
+    "dd if=",
+    ">:",
+    "chmod -R 777 /",
+    "mount /",
+    "mv /",
+    ":(){",
+    "fork bomb",
+    "sudo dd",
+)
+
+
+def _command_allowed(cmd):
+    low = cmd.strip().lower()
+    if not low:
+        return False
+    for blocked in BLOCKED_COMMANDS:
+        if blocked in low:
+            _log(f"BLOCKED_COMMAND: '{cmd}' contains blocked pattern '{blocked}'")
+            return False
+    return True
+
+
 class SpacListener:
     def __init__(self, auth_key, spa_port, tcp_port, window, on_open_callback):
         self.auth_key = auth_key
@@ -388,6 +427,9 @@ class NodeAgent:
         sock.sendall(len(msg).to_bytes(4, "big") + msg)
 
     def _handle_execute(self, cmd, timeout=300):
+        if not _command_allowed(cmd):
+            return {"success": False, "exit_code": -1, "stdout": "",
+                    "stderr": "Command blocked by security policy"}
         try:
             kwargs = {"shell": True, "capture_output": True, "text": True, "timeout": timeout}
             result = subprocess.run(cmd, **kwargs)
@@ -399,6 +441,9 @@ class NodeAgent:
             return {"success": False, "exit_code": -1, "stdout": "", "stderr": str(e)}
 
     def _handle_start_job(self, cmd, timeout=300):
+        if not _command_allowed(cmd):
+            return {"job_id": None, "status": "blocked",
+                    "stderr": "Command blocked by security policy"}
         job_id = uuid.uuid4().hex[:12]
         job = {
             "id": job_id, "command": cmd, "status": "running",
@@ -519,9 +564,13 @@ class NodeAgent:
                 else:
                     try:
                         safe.parent.mkdir(parents=True, exist_ok=True)
-                        with open(safe, req.get("data", {}).get("mode", "w")) as f:
-                            f.write(req.get("data", {}).get("content", ""))
-                        resp = {"type": "upload", "data": {"success": True, "message": f"Written to {safe}"}}
+                        mode = _validate_mode(req.get("data", {}).get("mode", "w"))
+                        if mode is None:
+                            resp = {"type": "upload", "data": {"success": False, "message": "Invalid file mode"}}
+                        else:
+                            with open(safe, mode) as f:
+                                f.write(req.get("data", {}).get("content", ""))
+                            resp = {"type": "upload", "data": {"success": True, "message": f"Written to {safe}"}}
                     except Exception as e:
                         resp = {"type": "upload", "data": {"success": False, "message": str(e)}}
             elif action == "download":

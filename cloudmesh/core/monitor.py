@@ -2,6 +2,8 @@ import json
 import os
 import psutil
 
+from .gpu import GPUTelemetry
+
 
 LINUX_CPU_CMD = """python3 -c "
 import os, time
@@ -56,6 +58,7 @@ class ResourceMonitor:
     def __init__(self, server_manager):
         self.server_mgr = server_manager
         self._cache = {}
+        self.gpu_telemetry = GPUTelemetry()
 
     def _run_cmd(self, server_name, cmd):
         result = self.server_mgr.execute(server_name, cmd)
@@ -103,13 +106,21 @@ class ResourceMonitor:
         cpu = self.get_cpu(server_name)
         ram = self.get_ram(server_name)
         disk = self.get_disk(server_name)
+        gpu = self.get_gpu(server_name)
         metrics = {
             "cpu_percent": cpu,
             "ram": ram,
             "disk": disk,
+            "gpu": gpu,
         }
         self._cache[server_name] = metrics
         return metrics
+
+    def get_gpu(self, server_name):
+        try:
+            return self.gpu_telemetry.get_remote_gpu(self.server_mgr, server_name)
+        except Exception:
+            return None
 
     def get_local_metrics(self):
         cpu = psutil.cpu_percent(interval=1)
