@@ -15,14 +15,35 @@ Monitor, manage, and distribute workloads from a single terminal.
 #### Made By MRSX PRO
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Version](https://img.shields.io/badge/Version-2.1.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
 [![Tests](https://img.shields.io/badge/Tests-63%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
+[![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
+[![Issues](https://img.shields.io/github/issues/ALI88708/CloudMesh?style=for-the-badge&color=orange)](https://github.com/ALI88708/CloudMesh/issues)
+[![License](https://img.shields.io/github/license/ALI88708/CloudMesh?style=for-the-badge&color=green)](License)
 [![Security](https://img.shields.io/badge/Security-Hardened-red?style=for-the-badge)](SECURITY.md)
 [![Status](https://img.shields.io/badge/Auth-bcrypt%20%2B%20Lockout-purple?style=for-the-badge)](SECURITY.md)
+
+<br>
+
+[![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
+[![Tests](https://img.shields.io/badge/tests-63_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
+[![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
+[![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Lint](https://img.shields.io/badge/linting-ok-green?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
+[![Deps](https://img.shields.io/badge/dependencies-verified-green?style=flat-square)](cloudmesh/requirements.txt)
+
+**Security Badges:**
+
+[![Auth](https://img.shields.io/badge/Auth-bcrypt%20|%20lockout-purple?style=flat-square)](SECURITY.md)
+[![Config](https://img.shields.io/badge/Config-Fernet_encrypted-blue?style=flat-square)](SECURITY.md)
+[![Node SPA](https://img.shields.io/badge/Node-Ghost_Ports%20(SPA)-orange?style=flat-square)](SECURITY.md)
+[![DDoS](https://img.shields.io/badge/DDoS-Rate_Limit%20%2B%20Ban-yellow?style=flat-square)](SECURITY.md)
+[![Command](https://img.shields.io/badge/Command-Blocklist-red?style=flat-square)](SECURITY.md)
+[![Panic](https://img.shields.io/badge/Panic-Shamir%202%2F3-red?style=flat-square)](SECURITY.md)
 
 <br>
 
