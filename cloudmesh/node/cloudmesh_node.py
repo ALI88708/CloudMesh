@@ -39,7 +39,8 @@ SPA_TIMESTAMP_MAX_AGE = 30
 def get_or_create_key():
     if KEY_FILE.exists():
         return KEY_FILE.read_text().strip()
-    key = uuid.uuid4().hex[:32]
+    import secrets
+    key = secrets.token_hex(32)
     KEY_FILE.write_text(key)
     try:
         KEY_FILE.chmod(0o600)
@@ -194,12 +195,11 @@ def _safe_path(user_path):
             resolved.relative_to(allowed)
         except ValueError:
             return None
-        real_allowed = allowed
-        if os.name != "nt":
-            real_allowed = Path(os.path.realpath(str(allowed)))
-            real_resolved = Path(os.path.realpath(str(resolved)))
-            if not str(real_resolved).startswith(str(real_allowed) + os.sep) and str(real_resolved) != str(real_allowed):
-                return None
+        real_allowed = Path(os.path.realpath(str(allowed)))
+        real_resolved = Path(os.path.realpath(str(resolved)))
+        if not (str(real_resolved) == str(real_allowed) or
+                str(real_resolved).startswith(str(real_allowed) + os.sep)):
+            return None
         return resolved
     except Exception:
         return None
@@ -210,6 +210,28 @@ _SAFE_MODES = ("w", "a", "wb", "ab")
 
 def _validate_mode(mode):
     return mode if mode in _SAFE_MODES else None
+
+
+def _safe_open_write(safe_path, data, mode):
+    allowed = (BASE_DIR / "data").resolve()
+    fd = os.open(
+        str(safe_path),
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        real = Path(os.path.realpath(f"/proc/self/fd/{fd}")) if os.name != "nt" else Path(str(safe_path)).resolve()
+        if not (str(real) == str(allowed) or str(real).startswith(str(allowed) + os.sep)):
+            raise PermissionError("Access denied")
+        with os.fdopen(fd, mode) as f:
+            f.write(data)
+            fd = None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 BLOCKED_COMMANDS = (
@@ -233,13 +255,32 @@ BLOCKED_COMMANDS = (
 )
 
 
-def _command_allowed(cmd):
+def _normalize_cmd(cmd):
     low = cmd.strip().lower()
+    low = low.replace("\\\n", " ")
+    import re as _re
+    low = _re.sub(r"\s+", " ", low)
+    low = low.rstrip(";& ")
+    return low
+
+
+def _command_allowed(cmd):
+    low = _normalize_cmd(cmd)
     if not low:
         return False
     for blocked in BLOCKED_COMMANDS:
-        if blocked in low:
+        norm_blocked = _normalize_cmd(blocked)
+        if not norm_blocked:
+            continue
+        if norm_blocked in low:
             _log(f"BLOCKED_COMMAND: '{cmd}' contains blocked pattern '{blocked}'")
+            return False
+    dangerous = ("/dev/sd", "/dev/sda", "> /dev/", "pv > /dev/",
+                 "--no-preserve-root", "chown -r /", "chmod -r 777 /",
+                 ">:", ":(){", "while true", "mkfs", "fdisk", "dd if")
+    for d in dangerous:
+        if d in low:
+            _log(f"BLOCKED_COMMAND: '{cmd}' blocked by dangerous pattern '{d}'")
             return False
     return True
 
@@ -351,44 +392,57 @@ class NodeAgent:
         self._spa_open = False
         self._spa_lock = threading.Lock()
         self._spa_event = threading.Event()
+        self._spa_expire = 0.0
 
         from core.ddos import DDoSProtection
         self._ddos = DDoSProtection()
         self._spac = None
 
     def _on_spa_knock(self, window, source_ip):
+        now = time.time()
         with self._spa_lock:
-            self._spa_open = True
-            self._spa_event.set()
-
-        port = self.port
-        try:
-            subprocess.run(
-                ["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(port),
-                 "-s", source_ip, "-j", "ACCEPT"],
-                capture_output=True, timeout=5
-            )
-            _log(f"SPA: iptables ACCEPT rule added for TCP {port} from {source_ip}")
-        except Exception as e:
-            _log(f"SPA: iptables failed: {e}")
+            if not self._spa_open:
+                self._spa_open = True
+                self._spa_event.set()
+                try:
+                    subprocess.run(
+                        ["iptables", "-I", "INPUT", "-p", "tcp", "--dport", str(self.port),
+                         "-s", source_ip, "-j", "ACCEPT"],
+                        capture_output=True, timeout=5
+                    )
+                    _log(f"SPA: iptables ACCEPT rule added for TCP {self.port} from {source_ip}")
+                except Exception as e:
+                    _log(f"SPA: iptables failed: {e}")
+            self._spa_expire = now + window
 
         def close_after_delay():
-            time.sleep(window)
+            while True:
+                with self._spa_lock:
+                    remaining = self._spa_expire - time.time()
+                    if remaining <= 0:
+                        self._spa_open = False
+                        self._spa_event.clear()
+                        self._spa_expire = 0.0
+                        break
+                time.sleep(min(remaining, 0.5))
             try:
                 subprocess.run(
-                    ["iptables", "-D", "INPUT", "-p", "tcp", "--dport", str(port),
+                    ["iptables", "-D", "INPUT", "-p", "tcp", "--dport", str(self.port),
                      "-s", source_ip, "-j", "ACCEPT"],
                     capture_output=True, timeout=5
                 )
-                _log(f"SPA: iptables ACCEPT rule removed for TCP {port} from {source_ip}")
+                _log(f"SPA: iptables ACCEPT rule removed for TCP {self.port} from {source_ip}")
             except Exception as e:
                 _log(f"SPA: iptables cleanup failed: {e}")
-            with self._spa_lock:
-                self._spa_open = False
-                self._spa_event.clear()
-            _log(f"SPA: TCP port {port} closed after {window}s window")
+            _log(f"SPA: TCP port {self.port} closed")
 
-        threading.Thread(target=close_after_delay, daemon=True).start()
+        if not any(
+            hasattr(t, "_cm_spa_closer") and getattr(t, "_cm_spa_closer", False)
+            for t in threading.enumerate()
+        ):
+            t = threading.Thread(target=close_after_delay, daemon=True)
+            t._cm_spa_closer = True
+            t.start()
 
     def _load_jobs(self):
         JOBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -404,29 +458,51 @@ class NodeAgent:
         path = JOBS_DIR / f"{job['id']}.json"
         path.write_text(json.dumps(job, indent=2))
 
-    def _recv_msg(self, sock):
+    def _recv_msg(self, sock, max_size=50 * 1024 * 1024):
+        header_timeout = 10
+        read_timeout = 60
+        try:
+            sock.settimeout(header_timeout)
+        except Exception:
+            pass
         header = b""
         while len(header) < 4:
-            chunk = sock.recv(4 - len(header))
+            try:
+                chunk = sock.recv(4 - len(header))
+            except socket.timeout:
+                return None
             if not chunk:
                 return None
             header += chunk
         length = int.from_bytes(header, "big")
-        if length > 50 * 1024 * 1024:
+        if length > max_size or length <= 0:
             return None
+        try:
+            sock.settimeout(read_timeout)
+        except Exception:
+            pass
         data = b""
         while len(data) < length:
-            chunk = sock.recv(min(length - len(data), 65536))
+            try:
+                chunk = sock.recv(min(length - len(data), 65536))
+            except socket.timeout:
+                return None
             if not chunk:
                 break
             data += chunk
-        return json.loads(data.decode())
+        try:
+            return json.loads(data.decode())
+        except Exception:
+            return None
 
     def _send_msg(self, sock, resp):
         msg = json.dumps(resp).encode()
         sock.sendall(len(msg).to_bytes(4, "big") + msg)
 
     def _handle_execute(self, cmd, timeout=300):
+        if len(cmd) > 65536:
+            return {"success": False, "exit_code": -1, "stdout": "",
+                    "stderr": "Command too long"}
         if not _command_allowed(cmd):
             return {"success": False, "exit_code": -1, "stdout": "",
                     "stderr": "Command blocked by security policy"}
@@ -441,6 +517,9 @@ class NodeAgent:
             return {"success": False, "exit_code": -1, "stdout": "", "stderr": str(e)}
 
     def _handle_start_job(self, cmd, timeout=300):
+        if len(cmd) > 65536:
+            return {"job_id": None, "status": "blocked",
+                    "stderr": "Command too long"}
         if not _command_allowed(cmd):
             return {"job_id": None, "status": "blocked",
                     "stderr": "Command blocked by security policy"}
@@ -568,8 +647,7 @@ class NodeAgent:
                         if mode is None:
                             resp = {"type": "upload", "data": {"success": False, "message": "Invalid file mode"}}
                         else:
-                            with open(safe, mode) as f:
-                                f.write(req.get("data", {}).get("content", ""))
+                            _safe_open_write(safe, req.get("data", {}).get("content", ""), mode)
                             resp = {"type": "upload", "data": {"success": True, "message": f"Written to {safe}"}}
                     except Exception as e:
                         resp = {"type": "upload", "data": {"success": False, "message": str(e)}}
@@ -580,8 +658,15 @@ class NodeAgent:
                     resp = {"type": "download", "data": {"success": False, "message": "Access denied"}}
                 elif not safe.exists():
                     resp = {"type": "download", "data": {"success": False, "message": "File not found"}}
+                elif safe.is_symlink():
+                    resp = {"type": "download", "data": {"success": False, "message": "Access denied"}}
                 else:
                     try:
+                        allowed = (BASE_DIR / "data").resolve()
+                        real_resolved = Path(os.path.realpath(str(safe)))
+                        if not (str(real_resolved) == str(allowed) or
+                                str(real_resolved).startswith(str(allowed) + os.sep)):
+                            raise PermissionError("Access denied")
                         with open(safe, "r") as f:
                             content = f.read()
                         resp = {"type": "download", "data": {"success": True, "content": content, "size": len(content)}}

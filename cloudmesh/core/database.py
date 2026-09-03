@@ -1,4 +1,4 @@
-import json, os, tempfile
+import json, os, shlex, tempfile
 from core.ssh_util import run_ssh, run_ssh_with_stdin
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -22,17 +22,17 @@ def _mysql_cmd(user, host, port, password, database, sql):
     if database:
         my_cnf += f"database={database}\n"
     remote_conf = "/tmp/.cm_my.conf"
-    create = f"printf '%s' '{my_cnf}' > {remote_conf} && chmod 600 {remote_conf}"
-    run = f"mysql --defaults-extra-file={remote_conf} -e \"{sql}\" 2>/dev/null"
+    create = f"printf '%s' {shlex.quote(my_cnf)} > {remote_conf} && chmod 600 {remote_conf}"
+    run = f"mysql --defaults-extra-file={remote_conf} -e {shlex.quote(sql)} 2>/dev/null"
     cleanup = f"rm -f {remote_conf}"
     return f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
 
 def _postgres_cmd(user, host, port, password, database, sql):
-    pgpass = f"*:*:*:{user}:{password}"
+    pgpass = shlex.quote(f"*:*:*:{user}:{password}")
     remote_pgpass = "/tmp/.cm_pgpass"
-    create = f"printf '%s' '{pgpass}' > {remote_pgpass} && chmod 600 {remote_pgpass}"
-    db_flag = f"-d {database}" if database else ""
-    run = f"PGPASSFILE={remote_pgpass} psql -U {user} -h {host} -p {port} {db_flag} -c \"{sql}\" 2>/dev/null"
+    create = f"printf '%s' {pgpass} > {remote_pgpass} && chmod 600 {remote_pgpass}"
+    db_flag = f"-d {shlex.quote(database)}" if database else ""
+    run = f"PGPASSFILE={remote_pgpass} psql -U {user} -h {host} -p {port} {db_flag} -c {shlex.quote(sql)} 2>/dev/null"
     cleanup = f"rm -f {remote_pgpass}"
     return f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
 
@@ -104,16 +104,16 @@ def db_backup(server_name, database, backup_path="/tmp", db_type="mysql", host="
         p = port or 3306
         my_cnf = f"[client]\nuser={user}\npassword={password}\nhost={host}\nport={p}\n"
         remote_conf = "/tmp/.cm_my.conf"
-        create = f"printf '%s' '{my_cnf}' > {remote_conf} && chmod 600 {remote_conf}"
-        run = f"mysqldump --defaults-extra-file={remote_conf} {database} > {backup_path}/{filename} 2>/dev/null"
+        create = f"printf '%s' {shlex.quote(my_cnf)} > {remote_conf} && chmod 600 {remote_conf}"
+        run = f"mysqldump --defaults-extra-file={remote_conf} {shlex.quote(database)} > {shlex.quote(backup_path + '/' + filename)} 2>/dev/null"
         cleanup = f"rm -f {remote_conf}"
         cmd = f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
     elif db_type == "postgres":
         p = port or 5432
-        pgpass = f"*:*:*:{user}:{password}"
+        pgpass = shlex.quote(f"*:*:*:{user}:{password}")
         remote_pgpass = "/tmp/.cm_pgpass"
-        create = f"printf '%s' '{pgpass}' > {remote_pgpass} && chmod 600 {remote_pgpass}"
-        run = f"PGPASSFILE={remote_pgpass} pg_dump -U {user} -h {host} -p {p} {database} > {backup_path}/{filename} 2>/dev/null"
+        create = f"printf '%s' {pgpass} > {remote_pgpass} && chmod 600 {remote_pgpass}"
+        run = f"PGPASSFILE={remote_pgpass} pg_dump -U {user} -h {host} -p {p} {shlex.quote(database)} > {shlex.quote(backup_path + '/' + filename)} 2>/dev/null"
         cleanup = f"rm -f {remote_pgpass}"
         cmd = f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
     else:
