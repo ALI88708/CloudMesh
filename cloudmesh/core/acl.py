@@ -8,13 +8,15 @@ except ImportError:
     import hashlib
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-_LOG_FILE = os.path.join(DATA_DIR, "acl_audit.log")
+
+def _log_file():
+    return os.path.join(DATA_DIR, "acl_audit.log")
 
 
 def _log_auth_event(event):
     os.makedirs(DATA_DIR, exist_ok=True)
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    with open(_LOG_FILE, "a") as f:
+    with open(_log_file(), "a") as f:
         f.write(f"[{ts}] {event}\n")
 
 

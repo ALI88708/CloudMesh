@@ -789,14 +789,14 @@ class TestDDoSProtection:
 
 class TestCommandBlocklist:
     def test_destructive_commands_blocked(self):
-        src = open("cloudmesh/node/cloudmesh_node.py").read()
+        src = open(os.path.join(os.path.dirname(__file__), "..", "node", "cloudmesh_node.py")).read()
         assert "rm -rf /" in src
         assert "mkfs" in src
         assert "dd if=" in src
         assert "_command_allowed" in src
 
     def test_validate_mode_whitelist(self):
-        src = open("cloudmesh/node/cloudmesh_node.py").read()
+        src = open(os.path.join(os.path.dirname(__file__), "..", "node", "cloudmesh_node.py")).read()
         assert "_SAFE_MODES = (\"w\", \"a\", \"wb\", \"ab\")" in src
         assert "def _validate_mode" in src
 
