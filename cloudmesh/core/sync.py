@@ -119,7 +119,11 @@ class DirectorySync:
         import shutil
         tmp_dir = tempfile.mkdtemp(prefix="cloudmesh_sync_")
         try:
-            self.sync_from(from_server, remote_from, tmp_dir)
+            source_results = self.sync_from(from_server, remote_from, tmp_dir)
+            if not source_results:
+                return [{"success": False, "error": "No files found to sync from source"}]
+            if any(not result.get("success", False) for result in source_results):
+                return source_results
             return self.sync_to(tmp_dir, to_server, remote_to)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)

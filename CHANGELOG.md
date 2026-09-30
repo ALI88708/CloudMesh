@@ -4,6 +4,14 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [2.1.1] - 2026-09-30
+
+### Fixed
+- Directory sync now stops and reports source listing/download errors instead of treating an empty temporary directory as success.
+- Cancelling an asynchronous node job terminates its process, and the worker preserves the cancelled status.
+- Safe upload append modes preserve existing file contents; write modes continue to truncate.
+- Node clients now read fragmented response-length headers completely and report premature connection closes.
+
 ## [2.1.0] - 2026-09-01
 
 ### Added

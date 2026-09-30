@@ -72,11 +72,13 @@ python -m pytest cloudmesh/tests -q
 
 ## Versioning
 
-CloudMesh follows **Semantic Versioning (SemVer)**:
+CloudMesh follows **Semantic Versioning (SemVer)** with this release policy:
 
-- `MAJOR` (e.g. 3.0.0) — breaking changes only
-- `MINOR` (e.g. 2.1.0) — new features on a stable base
-- `PATCH` (e.g. 2.0.1) — security fixes and small bug fixes
+- `MAJOR` (e.g. 3.0.0) — a major or fundamental update, usually with breaking changes
+- `MINOR` (e.g. 2.2.0) — new features on a stable base
+- `PATCH` (e.g. 2.1.1) — bug fixes and security fixes only
+
+For example, starting from `2.1.0`, a bug-fix release is `2.1.1`, a feature release is `2.2.0`, and a major release is `3.0.0`.
 
 ## Code of Conduct
 
