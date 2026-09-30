@@ -12,3 +12,4 @@ node_keys.json
 service.pid
 service.log
 alerts.json
+.task_queue/

@@ -1853,6 +1853,19 @@ cm node job list -n gpu-1
 cm node job kill -n gpu-1 -j JOB_ID
 ```
 
+### Smart Task Queue
+
+Submit a node job without choosing a node manually:
+
+```bash
+cm queue submit --timeout 3600 "python train.py"
+cm queue status JOB_ID
+cm queue list --refresh
+cm queue cancel JOB_ID
+```
+
+CloudMesh ranks configured nodes by current free CPU and memory, starts the job asynchronously on the best candidate, and saves the controller-side job record under `.task_queue/`. A fallback node is tried only when the client confirms the request was not sent. If the request may have reached a node but its response is lost, the job is marked `unknown` and is not replayed, avoiding duplicate command execution; inspect that node with `cm node job list -n NODE` before manually resubmitting.
+
 ---
 
 ## 34. Command Ledger (Tamper Detection)

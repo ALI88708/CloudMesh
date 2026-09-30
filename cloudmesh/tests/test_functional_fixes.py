@@ -115,7 +115,39 @@ def test_node_client_reports_premature_response_header_close(monkeypatch):
 
     result = NodeClient("localhost")._send({"action": "ping"})
 
-    assert result == {"type": "error", "message": "Incomplete response header"}
+    assert result == {
+        "type": "error",
+        "message": "Incomplete response header",
+        "request_sent": True,
+    }
+
+
+def test_node_client_marks_connection_failure_as_safe_to_retry(monkeypatch):
+    sock = FragmentedSocket(b"")
+
+    def refuse_connection(_address):
+        raise ConnectionRefusedError("offline")
+
+    sock.connect = refuse_connection
+    monkeypatch.setattr("core.node_client.socket.socket", lambda *_: sock)
+
+    result = NodeClient("localhost")._send({"action": "start_job"})
+
+    assert result["type"] == "error"
+    assert result["request_sent"] is False
+
+
+def test_node_client_marks_incomplete_response_body_as_ambiguous(monkeypatch):
+    sock = FragmentedSocket(b"\x00\x00\x00\x05ab")
+    monkeypatch.setattr("core.node_client.socket.socket", lambda *_: sock)
+
+    result = NodeClient("localhost")._send({"action": "start_job"})
+
+    assert result == {
+        "type": "error",
+        "message": "Incomplete response body",
+        "request_sent": True,
+    }
 
 
 def test_cancelled_job_terminates_process_and_keeps_cancelled_status(

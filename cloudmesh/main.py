@@ -8,6 +8,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.text import Text
 from rich import box
 
 from core.security import SecurityManager
@@ -24,6 +25,7 @@ from core.cmdlog import CommandLog
 from core.sync import DirectorySync
 from core.service import ServiceMode
 from core.node_client import NodeClient
+from core.task_queue import SmartTaskQueue
 from core.gpu import GPUTelemetry
 from core.jobs import JobManager
 from core.features import (
@@ -1189,6 +1191,84 @@ def cmd_node_job(args):
             console.print(f"[red]{result}[/]")
 
 
+def cmd_task_queue(args):
+    task_queue = SmartTaskQueue(_load_node_keys())
+    if args.action == "submit":
+        try:
+            job = task_queue.submit(args.job_command, timeout=args.timeout)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/]")
+            sys.exit(2)
+        if job["status"] == "running":
+            console.print(
+                f"[green]Queued job {job['id']} on {job['node']} "
+                f"(node job {job['node_job_id']}).[/]"
+            )
+        elif job["status"] == "unknown":
+            console.print(f"[yellow]Job {job['id']} status is unknown: {job['error']}[/]")
+            sys.exit(1)
+        else:
+            console.print(f"[red]Could not submit job {job['id']}: {job.get('error', 'Unknown error')}[/]")
+            sys.exit(1)
+    elif args.action == "status":
+        job = task_queue.get_job(args.job_id)
+        if job is None:
+            console.print(f"[red]Queued job '{args.job_id}' not found.[/]")
+            sys.exit(1)
+        status = job["status"]
+        status_color = (
+            "green" if status in ("completed", "cancelled")
+            else "red" if status == "failed"
+            else "yellow"
+        )
+        console.print(f"Job [bold]{job['id']}[/]: [{status_color}]{status}[/]")
+        console.print(f"  Node: {job.get('node') or '?'}")
+        if job.get("node_job_id"):
+            console.print(f"  Node job ID: {job['node_job_id']}")
+        console.print(f"  Command: {job.get('command', '?')}")
+        if job.get("exit_code") is not None:
+            console.print(f"  Exit code: {job['exit_code']}")
+        if job.get("stdout"):
+            console.print(f"  stdout: {job['stdout'][:200]}")
+        if job.get("stderr"):
+            console.print(f"  stderr: {job['stderr'][:200]}")
+        if job.get("last_error") or job.get("error"):
+            console.print(Text(
+                f"  Note: {job.get('last_error') or job.get('error')}",
+                style="yellow",
+            ))
+    elif args.action == "list":
+        jobs = task_queue.list_jobs(refresh=args.refresh)
+        if not jobs:
+            console.print("[dim]No queued jobs.[/]")
+            return
+        table = Table(title="Smart Task Queue", box=box.ROUNDED)
+        table.add_column("ID", style="bold")
+        table.add_column("Status")
+        table.add_column("Node")
+        table.add_column("Command")
+        table.add_column("Created")
+        for job in jobs:
+            table.add_row(
+                Text(job["id"], style="bold"),
+                Text(job.get("status", "?")),
+                Text(job.get("node") or "-"),
+                Text(job.get("command", "")[:50]),
+                Text(job.get("created_at", "")[:19]),
+            )
+        console.print(table)
+    elif args.action == "cancel":
+        result = task_queue.cancel(args.job_id)
+        if result is None:
+            console.print(f"[red]Queued job '{args.job_id}' not found.[/]")
+            sys.exit(1)
+        if result["success"]:
+            console.print(f"[green]Job {args.job_id} cancelled.[/]")
+        else:
+            console.print(f"[red]Could not cancel job {args.job_id}: {result['error']}[/]")
+            sys.exit(1)
+
+
 def cmd_node_info(args):
     _, server_mgr, monitor, *_ = init_components()
     name = args.name
@@ -2174,7 +2254,7 @@ _cloudmesh_completions() {{
     COMPREPLY=()
     cur="${{COMP_WORDS[COMP_CWORD]}}"
     prev="${{COMP_WORDS[COMP_CWORD-1]}}"
-    commands="server monitor dashboard run plan transfer sync history deploy alerts group service compare cmdlog slice autosync interactive backup ping uptime top disk network who find logs export import encrypt decrypt speed scan cleanup report alias version doctor update status discover bench schedule notify api panic tripwire weather trust profile audit ssh template map docker firewall ssl logagg reshistory plugins acl webhooks watcher tunnel database node exec keys config completions"
+    commands="server monitor dashboard run plan transfer sync history deploy alerts group service compare cmdlog slice queue autosync interactive backup ping uptime top disk network who find logs export import encrypt decrypt speed scan cleanup report alias version doctor update status discover bench schedule notify api panic tripwire weather trust profile audit ssh template map docker firewall ssl logagg reshistory plugins acl webhooks watcher tunnel database node exec keys config completions"
     if [[ $cur == -* ]]; then
         COMPREPLY=( $(compgen -W "--help --version --json --yes --all --name --nodes --interval --force" -- "$cur") )
     else
@@ -2211,6 +2291,7 @@ _cloudmesh() {{
         'compare:Compare devices'
         'cmdlog:Command log'
         'slice:File distribution'
+        'queue:Resource-aware node job queue'
         'autosync:Auto-sync directories'
         'interactive:Interactive mode'
         'backup:Backup management'
@@ -2279,6 +2360,7 @@ _cloudmesh_args() {{
     case $words[1] in
         server) subcommands='add remove list test info' ;;
         node) subcommands='add remove list test info monitor exec install dashboard gpu job' ;;
+        queue) subcommands='submit status list cancel' ;;
         keys) subcommands='generate list show deploy remove-managed' ;;
         config) subcommands='list export import show' ;;
     esac
@@ -2297,7 +2379,7 @@ _cloudmesh "$@"
     $commands = @(
         "server", "monitor", "dashboard", "run", "plan", "transfer", "sync",
         "history", "deploy", "alerts", "group", "service", "compare", "cmdlog",
-        "slice", "autosync", "interactive", "backup", "ping", "uptime", "top",
+        "slice", "queue", "autosync", "interactive", "backup", "ping", "uptime", "top",
         "disk", "network", "who", "find", "logs", "export", "import", "encrypt",
         "decrypt", "speed", "scan", "cleanup", "report", "alias", "version",
         "doctor", "update", "status", "discover", "bench", "schedule", "notify",
@@ -3020,7 +3102,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.1.1")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.2.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -3170,6 +3252,18 @@ def main():
     jk_p = job_sub.add_parser("kill", help="Kill a job")
     jk_p.add_argument("--name", "-n", required=True)
     jk_p.add_argument("--job-id", "-j", required=True)
+
+    queue_p = subparsers.add_parser("queue", help="Submit and manage resource-aware node jobs")
+    queue_sub = queue_p.add_subparsers(dest="action")
+    queue_submit = queue_sub.add_parser("submit", help="Run a job on the node with the most free resources")
+    queue_submit.add_argument("--timeout", "-t", type=int, default=300)
+    queue_submit.add_argument("job_command")
+    queue_status = queue_sub.add_parser("status", help="Refresh and show a queued job")
+    queue_status.add_argument("job_id")
+    queue_list = queue_sub.add_parser("list", help="List submitted jobs")
+    queue_list.add_argument("--refresh", action="store_true", help="Refresh running job statuses from nodes")
+    queue_cancel = queue_sub.add_parser("cancel", help="Cancel a running queued job")
+    queue_cancel.add_argument("job_id")
 
     sl_p = subparsers.add_parser("slice", help="Slice files across servers by resources")
     sl_p.add_argument("--files", "-f", required=True, help="Comma-separated file list")
@@ -3877,6 +3971,10 @@ def main():
         "compare": lambda: cmd_compare(args),
         "cmdlog": lambda: cmd_cmdlog(args),
         "slice": lambda: cmd_slice(args),
+        "queue": lambda: {
+            "submit": cmd_task_queue, "status": cmd_task_queue,
+            "list": cmd_task_queue, "cancel": cmd_task_queue,
+        }.get(args.action, lambda: queue_p.print_help())(args),
         "autosync": lambda: cmd_autosync(args),
         "interactive": lambda: cmd_interactive(args),
         "backup": lambda: cmd_backup(args),

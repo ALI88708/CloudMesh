@@ -4,6 +4,12 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [2.2.0] - 2026-09-30
+
+### Added
+- **Smart task queue** — `cm queue submit` selects the configured node with the best available CPU and memory resources, tracks remote job status, and supports listing and cancellation.
+- **Safe dispatch failover** — retries another node only when the client can confirm the request was not sent; ambiguous requests are not replayed.
+
 ## [2.1.1] - 2026-09-30
 
 ### Fixed

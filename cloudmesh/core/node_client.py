@@ -68,34 +68,54 @@ class NodeClient:
             time.sleep(spa_delay)
 
         sock = None
+        request_sent = False
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
             sock.connect((self.host, self.port))
             msg = json.dumps(request).encode()
             sock.sendall(len(msg).to_bytes(4, 'big') + msg)
+            request_sent = True
             length_bytes = b""
             while len(length_bytes) < 4:
                 chunk = sock.recv(4 - len(length_bytes))
                 if not chunk:
-                    return {"type": "error", "message": "Incomplete response header"}
+                    return {
+                        "type": "error",
+                        "message": "Incomplete response header",
+                        "request_sent": request_sent,
+                    }
                 length_bytes += chunk
             length = int.from_bytes(length_bytes, 'big')
             data = b""
             while len(data) < length:
                 chunk = sock.recv(min(length - len(data), 65536))
                 if not chunk:
-                    return {"type": "error", "message": "Incomplete response body"}
+                    return {
+                        "type": "error",
+                        "message": "Incomplete response body",
+                        "request_sent": request_sent,
+                    }
                 data += chunk
             return json.loads(data.decode())
         except socket.timeout:
-            return {"type": "error", "message": "Connection timed out"}
+            return {
+                "type": "error",
+                "message": "Connection timed out",
+                "request_sent": request_sent,
+            }
         except ConnectionRefusedError:
             if spa:
-                return {"type": "error", "message": "Connection refused — TCP port may not be open yet (try increasing --spa-delay)"}
-            return {"type": "error", "message": "Connection refused - is the node running?"}
+                message = "Connection refused — TCP port may not be open yet (try increasing --spa-delay)"
+            else:
+                message = "Connection refused - is the node running?"
+            return {"type": "error", "message": message, "request_sent": request_sent}
         except Exception as e:
-            return {"type": "error", "message": str(e)}
+            return {
+                "type": "error",
+                "message": str(e),
+                "request_sent": request_sent,
+            }
         finally:
             if sock:
                 try:
