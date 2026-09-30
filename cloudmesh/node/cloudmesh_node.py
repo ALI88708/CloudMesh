@@ -214,9 +214,12 @@ def _validate_mode(mode):
 
 def _safe_open_write(safe_path, data, mode):
     allowed = (BASE_DIR / "data").resolve()
+    append = mode in ("a", "ab")
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    flags |= os.O_APPEND if append else os.O_TRUNC
     fd = os.open(
         str(safe_path),
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+        flags,
         0o600,
     )
     try:
@@ -224,6 +227,8 @@ def _safe_open_write(safe_path, data, mode):
         if not (str(real) == str(allowed) or str(real).startswith(str(allowed) + os.sep)):
             raise PermissionError("Access denied")
         with os.fdopen(fd, mode) as f:
+            if mode in ("wb", "ab") and isinstance(data, str):
+                data = data.encode()
             f.write(data)
             fd = None
     finally:
@@ -383,6 +388,7 @@ class NodeAgent:
         self.tls_key = tls_key
         self._running = False
         self._jobs = {}
+        self._job_processes = {}
         self._lock = threading.Lock()
         self._load_jobs()
 
@@ -535,24 +541,60 @@ class NodeAgent:
         _log(f"Job {job_id} started: {cmd}")
 
         def run():
+            timed_out = False
             try:
-                kwargs = {"shell": True, "capture_output": True, "text": True, "timeout": timeout}
-                r = subprocess.run(cmd, **kwargs)
-                job["exit_code"] = r.returncode
-                job["stdout"] = r.stdout
-                job["stderr"] = r.stderr
-                job["status"] = "completed" if r.returncode == 0 else "failed"
+                kwargs = {
+                    "shell": True, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE,
+                    "text": True,
+                }
+                if os.name == "nt":
+                    kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                else:
+                    kwargs["start_new_session"] = True
+                with self._lock:
+                    if job["status"] == "cancelled":
+                        return
+                proc = subprocess.Popen(cmd, **kwargs)
+                with self._lock:
+                    self._job_processes[job_id] = proc
+                    cancelled = job["status"] == "cancelled"
+                if cancelled:
+                    self._terminate_job_process(proc)
+                try:
+                    stdout, stderr = proc.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    self._terminate_job_process(proc)
+                    stdout, stderr = proc.communicate()
+                    with self._lock:
+                        if job["status"] != "cancelled":
+                            job["status"] = "failed"
+                            job["stderr"] = "Timeout"
+                            job["exit_code"] = -1
+                            timed_out = True
+                with self._lock:
+                    if job["status"] != "cancelled" and not timed_out:
+                        job["exit_code"] = proc.returncode
+                        job["stdout"] = stdout
+                        job["stderr"] = stderr
+                        job["status"] = "completed" if proc.returncode == 0 else "failed"
             except subprocess.TimeoutExpired:
-                job["status"] = "failed"
-                job["stderr"] = "Timeout"
-                job["exit_code"] = -1
+                with self._lock:
+                    if job["status"] != "cancelled":
+                        job["status"] = "failed"
+                        job["stderr"] = "Timeout"
+                        job["exit_code"] = -1
             except Exception as e:
-                job["status"] = "failed"
-                job["stderr"] = str(e)
-                job["exit_code"] = -1
+                with self._lock:
+                    if job["status"] != "cancelled":
+                        job["status"] = "failed"
+                        job["stderr"] = str(e)
+                        job["exit_code"] = -1
             finally:
-                job["finished_at"] = datetime.now().isoformat()
-                self._save_job(job)
+                with self._lock:
+                    self._job_processes.pop(job_id, None)
+                    if job["status"] != "cancelled":
+                        job["finished_at"] = datetime.now().isoformat()
+                    self._save_job(job)
                 _log(f"Job {job_id} finished: {job['status']}")
 
         threading.Thread(target=run, daemon=True).start()
@@ -569,14 +611,48 @@ class NodeAgent:
     def _handle_kill_job(self, job_id):
         with self._lock:
             job = self._jobs.get(job_id)
-        if not job:
-            return {"error": "Job not found"}
-        if job["status"] == "running":
+            if not job:
+                return {"error": "Job not found"}
+            if job["status"] != "running":
+                return {"success": False, "message": f"Job status: {job['status']}"}
             job["status"] = "cancelled"
             job["finished_at"] = datetime.now().isoformat()
+            proc = self._job_processes.get(job_id)
             self._save_job(job)
-            return {"success": True, "message": f"Job {job_id} cancelled"}
-        return {"success": False, "message": f"Job status: {job['status']}"}
+        if proc is not None:
+            self._terminate_job_process(proc)
+        return {"success": True, "message": f"Job {job_id} cancelled"}
+
+    @staticmethod
+    def _terminate_job_process(proc):
+        if proc.poll() is not None:
+            return
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                os.killpg(proc.pid, signal.SIGTERM)
+        except (OSError, subprocess.SubprocessError):
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        capture_output=True, timeout=10,
+                    )
+                else:
+                    os.killpg(proc.pid, signal.SIGKILL)
+            except (OSError, subprocess.SubprocessError):
+                proc.kill()
 
     def _handle(self, client, addr):
         ip = addr[0]

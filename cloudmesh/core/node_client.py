@@ -74,15 +74,18 @@ class NodeClient:
             sock.connect((self.host, self.port))
             msg = json.dumps(request).encode()
             sock.sendall(len(msg).to_bytes(4, 'big') + msg)
-            length_bytes = sock.recv(4)
-            if not length_bytes or len(length_bytes) < 4:
-                return {"type": "error", "message": "No response from node"}
+            length_bytes = b""
+            while len(length_bytes) < 4:
+                chunk = sock.recv(4 - len(length_bytes))
+                if not chunk:
+                    return {"type": "error", "message": "Incomplete response header"}
+                length_bytes += chunk
             length = int.from_bytes(length_bytes, 'big')
             data = b""
             while len(data) < length:
                 chunk = sock.recv(min(length - len(data), 65536))
                 if not chunk:
-                    break
+                    return {"type": "error", "message": "Incomplete response body"}
                 data += chunk
             return json.loads(data.decode())
         except socket.timeout:
