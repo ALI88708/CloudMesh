@@ -4,7 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#071019">
-    <meta name="description" content="CloudMesh connects servers into one resource pool. Monitor, manage, and distribute workloads from a single terminal.">
+    <meta name="description" content="Connect servers into one resource pool with CloudMesh. Monitor machines, manage nodes, and distribute workloads from a single terminal.">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="CloudMesh — One Console to Control Them All">
+    <meta property="og:description" content="Connect servers into one resource pool. Monitor machines, manage nodes, and distribute workloads from a single terminal.">
+    <meta property="og:image" content="https://raw.githubusercontent.com/ALI88708/CloudMesh/main/1.png">
+    <meta name="twitter:card" content="summary_large_image">
     <title>CloudMesh — One Console to Control Them All</title>
     <link rel="icon" href="./assets/1.ico" sizes="any">
     <link rel="preconnect" href="https://api.github.com">
@@ -13,6 +18,7 @@
     <script src="./app.js" defer></script>
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
     <header class="site-header">
       <a class="brand" href="#home" aria-label="CloudMesh home">
         <img src="./assets/logo.png" alt="" width="42" height="42">
@@ -20,19 +26,20 @@
       </a>
       <nav aria-label="Main navigation">
         <a href="#features">Features</a>
+        <a href="#docs">Docs</a>
         <a href="#releases">Releases</a>
         <a class="nav-github" href="https://github.com/ALI88708/CloudMesh" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
       </nav>
     </header>
 
-    <main id="home">
-      <section class="hero">
+    <main id="main-content">
+      <section class="hero" id="home">
         <div class="hero-copy">
           <p class="eyebrow"><span class="status-dot"></span> OPEN-SOURCE SERVER ORCHESTRATION</p>
           <h1>One console.<br>All your <span class="accent">servers.</span></h1>
           <p class="hero-description">Connect your machines into one resource pool. Monitor, manage, and distribute workloads from a single terminal.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#releases">Explore releases <span aria-hidden="true">↓</span></a>
+            <a class="button button-primary" href="#start">Get started <span aria-hidden="true">↓</span></a>
             <a class="button button-secondary" href="https://github.com/ALI88708/CloudMesh" target="_blank" rel="noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
           </div>
           <div class="hero-facts" aria-label="Project facts">
@@ -44,7 +51,7 @@
         <div class="hero-art" aria-label="CloudMesh network logo">
           <div class="art-glow"></div>
           <img src="./assets/logo.png" alt="CloudMesh network logo" width="512" height="512">
-          <div class="art-caption"><span class="status-dot"></span> SERVER CLUSTER · CONNECTED</div>
+          <div class="art-caption"><span class="status-dot"></span> YOUR FLEET · ONE CONSOLE</div>
         </div>
         <div class="hero-grid" aria-hidden="true"></div>
       </section>
@@ -69,8 +76,76 @@
           <article class="feature-card">
             <span class="feature-icon" aria-hidden="true">⛨</span>
             <h3>Security in mind</h3>
-            <p>Protect node connections with authentication, verified TLS, and configurable safeguards.</p>
+            <p>Use authenticated nodes, optional certificate-verified TLS, and configurable safeguards.</p>
           </article>
+        </div>
+      </section>
+
+      <section class="start-section" id="start">
+        <div class="section-wrap start-layout">
+          <div class="start-copy">
+            <p class="eyebrow"><span class="status-dot"></span> UP AND RUNNING</p>
+            <h2>Start with one <span class="accent">command.</span></h2>
+            <p>Install CloudMesh with Python, then open the built-in command guide. Works on Windows and Linux.</p>
+            <a class="text-link" href="https://github.com/ALI88708/CloudMesh#quick-start" target="_blank" rel="noreferrer">See all installation options <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="terminal-card">
+            <div class="terminal-topbar">
+              <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>QUICK START · PYTHON 3.10+</span>
+            </div>
+            <div class="terminal-command">
+              <code><span aria-hidden="true">$</span> pip install cloudmesh</code>
+              <button class="copy-button" type="button" data-copy="pip install cloudmesh" aria-label="Copy pip install command">Copy</button>
+            </div>
+            <div class="terminal-command terminal-command-secondary">
+              <code><span aria-hidden="true">$</span> cm --help</code>
+            </div>
+            <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="docs-section" id="docs">
+        <div class="section-wrap">
+          <div class="release-heading">
+            <div>
+              <p class="eyebrow">THE PROJECT TOOLKIT</p>
+              <h2>Everything you need <span class="accent">to get started.</span></h2>
+              <p class="release-intro">Guides for getting started, running CloudMesh safely, and helping the project grow.</p>
+            </div>
+            <a class="text-link" href="https://github.com/ALI88708/CloudMesh" target="_blank" rel="noreferrer">Browse the repository <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="docs-grid">
+            <a class="doc-card" href="https://github.com/ALI88708/CloudMesh/blob/main/README.md" target="_blank" rel="noreferrer">
+              <span class="doc-icon" aria-hidden="true">⌘</span>
+              <span class="doc-label">START HERE</span>
+              <strong>README</strong>
+              <span class="doc-description">Installation steps, first commands, architecture, and the full CLI reference.</span>
+              <span class="doc-link">Read the guide <span aria-hidden="true">↗</span></span>
+            </a>
+            <a class="doc-card" href="https://github.com/ALI88708/CloudMesh/blob/main/SECURITY.md" target="_blank" rel="noreferrer">
+              <span class="doc-icon" aria-hidden="true">⛨</span>
+              <span class="doc-label">REPORT RESPONSIBLY</span>
+              <strong>Security</strong>
+              <span class="doc-description">Understand the current security guidance and how to report a vulnerability privately.</span>
+              <span class="doc-link">View security policy <span aria-hidden="true">↗</span></span>
+            </a>
+            <a class="doc-card" href="https://github.com/ALI88708/CloudMesh/blob/main/CONTRIBUTING.md" target="_blank" rel="noreferrer">
+              <span class="doc-icon" aria-hidden="true">⌁</span>
+              <span class="doc-label">BUILD TOGETHER</span>
+              <strong>Contributing</strong>
+              <span class="doc-description">Prepare your environment, run the test suite, and send a focused pull request.</span>
+              <span class="doc-link">How to contribute <span aria-hidden="true">↗</span></span>
+            </a>
+            <a class="doc-card" href="https://github.com/ALI88708/CloudMesh/blob/main/CHANGELOG.md" target="_blank" rel="noreferrer">
+              <span class="doc-icon" aria-hidden="true">↗</span>
+              <span class="doc-label">TRACK THE JOURNEY</span>
+              <strong>Changelog</strong>
+              <span class="doc-description">Browse notable additions, fixes, and changes across published versions.</span>
+              <span class="doc-link">Explore changes <span aria-hidden="true">↗</span></span>
+            </a>
+          </div>
         </div>
       </section>
 
@@ -80,7 +155,7 @@
             <div>
               <p class="eyebrow">WHAT'S NEW</p>
               <h2>Releases <span class="accent"> &amp; downloads.</span></h2>
-              <p class="release-intro">Every published GitHub release appears here automatically, with its release notes and date.</p>
+              <p class="release-intro">Browse version history, read release notes, and open each version’s download page.</p>
             </div>
             <a class="text-link" href="https://github.com/ALI88708/CloudMesh/releases" target="_blank" rel="noreferrer">All GitHub releases <span aria-hidden="true">↗</span></a>
           </div>
@@ -99,7 +174,11 @@
         <span>Cloud<span class="accent">Mesh</span></span>
       </a>
       <p>Made for the machines that keep everything running.</p>
-      <a href="https://github.com/ALI88708/CloudMesh" target="_blank" rel="noreferrer">ALI88708 / CloudMesh <span aria-hidden="true">↗</span></a>
+      <div class="footer-links">
+        <a href="https://github.com/ALI88708/CloudMesh/blob/main/README.md" target="_blank" rel="noreferrer">Docs</a>
+        <a href="https://github.com/ALI88708/CloudMesh/releases" target="_blank" rel="noreferrer">Releases</a>
+        <a href="https://github.com/ALI88708/CloudMesh" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </div>
     </footer>
   </body>
 </html>
