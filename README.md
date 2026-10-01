@@ -18,8 +18,8 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-3.0.2-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-151%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Version](https://img.shields.io/badge/Version-3.1.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-157%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
@@ -31,7 +31,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 <br>
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
-[![Tests](https://img.shields.io/badge/tests-151_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
+[![Tests](https://img.shields.io/badge/tests-157_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/website-GitHub%20Pages-20d7e8?style=flat-square)](https://ALI88708.github.io/CloudMesh/)
 [![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
@@ -169,7 +169,13 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v3.0.2 (Latest)
+### v3.1.0 (Latest)
+
+- **Transactional queue storage:** jobs are stored in SQLite with full synchronous commits and database locking; existing JSON job records are imported automatically on first startup.
+- **Safer queue state:** the SQLite database is created with private POSIX permissions, and malformed legacy job records stop migration with an actionable error instead of being silently lost.
+- Existing queue CLI commands and worker coordination behavior remain unchanged.
+
+### v3.0.2
 
 - **Safer configuration persistence:** encrypted settings and keys are written atomically; backup names are reserved safely during concurrent saves.
 - **Stronger SSH reliability:** remote stdout and stderr are drained concurrently, with clearer exit-status, stderr, and timeout diagnostics.
@@ -714,7 +720,7 @@ cm queue status JOB_ID
 cm queue list --refresh
 cm queue cancel JOB_ID
 ```
-The worker processes higher-priority jobs first, scores available CPU, RAM, and disk headroom, and waits for nodes to meet each job's minimum free-resource thresholds. `--min-cpu-free`, `--min-ram-free`, and `--min-disk-free` control eligibility; `--cpu-claim` (percentage), `--ram-claim` (GB), and `--disk-claim` (GB) separately describe expected per-job reservations deducted from same-pass capacity after dispatch. To preserve legacy behavior, an omitted claim defaults to its corresponding minimum-free threshold, while a specified claim can differ independently. Start one worker in a terminal and submit jobs from another; the worker lock prevents a second coordinator from dispatching the same queue. Use `cm queue worker --once` for a single pass. For controllers sharing a filesystem that supports file locking, set `CLOUDMESH_QUEUE_DIR` to the same queue directory on each controller, or use `--state-dir` consistently on each queue command.
+The worker processes higher-priority jobs first, scores available CPU, RAM, and disk headroom, and waits for nodes to meet each job's minimum free-resource thresholds. Queue records are kept in `.task_queue/queue.sqlite3`; existing JSON records in the selected queue directory are imported automatically at first startup and left in place as migration backups. Stop queue workers before upgrading so a pre-upgrade process cannot write new JSON jobs during migration. `--min-cpu-free`, `--min-ram-free`, and `--min-disk-free` control eligibility; `--cpu-claim` (percentage), `--ram-claim` (GB), and `--disk-claim` (GB) separately describe expected per-job reservations deducted from same-pass capacity after dispatch. To preserve legacy behavior, an omitted claim defaults to its corresponding minimum-free threshold, while a specified claim can differ independently. Start one worker in a terminal and submit jobs from another; the worker lock prevents a second coordinator from dispatching the same queue. Use `cm queue worker --once` for a single pass. For controllers sharing a filesystem that supports SQLite and file locking, set `CLOUDMESH_QUEUE_DIR` to the same queue directory on each controller, or use `--state-dir` consistently on each queue command.
 
 By default, CloudMesh retries only when it can confirm the request was not sent. If a running node becomes unreachable, the job is marked `unknown` after a 30-second grace period and is not replayed. Add `--idempotent` only for commands safe to execute more than once; this permits one automatic retry after the outage grace period. If a job remains `unknown`, check `cm node job list -n NODE` before taking further action.
 

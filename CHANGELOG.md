@@ -4,6 +4,13 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.1.0] - 2026-10-01
+
+### Changed
+- Queue jobs are now stored in a SQLite database with transactional writes and a 30-second busy timeout.
+- Existing JSON queue records are migrated automatically on first startup; legacy files remain available as a migration backup.
+- The database is created with restrictive POSIX permissions, and malformed legacy records stop migration with an explicit error.
+
 ## [3.0.2] - 2026-10-01
 
 ### Added
