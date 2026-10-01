@@ -18,8 +18,8 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-3.0.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-115%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Version](https://img.shields.io/badge/Version-3.0.1-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-118%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
 [![Issues](https://img.shields.io/github/issues/ALI88708/CloudMesh?style=for-the-badge&color=orange)](https://github.com/ALI88708/CloudMesh/issues)
@@ -30,7 +30,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 <br>
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
-[![Tests](https://img.shields.io/badge/tests-115_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
+[![Tests](https://img.shields.io/badge/tests-118_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Lint](https://img.shields.io/badge/linting-ok-green?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
@@ -161,7 +161,13 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v3.0.0 (Latest)
+### v3.0.1 (Latest)
+
+- **Crash-safe state:** queue and node job records are written atomically to avoid partial JSON files after interruption.
+- **Restart recovery:** stale queue dispatches are reconciled by the worker, and node jobs interrupted by an agent restart are reported as `unknown` rather than left misleadingly `running`.
+- Invalid persisted node-job records are reported in the agent log.
+
+### v3.0.0
 
 - **Adaptive scheduling:** rank nodes by CPU, RAM, and disk headroom; jobs can require minimum free resources across all three.
 - **Smart failover:** retry only when a request is known not to have been sent. Running jobs are retried once after an outage only when submitted with `--idempotent`; otherwise they become `unknown` rather than risk duplicate work.

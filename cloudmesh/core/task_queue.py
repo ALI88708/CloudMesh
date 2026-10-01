@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .node_client import NodeClient
+from .node_client import NodeClient, save_private_json
 
 
 class WorkerAlreadyRunningError(RuntimeError):
@@ -43,11 +43,7 @@ class SmartTaskQueue:
         path = self._job_file(job["id"])
         if path is None:
             raise ValueError("Invalid queued job ID")
-        temp_path = path.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(job, indent=2), encoding="utf-8")
-        os.replace(temp_path, path)
-        if os.name != "nt":
-            os.chmod(path, 0o600)
+        save_private_json(path, job)
 
     def _read_job(self, job_id):
         path = self._job_file(job_id)
@@ -215,7 +211,7 @@ class SmartTaskQueue:
 
     def _refresh_running_jobs(self):
         for job in self.list_jobs():
-            if job.get("status") in ("running", "unknown") and job.get("node_job_id"):
+            if job.get("status") in ("dispatching", "running", "unknown"):
                 self.get_job(job["id"])
 
     def _dispatch(self, job, ranked, capacity):

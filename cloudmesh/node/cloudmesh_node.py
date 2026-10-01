@@ -12,6 +12,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -514,15 +515,38 @@ class NodeAgent:
         JOBS_DIR.mkdir(parents=True, exist_ok=True)
         for f in JOBS_DIR.glob("*.json"):
             try:
-                job = json.loads(f.read_text())
+                job = json.loads(f.read_text(encoding="utf-8"))
+                if not isinstance(job, dict) or not isinstance(job.get("id"), str):
+                    raise ValueError("Persisted job must contain a string ID")
+                if job.get("status") == "running":
+                    job["status"] = "unknown"
+                    job["stderr"] = (
+                        "The node agent restarted while this job was running; "
+                        "its final outcome could not be confirmed."
+                    )
+                    self._save_job(job)
                 self._jobs[job["id"]] = job
-            except Exception:
-                pass
+            except (OSError, UnicodeError, ValueError) as exc:
+                _log(f"Could not load persisted job {f.name}: {exc}")
 
     def _save_job(self, job):
         JOBS_DIR.mkdir(parents=True, exist_ok=True)
         path = JOBS_DIR / f"{job['id']}.json"
-        path.write_text(json.dumps(job, indent=2))
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=JOBS_DIR
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as job_file:
+                json.dump(job, job_file, indent=2)
+            os.replace(temporary_path, path)
+            if os.name != "nt":
+                path.chmod(0o600)
+        finally:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def _recv_msg(self, sock, max_size=50 * 1024 * 1024):
         header_timeout = 10

@@ -289,6 +289,23 @@ def test_queue_directory_can_be_configured_by_environment(tmp_path, monkeypatch)
     assert shared_queue.is_dir()
 
 
+def test_worker_recovers_stale_dispatching_jobs(tmp_path):
+    queue = make_queue(tmp_path, {})
+    job = queue.submit("python interrupted.py")
+    job["status"] = "dispatching"
+    job["node"] = "node-that-may-have-accepted"
+    job["dispatch_started_at"] = (
+        datetime.now() - timedelta(seconds=61)
+    ).isoformat()
+    queue._save_job(job)
+
+    queue.process_once()
+
+    recovered = queue.get_job(job["id"], refresh=False)
+    assert recovered["status"] == "unknown"
+    assert "may have received the job" in recovered["error"]
+
+
 def test_status_refreshes_remote_job_and_cancel_updates_local_record(tmp_path):
     client = FakeNodeClient(
         metrics(20, 20),

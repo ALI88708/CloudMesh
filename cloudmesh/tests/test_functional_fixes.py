@@ -191,6 +191,48 @@ def test_node_identity_is_created_once_and_persisted(tmp_path, monkeypatch):
     assert identity_file.read_text(encoding="utf-8") == first
 
 
+def test_node_agent_marks_running_jobs_unknown_after_restart(tmp_path, monkeypatch):
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    (jobs_dir / "running-job.json").write_text(
+        json.dumps({"id": "running-job", "status": "running"}),
+        encoding="utf-8",
+    )
+    (jobs_dir / "finished-job.json").write_text(
+        json.dumps({"id": "finished-job", "status": "completed"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cloudmesh_node, "JOBS_DIR", jobs_dir)
+    agent = cloudmesh_node.NodeAgent.__new__(cloudmesh_node.NodeAgent)
+    agent._jobs = {}
+
+    agent._load_jobs()
+
+    assert agent._jobs["running-job"]["status"] == "unknown"
+    assert "restarted" in agent._jobs["running-job"]["stderr"]
+    assert agent._jobs["finished-job"]["status"] == "completed"
+    assert json.loads(
+        (jobs_dir / "running-job.json").read_text(encoding="utf-8")
+    )["status"] == "unknown"
+
+
+def test_node_agent_logs_and_skips_malformed_persisted_job(tmp_path, monkeypatch):
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    (jobs_dir / "malformed.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(cloudmesh_node, "JOBS_DIR", jobs_dir)
+    messages = []
+    monkeypatch.setattr(cloudmesh_node, "_log", messages.append)
+    agent = cloudmesh_node.NodeAgent.__new__(cloudmesh_node.NodeAgent)
+    agent._jobs = {}
+
+    agent._load_jobs()
+
+    assert agent._jobs == {}
+    assert len(messages) == 1
+    assert "malformed.json" in messages[0]
+
+
 def test_node_metrics_are_cached_and_return_independent_snapshots(monkeypatch):
     calls = []
     monkeypatch.setattr(cloudmesh_node, "_METRICS_CACHE", None)
