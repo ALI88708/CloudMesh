@@ -63,6 +63,30 @@ def test_test_command_keeps_existing_connection_test_behavior(monkeypatch):
     assert calls == ["edge"]
 
 
+@pytest.mark.parametrize("detected_os", ["linux", "windows", "unknown"])
+def test_server_test_reports_os_detection_result(monkeypatch, capsys, detected_os):
+    class ServerManagerStub:
+        def test_connection(self, name):
+            return True, "Connection successful"
+
+        def detect_os(self, name):
+            return detected_os
+
+        def get_server_info(self, name):
+            return {"os_type": "stale"}
+
+    monkeypatch.setattr(
+        cloudmesh_main, "init_components", lambda: (None, ServerManagerStub())
+    )
+
+    cloudmesh_main.cmd_server_test(argparse.Namespace(name="edge"))
+
+    output = capsys.readouterr().out
+    assert "Connection successful" in output
+    assert f"Detected OS: {detected_os}" in output
+    assert "Detected OS: stale" not in output
+
+
 def test_coverage_option_requires_suite():
     with pytest.raises(SystemExit) as exc_info:
         cloudmesh_main.cmd_test(
@@ -145,5 +169,52 @@ def test_queue_submit_help_exposes_major_release_options(monkeypatch, capsys):
     help_text = capsys.readouterr().out
     assert exc_info.value.code == 0
     assert "--min-disk-free" in help_text
+    assert "--cpu-claim" in help_text
+    assert "--ram-claim" in help_text
+    assert "--disk-claim" in help_text
     assert "--idempotent" in help_text
     assert "--state-dir" in help_text
+
+
+def test_queue_submit_forwards_resource_claim_flags(monkeypatch, capsys):
+    calls = []
+
+    class FakeQueue:
+        def __init__(self, nodes, queue_dir=None):
+            pass
+
+        def submit(self, command, **kwargs):
+            calls.append((command, kwargs))
+            return {"id": "0123456789ab", "priority": 0, "status": "queued"}
+
+    monkeypatch.setattr(cloudmesh_main, "SmartTaskQueue", FakeQueue)
+    monkeypatch.setattr(cloudmesh_main, "_load_node_keys", lambda: {})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "cloudmesh", "queue", "submit", "--min-ram-free", "12",
+            "--cpu-claim", "35", "--ram-claim", "4", "--disk-claim", "15",
+            "echo test",
+        ],
+    )
+
+    cloudmesh_main.main()
+
+    assert calls == [
+        (
+            "echo test",
+            {
+                "timeout": 300,
+                "priority": 0,
+                "min_cpu_free_percent": 0,
+                "min_ram_free_gb": 12,
+                "min_disk_free_gb": 0,
+                "cpu_claim_percent": 35,
+                "ram_claim_gb": 4,
+                "disk_claim_gb": 15,
+                "idempotent": False,
+            },
+        )
+    ]
+    capsys.readouterr()

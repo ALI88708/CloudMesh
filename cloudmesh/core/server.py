@@ -1,6 +1,7 @@
 import paramiko
 import os
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 
 class ServerManager:
@@ -100,9 +101,12 @@ class ServerManager:
     def execute(self, name, command):
         client = self.connect(name)
         stdin, stdout, stderr = client.exec_command(command)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            stdout_future = executor.submit(stdout.read)
+            stderr_future = executor.submit(stderr.read)
+            out = stdout_future.result().decode().strip()
+            err = stderr_future.result().decode().strip()
         exit_code = stdout.channel.recv_exit_status()
-        out = stdout.read().decode().strip()
-        err = stderr.read().decode().strip()
         return {"exit_code": exit_code, "stdout": out, "stderr": err}
 
     def test_connection(self, name):

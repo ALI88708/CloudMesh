@@ -164,7 +164,9 @@ class SmartTaskQueue:
 
     def submit(self, command, timeout=300, priority=0,
                min_cpu_free_percent=0, min_ram_free_gb=0,
-               min_disk_free_gb=0, idempotent=False):
+               min_disk_free_gb=0, idempotent=False,
+               cpu_claim_percent=None, ram_claim_gb=None,
+               disk_claim_gb=None):
         if not isinstance(command, str) or not command.strip():
             raise ValueError("A non-empty command is required")
         if not isinstance(timeout, int) or timeout <= 0:
@@ -182,6 +184,14 @@ class SmartTaskQueue:
         min_disk_free_gb = self._finite_nonnegative(
             min_disk_free_gb, "Minimum free disk"
         )
+        if cpu_claim_percent is not None:
+            cpu_claim_percent = self._finite_nonnegative(
+                cpu_claim_percent, "CPU claim", maximum=100
+            )
+        if ram_claim_gb is not None:
+            ram_claim_gb = self._finite_nonnegative(ram_claim_gb, "RAM claim")
+        if disk_claim_gb is not None:
+            disk_claim_gb = self._finite_nonnegative(disk_claim_gb, "Disk claim")
 
         job_id = uuid.uuid4().hex[:12]
         job = {
@@ -198,6 +208,9 @@ class SmartTaskQueue:
                 "min_cpu_free_percent": min_cpu_free_percent,
                 "min_ram_free_gb": min_ram_free_gb,
                 "min_disk_free_gb": min_disk_free_gb,
+                "cpu_claim_percent": cpu_claim_percent,
+                "ram_claim_gb": ram_claim_gb,
+                "disk_claim_gb": disk_claim_gb,
             },
             "created_at": datetime.now().isoformat(),
             "attempts": [],
@@ -214,25 +227,36 @@ class SmartTaskQueue:
             if job.get("status") in ("dispatching", "running", "unknown"):
                 self.get_job(job["id"])
 
+    @staticmethod
+    def _capacity_satisfies(available, minimum, claim):
+        if available is None:
+            return minimum == 0 and claim == 0
+        return available >= minimum and available >= claim
+
     def _dispatch(self, job, ranked, capacity):
         requirements = job.get("requirements", {})
         min_cpu = requirements.get("min_cpu_free_percent", 0)
         min_ram = requirements.get("min_ram_free_gb", 0)
         min_disk = requirements.get("min_disk_free_gb", 0)
+        cpu_claim = requirements.get("cpu_claim_percent")
+        ram_claim = requirements.get("ram_claim_gb")
+        disk_claim = requirements.get("disk_claim_gb")
+        # Missing claims inherit the eligibility thresholds for compatibility
+        # with jobs submitted before claims were introduced.
+        cpu_claim = min_cpu if cpu_claim is None else cpu_claim
+        ram_claim = min_ram if ram_claim is None else ram_claim
+        disk_claim = min_disk if disk_claim is None else disk_claim
         candidates = [
             entry for entry in ranked
-            if (
-                capacity[entry[1]]["cpu_free_percent"] is not None
-                and capacity[entry[1]]["cpu_free_percent"] >= min_cpu
-                or capacity[entry[1]]["cpu_free_percent"] is None
-                and min_cpu == 0
+            if self._capacity_satisfies(
+                capacity[entry[1]]["cpu_free_percent"], min_cpu, cpu_claim
             )
-            and (capacity[entry[1]]["ram_free_gb"] is None
-                 or capacity[entry[1]]["ram_free_gb"] >= min_ram)
-            and (capacity[entry[1]]["ram_free_gb"] is not None or min_ram == 0)
-            and (capacity[entry[1]]["disk_free_gb"] is None
-                 or capacity[entry[1]]["disk_free_gb"] >= min_disk)
-            and (capacity[entry[1]]["disk_free_gb"] is not None or min_disk == 0)
+            and self._capacity_satisfies(
+                capacity[entry[1]]["ram_free_gb"], min_ram, ram_claim
+            )
+            and self._capacity_satisfies(
+                capacity[entry[1]]["disk_free_gb"], min_disk, disk_claim
+            )
         ]
         previous_node = job.get("last_node")
         alternative_nodes = [
@@ -270,15 +294,15 @@ class SmartTaskQueue:
                 job["attempts"].append({"node": name, "status": "accepted"})
                 if capacity[name]["cpu_free_percent"] is not None:
                     capacity[name]["cpu_free_percent"] = max(
-                        0, capacity[name]["cpu_free_percent"] - min_cpu
+                        0, capacity[name]["cpu_free_percent"] - cpu_claim
                     )
                 if capacity[name]["ram_free_gb"] is not None:
                     capacity[name]["ram_free_gb"] = max(
-                        0, capacity[name]["ram_free_gb"] - min_ram
+                        0, capacity[name]["ram_free_gb"] - ram_claim
                     )
                 if capacity[name]["disk_free_gb"] is not None:
                     capacity[name]["disk_free_gb"] = max(
-                        0, capacity[name]["disk_free_gb"] - min_disk
+                        0, capacity[name]["disk_free_gb"] - disk_claim
                     )
                 job.pop("last_error", None)
                 job.pop("error", None)

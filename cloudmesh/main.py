@@ -109,7 +109,8 @@ COMPLETION_OPTIONS = {
     "server test": ("--name", "-n"),
     "server info": ("--name", "-n"),
     "queue submit": ("--timeout", "-t", "--priority", "-p", "--min-cpu-free",
-                     "--min-ram-free", "--min-disk-free", "--idempotent",
+                     "--min-ram-free", "--min-disk-free", "--cpu-claim",
+                     "--ram-claim", "--disk-claim", "--idempotent",
                      "--state-dir", "--help", "-h"),
     "queue list": ("--refresh", "--state-dir", "--help", "-h"),
     "queue worker": ("--interval", "-i", "--once", "--state-dir", "--help", "-h"),
@@ -680,9 +681,8 @@ def cmd_server_test(args):
     success, msg = server_mgr.test_connection(args.name)
     if success:
         console.print(f"[green]{msg}[/]")
-        server_mgr.detect_os(args.name)
-        info = server_mgr.get_server_info(args.name)
-        console.print(f"[green]Detected OS: {info.get('os_type', 'unknown')}[/]")
+        os_type = server_mgr.detect_os(args.name)
+        console.print(f"[green]Detected OS: {os_type}[/]")
     else:
         console.print(f"[red]{msg}[/]")
         sys.exit(1)
@@ -1324,6 +1324,9 @@ def cmd_task_queue(args):
                 min_cpu_free_percent=args.min_cpu_free,
                 min_ram_free_gb=args.min_ram_free,
                 min_disk_free_gb=args.min_disk_free,
+                cpu_claim_percent=getattr(args, "cpu_claim", None),
+                ram_claim_gb=getattr(args, "ram_claim", None),
+                disk_claim_gb=getattr(args, "disk_claim", None),
                 idempotent=args.idempotent,
             )
         except ValueError as exc:
@@ -3396,7 +3399,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 3.0.1")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 3.0.2")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -3562,6 +3565,12 @@ def main():
                               help="Minimum free RAM in GB required by the job")
     queue_submit.add_argument("--min-disk-free", type=float, default=0,
                               help="Minimum free disk in GB required by the job")
+    queue_submit.add_argument("--cpu-claim", type=float,
+                              help="Expected CPU reservation as a percentage")
+    queue_submit.add_argument("--ram-claim", type=float,
+                              help="Expected RAM reservation in GB")
+    queue_submit.add_argument("--disk-claim", type=float,
+                              help="Expected disk reservation in GB")
     queue_submit.add_argument(
         "--idempotent", action="store_true",
         help="Allow one automatic retry if the assigned node becomes unreachable",

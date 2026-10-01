@@ -216,6 +216,59 @@ def test_node_agent_marks_running_jobs_unknown_after_restart(tmp_path, monkeypat
     )["status"] == "unknown"
 
 
+@pytest.mark.parametrize(
+    ("tls_cert", "tls_key"),
+    [("server.pem", None), (None, "server-key.pem")],
+)
+def test_node_agent_rejects_partial_tls_configuration(
+    tmp_path, monkeypatch, tls_cert, tls_key
+):
+    monkeypatch.setattr(cloudmesh_node, "JOBS_DIR", tmp_path / "jobs")
+
+    with pytest.raises(ValueError, match="--tls-cert and --tls-key"):
+        cloudmesh_node.NodeAgent(tls_cert=tls_cert, tls_key=tls_key)
+
+
+@pytest.mark.parametrize(
+    ("tls_cert", "tls_key"),
+    [(None, None), ("server.pem", "server-key.pem")],
+)
+def test_node_agent_accepts_disabled_or_complete_tls_configuration(
+    tmp_path, monkeypatch, tls_cert, tls_key
+):
+    monkeypatch.setattr(cloudmesh_node, "JOBS_DIR", tmp_path / "jobs")
+
+    agent = cloudmesh_node.NodeAgent(
+        auth_key="test-key",
+        tls_cert=tls_cert,
+        tls_key=tls_key,
+    )
+
+    assert agent.tls_cert == tls_cert
+    assert agent.tls_key == tls_key
+
+
+@pytest.mark.parametrize(
+    ("arguments", "missing_option"),
+    [
+        (["start", "--tls-cert", "server.pem"], "--tls-key"),
+        (["start", "--tls-key", "server-key.pem"], "--tls-cert"),
+    ],
+)
+def test_node_agent_cli_reports_partial_tls_configuration(
+    monkeypatch, capsys, arguments, missing_option
+):
+    monkeypatch.setattr(sys, "argv", ["cloudmesh_node.py", *arguments])
+
+    with pytest.raises(SystemExit) as exc:
+        cloudmesh_node.main()
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert "must be supplied together" in captured.err
+    assert missing_option in captured.err
+
+
 def test_node_agent_logs_and_skips_malformed_persisted_job(tmp_path, monkeypatch):
     jobs_dir = tmp_path / "jobs"
     jobs_dir.mkdir()
