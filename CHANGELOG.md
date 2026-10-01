@@ -4,6 +4,13 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [2.3.1] - 2026-10-01
+
+### Fixed
+- Shell completions now suggest nested commands and context-appropriate options in Bash, Zsh, and PowerShell.
+- Fixed Zsh subcommand completion using the wrong command-line word position.
+- Generated shell scripts use Unix line endings so Bash can source them on Windows.
+
 ## [2.3.0] - 2026-10-01
 
 ### Added

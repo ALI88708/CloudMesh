@@ -49,6 +49,85 @@ console = Console()
 
 NODE_KEYS_FILE = Path(__file__).parent / ".node_keys.json"
 
+COMPLETION_COMMANDS = (
+    "server monitor dashboard run plan transfer sync history deploy alerts group "
+    "service compare cmdlog slice queue autosync interactive backup ping uptime top "
+    "disk network who find logs export import encrypt decrypt speed scan cleanup report "
+    "alias version doctor update status discover bench schedule notify api panic tripwire "
+    "weather trust profile audit ssh template map docker firewall ssl logagg reshistory "
+    "plugins acl webhooks watcher tunnel database node exec watch keys config completions "
+    "tw triw"
+).split()
+
+COMPLETION_SUBCOMMANDS = {
+    "server": ("add", "remove", "list", "test", "info"),
+    "group": ("list", "create", "delete", "add", "remove", "run"),
+    "service": ("start", "stop", "status", "logs"),
+    "node": ("add", "remove", "list", "test", "info", "monitor", "exec",
+             "install", "dashboard", "gpu", "job"),
+    "node job": ("start", "status", "list", "kill", "checkpoint", "recover", "checkpoints"),
+    "queue": ("submit", "status", "list", "cancel", "worker"),
+    "keys": ("generate", "list", "show", "deploy", "remove-managed"),
+    "config": ("list", "export", "import", "show"),
+    "completions": ("bash", "zsh", "powershell"),
+    "schedule": ("add", "remove", "list", "toggle"),
+    "notify": ("setup-telegram", "setup-discord", "send", "status"),
+    "panic": ("setup", "execute", "shares", "rotate", "retry-pending"),
+    "tripwire": ("plant", "list", "remove", "check"),
+    "tw": ("plant", "list", "remove", "check"),
+    "triw": ("plant", "list", "remove", "check"),
+    "docker": ("list-servers", "containers", "compose", "stats", "images",
+               "pull", "exec", "logs", "cleanup", "prune"),
+    "firewall": ("list-rules", "add-rule", "remove-rule", "status",
+                 "check-port", "backup", "load"),
+    "ssl": ("check", "check-all", "domains", "add", "remove", "history", "renew-check"),
+    "logagg": ("add-source", "sources", "search", "filter", "subscribe", "stats", "clear"),
+    "reshistory": ("snapshot", "show", "summary", "clear", "auto"),
+    "reshistory auto": ("start", "stop", "status"),
+    "plugins": ("list", "add", "remove", "run", "import", "export"),
+    "webhooks": ("list", "add", "remove", "test", "log", "send", "enable-all", "disable-all"),
+    "watcher": ("list", "add", "remove", "check", "check-status", "alerts"),
+    "tunnel": ("list", "add", "remove", "start", "stop", "stop-all", "status", "quick"),
+    "database": ("list", "status", "query", "backup"),
+    "acl": ("users", "add-user", "remove-user", "set-role", "enable", "disable",
+            "roles", "add-role", "remove-role"),
+}
+
+COMPLETION_OPTIONS = {
+    "": ("--help", "-h", "--version", "-V"),
+    "monitor": ("--name", "-n", "--local", "-l"),
+    "dashboard": ("--live", "-l", "--interval", "-i"),
+    "watch": ("--interval", "-i"),
+    "run": ("--best", "-b", "--servers", "-s"),
+    "exec": ("--name", "-n", "--nodes", "--all", "--json", "-j"),
+    "backup": ("--restore",),
+    "server add": ("--name", "-n", "--host", "-H", "--user", "-u",
+                   "--port", "-p", "--key", "-k", "--password"),
+    "server remove": ("--name", "-n"),
+    "server test": ("--name", "-n"),
+    "server info": ("--name", "-n"),
+    "queue submit": ("--timeout", "-t", "--priority", "-p", "--min-cpu-free",
+                     "--min-ram-free", "--help", "-h"),
+    "queue list": ("--refresh", "--help", "-h"),
+    "queue worker": ("--interval", "-i", "--once", "--help", "-h"),
+    "node add": ("--name", "-n", "--host", "-H", "--port", "-p", "--auth-key", "-k"),
+    "node job start": ("--name", "-n", "--timeout", "-t"),
+    "node job status": ("--name", "-n", "--job-id", "-j"),
+    "node job list": ("--name", "-n"),
+    "node job kill": ("--name", "-n", "--job-id", "-j"),
+    "node job checkpoint": ("--name", "-n", "--job-id", "-j"),
+    "node job recover": ("--relaunch", "--target", "-t"),
+    "keys generate": ("--name", "-n", "--bits", "-b", "--passphrase", "-p",
+                      "--force", "-f"),
+    "keys deploy": ("--server", "-s"),
+    "keys remove-managed": ("--name", "-n"),
+    "config export": ("--output", "-o"),
+    "completions": ("--shell", "-s", "--output", "-o"),
+    "service start": ("--interval", "-i"),
+    "service logs": ("--limit", "-l"),
+    "reshistory auto start": ("--interval", "-i"),
+}
+
 
 def cmd_docker(args):
     from core.docker import DockerManager
@@ -2282,34 +2361,84 @@ def cmd_config(args):
 
 def cmd_completions(args):
     shell = args.shell or "bash"
-    cm_path = Path(__file__).parent.parent / "cm.bat"
-    if not cm_path.exists():
-        cm_path = Path(__file__).parent.parent / "cm"
+    contexts = set(COMPLETION_SUBCOMMANDS) | set(COMPLETION_OPTIONS)
+
+    def render_cases(mapping, quote, use_array):
+        lines = []
+        for context, values in mapping.items():
+            pattern = quote(context) if context else '""'
+            joined = " ".join(values)
+            assignment = (
+                f"candidates=({joined})"
+                if use_array
+                else f'candidates="{joined}"'
+            )
+            lines.append(f"        {pattern}) {assignment} ;;")
+        return "\n".join(lines)
+
+    def render_powershell_map(mapping):
+        entries = []
+        for context, values in mapping.items():
+            formatted_values = ", ".join(f'"{value}"' for value in values)
+            entries.append(f'    "{context}" = @({formatted_values})')
+        return "\n".join(entries)
 
     if shell == "bash":
+        context_patterns = "|".join(
+            shlex.quote(context) for context in sorted(contexts)
+        )
+        subcommand_cases = render_cases(
+            {"": COMPLETION_COMMANDS, **COMPLETION_SUBCOMMANDS}, shlex.quote, False
+        )
+        option_cases = render_cases(COMPLETION_OPTIONS, shlex.quote, False)
         script = f'''#!/bin/bash
 _cloudmesh_completions() {{
-    local cur prev commands
+    local cur context candidate token candidates i
     COMPREPLY=()
     cur="${{COMP_WORDS[COMP_CWORD]}}"
-    prev="${{COMP_WORDS[COMP_CWORD-1]}}"
-    commands="server monitor dashboard run plan transfer sync history deploy alerts group service compare cmdlog slice queue autosync interactive backup ping uptime top disk network who find logs export import encrypt decrypt speed scan cleanup report alias version doctor update status discover bench schedule notify api panic tripwire weather trust profile audit ssh template map docker firewall ssl logagg reshistory plugins acl webhooks watcher tunnel database node exec keys config completions"
-    if [[ $cur == -* ]]; then
-        COMPREPLY=( $(compgen -W "--help --version --json --yes --all --name --nodes --interval --force" -- "$cur") )
+    context=""
+    for ((i=1; i<COMP_CWORD; i++)); do
+        token="${{COMP_WORDS[i]}}"
+        [[ "$token" == -* ]] && continue
+        candidate="${{context:+$context }}$token"
+        case "$candidate" in
+            {context_patterns}) context="$candidate" ;;
+        esac
+    done
+    if [[ "$cur" == -* ]]; then
+        case "$context" in
+{option_cases}
+            *) candidates="--help -h" ;;
+        esac
     else
-        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+        case "$context" in
+{subcommand_cases}
+            *) candidates="" ;;
+        esac
     fi
+    COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
     return 0
 }}
 complete -F _cloudmesh_completions cm 2>/dev/null
 complete -F _cloudmesh_completions cloudmesh 2>/dev/null
 '''
         out_path = Path(args.output) if args.output else Path("cloudmesh-completions.bash")
-        out_path.write_text(script)
+        out_path.write_text(script, encoding="utf-8", newline="\n")
         console.print(f"[green]Bash completions saved to {out_path}[/]")
         console.print(f"[dim]Source it: source {out_path}[/]")
 
     elif shell == "zsh":
+        context_patterns = "|".join(
+            f'"{context}"' for context in sorted(contexts)
+        )
+        subcommand_cases = render_cases(
+            {"": COMPLETION_COMMANDS, **COMPLETION_SUBCOMMANDS},
+            lambda value: f'"{value}"',
+            True,
+        )
+        option_cases = render_cases(
+            COMPLETION_OPTIONS, lambda value: f'"{value}"', True
+        )
         script = f'''#compdef cm cloudmesh
 
 _cloudmesh() {{
@@ -2334,6 +2463,7 @@ _cloudmesh() {{
         'autosync:Auto-sync directories'
         'interactive:Interactive mode'
         'backup:Backup management'
+        'watch:Real-time monitoring dashboard'
         'ping:Ping all servers'
         'uptime:Show uptime'
         'top:Top processes'
@@ -2362,6 +2492,8 @@ _cloudmesh() {{
         'api:REST API server'
         'panic:Emergency key rotate'
         'tripwire:Tripwire keys'
+        'tw:Tripwire key alias'
+        'triw:Tripwire key alias'
         'weather:Resource forecast'
         'trust:Distributed trust'
         'profile:Config profiles'
@@ -2395,44 +2527,86 @@ _cloudmesh() {{
     esac
 }}
 _cloudmesh_args() {{
-    local -a subcommands
-    case $words[1] in
-        server) subcommands='add remove list test info' ;;
-        node) subcommands='add remove list test info monitor exec install dashboard gpu job' ;;
-        queue) subcommands='submit status list cancel worker' ;;
-        keys) subcommands='generate list show deploy remove-managed' ;;
-        config) subcommands='list export import show' ;;
-    esac
-    _describe 'subcommand' subcommands
+    local context="" candidate token cur i
+    local -a candidates
+    cur="${{words[CURRENT]}}"
+    for ((i=2; i<CURRENT; i++)); do
+        token="${{words[i]}}"
+        [[ "$token" == -* ]] && continue
+        candidate="${{context:+$context }}$token"
+        case "$candidate" in
+            {context_patterns}) context="$candidate" ;;
+        esac
+    done
+    if [[ "$cur" == -* ]]; then
+        case "$context" in
+{option_cases}
+            *) candidates=(--help -h) ;;
+        esac
+    else
+        case "$context" in
+{subcommand_cases}
+            *) candidates=() ;;
+        esac
+    fi
+    (( ${{#candidates}} )) && compadd -- "${{candidates[@]}}"
+    return 0
 }}
 _cloudmesh "$@"
 '''
         out_path = Path(args.output) if args.output else Path("cloudmesh-completions.zsh")
-        out_path.write_text(script)
+        out_path.write_text(script, encoding="utf-8", newline="\n")
         console.print(f"[green]Zsh completions saved to {out_path}[/]")
         console.print(f"[dim]Source it: source {out_path}[/]")
 
     elif shell == "powershell":
-        script = '''Register-ArgumentCompleter -Native -CommandName cm -ScriptBlock {
+        powershell_subcommands = render_powershell_map(COMPLETION_SUBCOMMANDS)
+        powershell_options = render_powershell_map(COMPLETION_OPTIONS)
+        powershell_commands = ", ".join(
+            f'"{command}"' for command in COMPLETION_COMMANDS
+        )
+        powershell_contexts = ", ".join(
+            f'"{context}"' for context in sorted(contexts)
+        )
+        script = f'''Register-ArgumentCompleter -Native -CommandName cm, cloudmesh -ScriptBlock {{
     param($wordToComplete, $commandAst, $cursorPosition)
-    $commands = @(
-        "server", "monitor", "dashboard", "run", "plan", "transfer", "sync",
-        "history", "deploy", "alerts", "group", "service", "compare", "cmdlog",
-        "slice", "queue", "autosync", "interactive", "backup", "ping", "uptime", "top",
-        "disk", "network", "who", "find", "logs", "export", "import", "encrypt",
-        "decrypt", "speed", "scan", "cleanup", "report", "alias", "version",
-        "doctor", "update", "status", "discover", "bench", "schedule", "notify",
-        "api", "panic", "tripwire", "weather", "trust", "profile", "audit",
-        "ssh", "template", "map", "docker", "firewall", "ssl", "logagg",
-        "reshistory", "plugins", "acl", "webhooks", "watcher", "tunnel",
-        "database", "node", "exec", "keys", "config", "completions"
-    )
-    $commands | Where-Object { $_ -like "$wordToComplete*" } |
-        ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
-}
+    $commands = @({powershell_commands})
+    $subcommands = @{{
+{powershell_subcommands}
+    }}
+    $options = @{{
+{powershell_options}
+    }}
+    $knownContexts = @({powershell_contexts})
+    $parts = @($commandAst.CommandElements | ForEach-Object {{
+        $_.Extent.Text.Trim([char[]]@([char]34, [char]39))
+    }})
+    if ($parts.Count -gt 0 -and $parts[0] -in @("cm", "cloudmesh")) {{
+        $parts = @($parts | Select-Object -Skip 1)
+    }}
+    if ($wordToComplete -and $parts.Count -gt 0 -and $parts[-1] -eq $wordToComplete) {{
+        $parts = @($parts | Select-Object -First ($parts.Count - 1))
+    }}
+    $context = ""
+    foreach ($part in $parts) {{
+        if ($part.StartsWith("-")) {{ continue }}
+        $candidate = if ($context) {{ "$context $part" }} else {{ $part }}
+        if ($candidate -in $knownContexts) {{ $context = $candidate }}
+    }}
+    if ($wordToComplete.StartsWith("-")) {{
+        $candidates = $options[$context]
+        if (-not $candidates) {{ $candidates = @("--help", "-h") }}
+    }} elseif ($context) {{
+        $candidates = $subcommands[$context]
+    }} else {{
+        $candidates = $commands
+    }}
+    $candidates | Where-Object {{ $_ -like "$wordToComplete*" }} |
+        ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }}
+}}
 '''
         out_path = Path(args.output) if args.output else Path("cloudmesh-completions.ps1")
-        out_path.write_text(script)
+        out_path.write_text(script, encoding="utf-8", newline="\n")
         console.print(f"[green]PowerShell completions saved to {out_path}[/]")
         console.print(f"[dim]Import it: . {out_path}[/]")
 
@@ -3141,7 +3315,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.3.0")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.3.1")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
