@@ -2,19 +2,55 @@ import hashlib
 import hmac as hmac_mod
 import json
 import os
+import ssl
 import socket
+import tempfile
 import time
 import uuid
 from pathlib import Path
 
 
+def save_private_json(path, data):
+    path = Path(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as json_file:
+            json.dump(data, json_file, indent=2)
+        os.replace(temporary_path, path)
+        if os.name != "nt":
+            path.chmod(0o600)
+    finally:
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 class NodeClient:
-    def __init__(self, host, port=9999, auth_key=None):
+    def __init__(self, host, port=9999, auth_key=None, tls=False, ca_file=None):
         self.host = host
         self.port = port
         self.auth_key = auth_key
+        self.tls = tls
+        self.ca_file = ca_file
+        self._ssl_context = (
+            ssl.create_default_context(cafile=ca_file) if tls else None
+        )
         self._key_file = Path(__file__).parent.parent / ".node_keys.json"
         self._keys = self._load_keys()
+
+    @classmethod
+    def from_config(cls, node):
+        return cls(
+            node["host"],
+            node.get("port", 9999),
+            node.get("key"),
+            tls=node.get("tls", False),
+            ca_file=node.get("ca_file"),
+        )
 
     def _load_keys(self):
         if self._key_file.exists():
@@ -25,12 +61,7 @@ class NodeClient:
         return {}
 
     def _save_keys(self):
-        self._key_file.write_text(json.dumps(self._keys, indent=2))
-        try:
-            if os.name != "nt":
-                os.chmod(self._key_file, 0o600)
-        except Exception:
-            pass
+        save_private_json(self._key_file, self._keys)
 
     def set_key(self, node_name, auth_key):
         self._keys[node_name] = {"host": self.host, "port": self.port, "key": auth_key}
@@ -73,6 +104,10 @@ class NodeClient:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
             sock.connect((self.host, self.port))
+            if self._ssl_context is not None:
+                sock = self._ssl_context.wrap_socket(
+                    sock, server_hostname=self.host
+                )
             msg = json.dumps(request).encode()
             sock.sendall(len(msg).to_bytes(4, 'big') + msg)
             request_sent = True

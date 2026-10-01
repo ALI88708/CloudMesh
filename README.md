@@ -18,8 +18,8 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-2.3.2-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-103%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Version](https://img.shields.io/badge/Version-3.0.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-115%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
 [![Issues](https://img.shields.io/github/issues/ALI88708/CloudMesh?style=for-the-badge&color=orange)](https://github.com/ALI88708/CloudMesh/issues)
@@ -30,7 +30,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 <br>
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
-[![Tests](https://img.shields.io/badge/tests-103_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
+[![Tests](https://img.shields.io/badge/tests-115_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Lint](https://img.shields.io/badge/linting-ok-green?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
@@ -161,7 +161,15 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v2.3.2 (Latest)
+### v3.0.0 (Latest)
+
+- **Adaptive scheduling:** rank nodes by CPU, RAM, and disk headroom; jobs can require minimum free resources across all three.
+- **Smart failover:** retry only when a request is known not to have been sent. Running jobs are retried once after an outage only when submitted with `--idempotent`; otherwise they become `unknown` rather than risk duplicate work.
+- **Headless coordination:** an exclusive worker lock prevents duplicate dispatch. Set `CLOUDMESH_QUEUE_DIR` to shared queue storage for controllers using a filesystem that supports file locking.
+- **Lighter node telemetry:** short-lived metric caching avoids repeated blocking probes; nodes now report a persistent identity.
+- **Verified TLS:** use `cm node add ... --tls` and optionally `--ca-file` to validate private CA certificates.
+
+### v2.3.2
 
 - **Test suite runner:** run `cm test --suite` from a source checkout, or add `--coverage` for a per-file coverage report.
 - CI now runs the test suite through the CLI and includes coverage reporting.
@@ -326,7 +334,7 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 ### Node Management
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `cm node add -n NAME -H HOST -p 9999 -k KEY` | - | Add node |
+| `cm node add -n NAME -H HOST -p 9999 -k KEY [--tls] [--ca-file CA.pem]` | - | Add node (optionally with verified TLS) |
 | `cm node remove -n NAME` | `cm rmnode` | Remove node |
 | `cm node list` | - | List all nodes |
 | `cm node test -n NAME` | - | Test node connection |
@@ -354,7 +362,8 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 | Command | Description |
 |---------|-------------|
 | `cm queue submit "cmd"` | Add an async job to the persistent queue |
-| `cm queue submit -p 9 --min-cpu-free 30 --min-ram-free 8 "cmd"` | Set priority and minimum free CPU/RAM requirements |
+| `cm queue submit -p 9 --min-cpu-free 30 --min-ram-free 8 --min-disk-free 20 "cmd"` | Set priority and minimum free CPU/RAM/disk requirements |
+| `cm queue submit --idempotent "cmd"` | Permit one retry if a running node is unreachable |
 | `cm queue worker` | Keep dispatching jobs in priority order as suitable resources become available |
 | `cm queue worker --once` | Run a single scheduling pass |
 | `cm queue status JOB_ID` | Refresh and show a submitted job's status |
@@ -676,13 +685,15 @@ cm node job recover --relaunch                # Recover failed jobs
 
 ### Smart Task Queue
 ```bash
-cm queue submit --timeout 3600 --priority 8 --min-cpu-free 30 --min-ram-free 8 "python train.py"
+cm queue submit --timeout 3600 --priority 8 --min-cpu-free 30 --min-ram-free 8 --min-disk-free 20 "python train.py"
 cm queue worker
 cm queue status JOB_ID
 cm queue list --refresh
 cm queue cancel JOB_ID
 ```
-The worker processes higher-priority jobs first and waits for nodes to meet each job's minimum free CPU and RAM requirements. Start one worker in a terminal and submit jobs from another. Use `cm queue worker --once` for a single pass. The controller only retries another node when it can confirm the request was not sent; uncertain requests are not replayed. If a job is marked `unknown`, inspect `cm node job list -n NODE` before resubmitting it.
+The worker processes higher-priority jobs first, scores available CPU, RAM, and disk headroom, and waits for nodes to meet each job's minimum requirements. Start one worker in a terminal and submit jobs from another; the worker lock prevents a second coordinator from dispatching the same queue. Use `cm queue worker --once` for a single pass. For controllers sharing a filesystem that supports file locking, set `CLOUDMESH_QUEUE_DIR` to the same queue directory on each controller, or use `--state-dir` consistently on each queue command.
+
+By default, CloudMesh retries only when it can confirm the request was not sent. If a running node becomes unreachable, the job is marked `unknown` after a 30-second grace period and is not replayed. Add `--idempotent` only for commands safe to execute more than once; this permits one automatic retry after the outage grace period. If a job remains `unknown`, check `cm node job list -n NODE` before taking further action.
 
 ### Ghost Ports (SPA)
 ```bash

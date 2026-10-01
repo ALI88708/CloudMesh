@@ -150,6 +150,65 @@ def test_node_client_marks_incomplete_response_body_as_ambiguous(monkeypatch):
     }
 
 
+def test_node_client_can_verify_a_tls_node(monkeypatch):
+    payload = json.dumps({"type": "pong"}).encode()
+    sock = FragmentedSocket(len(payload).to_bytes(4, "big") + payload)
+    monkeypatch.setattr("core.node_client.socket.socket", lambda *_: sock)
+    wrapped = []
+
+    class FakeSSLContext:
+        def wrap_socket(self, raw_socket, server_hostname):
+            wrapped.append((raw_socket, server_hostname))
+            return raw_socket
+
+    ca_paths = []
+    monkeypatch.setattr(
+        "core.node_client.ssl.create_default_context",
+        lambda cafile: ca_paths.append(cafile) or FakeSSLContext(),
+    )
+
+    client = NodeClient.from_config({
+        "host": "node.example",
+        "port": 9999,
+        "key": "secret",
+        "tls": True,
+        "ca_file": "private-ca.pem",
+    })
+
+    assert client._send({"action": "ping"}) == {"type": "pong"}
+    assert wrapped == [(sock, "node.example")]
+    assert ca_paths == ["private-ca.pem"]
+
+
+def test_node_identity_is_created_once_and_persisted(tmp_path, monkeypatch):
+    identity_file = tmp_path / ".node_id"
+    monkeypatch.setattr(cloudmesh_node, "NODE_ID_FILE", identity_file)
+
+    first = cloudmesh_node.get_node_id()
+
+    assert len(first) == 32
+    assert cloudmesh_node.get_node_id() == first
+    assert identity_file.read_text(encoding="utf-8") == first
+
+
+def test_node_metrics_are_cached_and_return_independent_snapshots(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cloudmesh_node, "_METRICS_CACHE", None)
+    monkeypatch.setattr(cloudmesh_node, "_METRICS_CACHE_AT", 0.0)
+    monkeypatch.setattr(
+        cloudmesh_node,
+        "_collect_metrics",
+        lambda: calls.append(True) or {"ram": {"free_gb": 2}},
+    )
+
+    first = cloudmesh_node.get_metrics()
+    first["ram"]["free_gb"] = 0
+    second = cloudmesh_node.get_metrics()
+
+    assert len(calls) == 1
+    assert second["ram"]["free_gb"] == 2
+
+
 def test_cancelled_job_terminates_process_and_keeps_cancelled_status(
     tmp_path, monkeypatch
 ):

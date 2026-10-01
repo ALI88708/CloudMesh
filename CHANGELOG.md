@@ -4,6 +4,16 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.0.0] - 2026-10-01
+
+### Added
+- Adaptive scheduling now weighs CPU, RAM, and free disk space; jobs can require minimum disk capacity.
+- Added safe failover: ambiguous running jobs are never replayed by default; `--idempotent` permits one retry after a sustained node outage.
+- Queue workers use an exclusive coordinator lock; `CLOUDMESH_QUEUE_DIR` can point controllers at shared queue storage.
+- Node agents cache telemetry briefly and expose a persistent node ID to reduce repeated probes and identify nodes.
+- Node connections can use verified TLS with `cm node add --tls` and an optional private `--ca-file`.
+- Node-key configuration is written atomically with restrictive Unix permissions.
+
 ## [2.3.2] - 2026-10-01
 
 ### Added

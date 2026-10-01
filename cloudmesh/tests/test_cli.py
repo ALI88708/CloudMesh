@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,3 +79,71 @@ def test_test_command_requires_a_name_for_connection_test():
         )
 
     assert exc_info.value.code == 2
+
+
+def test_node_add_persists_verified_tls_settings(tmp_path, monkeypatch):
+    ca_file = tmp_path / "private-ca.pem"
+    ca_file.write_text("test certificate", encoding="utf-8")
+    monkeypatch.setattr(
+        cloudmesh_main, "NODE_KEYS_FILE", tmp_path / ".node_keys.json"
+    )
+
+    cloudmesh_main.cmd_node_add_cloud(
+        argparse.Namespace(
+            name="secure-node",
+            host="node.example",
+            port=9999,
+            auth_key="secret",
+            tls=True,
+            ca_file=str(ca_file),
+        )
+    )
+
+    saved = json.loads(
+        (tmp_path / ".node_keys.json").read_text(encoding="utf-8")
+    )
+    assert saved["secure-node"] == {
+        "host": "node.example",
+        "port": 9999,
+        "key": "secret",
+        "tls": True,
+        "ca_file": str(ca_file.resolve()),
+    }
+
+
+def test_node_add_requires_tls_when_a_ca_file_is_provided(tmp_path, monkeypatch):
+    ca_file = tmp_path / "private-ca.pem"
+    ca_file.write_text("test certificate", encoding="utf-8")
+    monkeypatch.setattr(
+        cloudmesh_main, "NODE_KEYS_FILE", tmp_path / ".node_keys.json"
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cloudmesh_main.cmd_node_add_cloud(
+            argparse.Namespace(
+                name="secure-node",
+                host="node.example",
+                port=9999,
+                auth_key="secret",
+                tls=False,
+                ca_file=str(ca_file),
+            )
+        )
+
+    assert exc_info.value.code == 2
+    assert not (tmp_path / ".node_keys.json").exists()
+
+
+def test_queue_submit_help_exposes_major_release_options(monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys, "argv", ["cloudmesh", "queue", "submit", "--help"]
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cloudmesh_main.main()
+
+    help_text = capsys.readouterr().out
+    assert exc_info.value.code == 0
+    assert "--min-disk-free" in help_text
+    assert "--idempotent" in help_text
+    assert "--state-dir" in help_text

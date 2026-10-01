@@ -18,7 +18,7 @@ def ping_all(server_mgr, node_keys=None):
         from core.node_client import NodeClient
         for name, info in node_keys.items():
             try:
-                c = NodeClient(info["host"], info["port"], info["key"])
+                c = NodeClient.from_config(info)
                 online = c.ping()
                 results[name] = {"type": "node", "online": online, "msg": "OK" if online else "OFFLINE"}
             except Exception as e:
@@ -203,7 +203,7 @@ def generate_report(server_mgr, monitor, node_keys=None):
         from core.node_client import NodeClient
         for name, info in node_keys.items():
             try:
-                c = NodeClient(info["host"], info["port"], info["key"])
+                c = NodeClient.from_config(info)
                 m = c.get_metrics()
                 report["nodes"][name] = m
             except Exception:
@@ -246,7 +246,7 @@ def remove_alias(name, aliases_file=None):
 
 def get_version():
     return {
-        "version": "2.3.2",
+        "version": "3.0.0",
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",
         "platform": __import__('sys').platform,
     }

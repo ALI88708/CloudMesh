@@ -379,6 +379,7 @@ Node connections can be encrypted with TLS:
 
 ```bash
 cm node start --tls-cert cert.pem --tls-key key.pem
+cm node add -n NODE -H host.example -k KEY --tls --ca-file ca.pem
 ```
 
 **Without TLS, a warning is shown:**
@@ -386,7 +387,9 @@ cm node start --tls-cert cert.pem --tls-key key.pem
 WARNING: TLS disabled — traffic is unencrypted. Use --tls-cert/--tls-key for production.
 ```
 
-**Limitation:** TLS is optional, not enforced. Without it, node communication is in plaintext.
+TLS is optional for compatibility with existing nodes. When enabled on both the agent and controller, the controller validates the node certificate using the system trust store or the configured CA file. Use a certificate whose subject matches the configured host.
+
+**Limitation:** TLS remains opt-in. Without `--tls`, node traffic is unencrypted.
 
 ---
 

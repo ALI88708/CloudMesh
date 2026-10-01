@@ -9,6 +9,7 @@ __pycache__/
 venv/
 node_keys.json
 .node_keys.json
+.node_id
 service.pid
 service.log
 alerts.json

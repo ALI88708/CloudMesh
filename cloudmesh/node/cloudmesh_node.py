@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -30,23 +31,67 @@ JOBS_DIR = BASE_DIR / "jobs"
 PID_FILE = BASE_DIR / "cloudmesh_node.pid"
 LOG_FILE = BASE_DIR / "cloudmesh_node.log"
 TRIPWIRE_KEYS_FILE = BASE_DIR / ".tripwire_keys.json"
+NODE_ID_FILE = BASE_DIR / ".node_id"
 DEFAULT_PORT = 9999
 DEFAULT_SPA_PORT = 9998
 DEFAULT_SPA_WINDOW = 5
 SPA_TIMESTAMP_MAX_AGE = 30
+METRICS_CACHE_SECONDS = 2.0
+_METRICS_CACHE = None
+_METRICS_CACHE_AT = 0.0
+_METRICS_LOCK = threading.Lock()
 
 
 def get_or_create_key():
     if KEY_FILE.exists():
+        if os.name != "nt":
+            KEY_FILE.chmod(0o600)
         return KEY_FILE.read_text().strip()
-    import secrets
     key = secrets.token_hex(32)
-    KEY_FILE.write_text(key)
-    try:
-        KEY_FILE.chmod(0o600)
-    except Exception:
-        pass
+    _write_auth_key(key)
     return key
+
+
+def get_node_id():
+    if not NODE_ID_FILE.exists():
+        node_id = uuid.uuid4().hex
+        try:
+            descriptor = os.open(
+                NODE_ID_FILE,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError:
+            pass
+        else:
+            with os.fdopen(descriptor, "w") as key_file:
+                key_file.write(node_id)
+    if os.name != "nt":
+        NODE_ID_FILE.chmod(0o600)
+    node_id = NODE_ID_FILE.read_text(encoding="utf-8").strip()
+    if not node_id or len(node_id) != 32:
+        raise RuntimeError(f"Invalid node identity file: {NODE_ID_FILE}")
+    return node_id
+
+
+def _write_auth_key(key):
+    temporary_path = KEY_FILE.with_name(f"{KEY_FILE.name}.{uuid.uuid4().hex}.tmp")
+    descriptor = os.open(
+        temporary_path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as key_file:
+            key_file.write(key)
+        os.replace(temporary_path, KEY_FILE)
+        if os.name != "nt":
+            KEY_FILE.chmod(0o600)
+    finally:
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _log(msg):
@@ -121,10 +166,10 @@ def get_gpu_info():
         return None
 
 
-def get_metrics():
+def _collect_metrics():
     metrics = {}
     if HAS_PSUTIL:
-        cpu = psutil.cpu_percent(interval=0.5)
+        cpu = psutil.cpu_percent(interval=0.1)
         ram = psutil.virtual_memory()
         disk_path = "C:\\" if os.name == "nt" else "/"
         disk = psutil.disk_usage(disk_path)
@@ -184,6 +229,21 @@ def get_metrics():
     gpu = get_gpu_info()
     metrics["gpu"] = gpu
     return metrics
+
+
+def get_metrics():
+    global _METRICS_CACHE, _METRICS_CACHE_AT
+    now = time.monotonic()
+    with _METRICS_LOCK:
+        if (
+            _METRICS_CACHE is not None
+            and now - _METRICS_CACHE_AT < METRICS_CACHE_SECONDS
+        ):
+            return deepcopy(_METRICS_CACHE)
+        metrics = _collect_metrics()
+        _METRICS_CACHE = metrics
+        _METRICS_CACHE_AT = time.monotonic()
+        return deepcopy(metrics)
 
 
 def _safe_path(user_path):
@@ -686,6 +746,7 @@ class NodeAgent:
                 resp = {"type": "pong", "time": datetime.now().isoformat()}
             elif action == "info":
                 resp = {"type": "info", "data": {
+                    "node_id": get_node_id(),
                     "hostname": socket.gethostname(),
                     "platform": sys.platform,
                     "arch": platform.machine(),
@@ -753,7 +814,7 @@ class NodeAgent:
                 if not new_key or len(new_key) < 32:
                     resp = {"type": "rotate_key", "data": {"success": False, "message": "Invalid new key"}}
                 else:
-                    KEY_FILE.write_text(new_key)
+                    _write_auth_key(new_key)
                     self.auth_key = new_key
                     _log("Auth key rotated via authenticated rotate_key request")
                     resp = {"type": "rotate_key", "data": {"success": True}}

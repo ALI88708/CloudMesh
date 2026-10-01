@@ -44,7 +44,8 @@ class PanicManager:
         return {}
 
     def _save_pending(self, pending):
-        self.pending_file.write_text(json.dumps(pending, indent=2))
+        from core.node_client import save_private_json
+        save_private_json(self.pending_file, pending)
 
     def dry_run(self):
         actions = []
@@ -82,27 +83,39 @@ class PanicManager:
 
         if self.node_keys_file.exists():
             try:
-                from core.node_client import NodeClient
+                from core.node_client import NodeClient, save_private_json
                 nodes = json.loads(self.node_keys_file.read_text())
                 shutil.copy2(self.node_keys_file, self.node_keys_file.with_suffix(".json.bak"))
                 pending = self._load_pending()
                 for name, info in nodes.items():
                     new_auth = secrets.token_hex(32)
-                    client = NodeClient(info["host"], info["port"], info["key"])
+                    client = NodeClient.from_config(info)
                     try:
                         result = client.rotate_key(new_auth)
                         if result.get("success"):
                             nodes[name]["key"] = new_auth
                             actions.append(f"Rotated '{name}' — confirmed remotely")
                         else:
-                            pending[name] = {"host": info["host"], "port": info["port"],
-                                             "old_key": info["key"], "new_key": new_auth}
+                            pending[name] = {
+                                "host": info["host"],
+                                "port": info["port"],
+                                "old_key": info["key"],
+                                "new_key": new_auth,
+                                "tls": info.get("tls", False),
+                                "ca_file": info.get("ca_file"),
+                            }
                             actions.append(f"Rotated '{name}' locally, remote confirm FAILED — retry needed")
                     except Exception as e:
-                        pending[name] = {"host": info["host"], "port": info["port"],
-                                         "old_key": info["key"], "new_key": new_auth}
+                        pending[name] = {
+                            "host": info["host"],
+                            "port": info["port"],
+                            "old_key": info["key"],
+                            "new_key": new_auth,
+                            "tls": info.get("tls", False),
+                            "ca_file": info.get("ca_file"),
+                        }
                         actions.append(f"Node '{name}' unreachable ({e}) — rotation PENDING")
-                self.node_keys_file.write_text(json.dumps(nodes, indent=2))
+                save_private_json(self.node_keys_file, nodes)
                 if pending:
                     self._save_pending(pending)
                     actions.append(f"{len(pending)} node(s) pending — use 'cm panic retry-pending' later")
@@ -122,12 +135,15 @@ class PanicManager:
         if not pending:
             return ["No pending rotations"]
 
-        from core.node_client import NodeClient
+        from core.node_client import NodeClient, save_private_json
         actions = []
         remaining = {}
 
         for name, info in pending.items():
-            client = NodeClient(info["host"], info["port"], info["old_key"])
+            client = NodeClient.from_config({
+                **info,
+                "key": info["old_key"],
+            })
             try:
                 result = client.rotate_key(info["new_key"])
                 if result.get("success"):
@@ -135,7 +151,7 @@ class PanicManager:
                         nodes = json.loads(self.node_keys_file.read_text())
                         if name in nodes:
                             nodes[name]["key"] = info["new_key"]
-                            self.node_keys_file.write_text(json.dumps(nodes, indent=2))
+                            save_private_json(self.node_keys_file, nodes)
                     actions.append(f"Retry SUCCESS: '{name}' rotated remotely")
                 else:
                     remaining[name] = info
