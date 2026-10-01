@@ -1195,21 +1195,24 @@ def cmd_task_queue(args):
     task_queue = SmartTaskQueue(_load_node_keys())
     if args.action == "submit":
         try:
-            job = task_queue.submit(args.job_command, timeout=args.timeout)
+            job = task_queue.submit(
+                args.job_command,
+                timeout=args.timeout,
+                priority=args.priority,
+                min_cpu_free_percent=args.min_cpu_free,
+                min_ram_free_gb=args.min_ram_free,
+            )
         except ValueError as exc:
             console.print(f"[red]{exc}[/]")
             sys.exit(2)
-        if job["status"] == "running":
+        if job["status"] == "queued":
             console.print(
-                f"[green]Queued job {job['id']} on {job['node']} "
-                f"(node job {job['node_job_id']}).[/]"
+                f"[green]Job {job['id']} added to the queue "
+                f"(priority {job['priority']}).[/]"
             )
-        elif job["status"] == "unknown":
-            console.print(f"[yellow]Job {job['id']} status is unknown: {job['error']}[/]")
-            sys.exit(1)
         else:
-            console.print(f"[red]Could not submit job {job['id']}: {job.get('error', 'Unknown error')}[/]")
-            sys.exit(1)
+            console.print(f"[red]Could not queue job: {job.get('error', 'Unknown error')}[/]")
+            sys.exit(2)
     elif args.action == "status":
         job = task_queue.get_job(args.job_id)
         if job is None:
@@ -1245,18 +1248,54 @@ def cmd_task_queue(args):
         table = Table(title="Smart Task Queue", box=box.ROUNDED)
         table.add_column("ID", style="bold")
         table.add_column("Status")
+        table.add_column("Priority")
         table.add_column("Node")
+        table.add_column("Requirements")
         table.add_column("Command")
         table.add_column("Created")
         for job in jobs:
+            requirements = job.get("requirements", {})
+            requirement_text = (
+                f"CPU >= {requirements.get('min_cpu_free_percent', 0)}%, "
+                f"RAM >= {requirements.get('min_ram_free_gb', 0)} GB"
+            )
             table.add_row(
                 Text(job["id"], style="bold"),
                 Text(job.get("status", "?")),
+                Text(str(job.get("priority", 0))),
                 Text(job.get("node") or "-"),
+                Text(requirement_text),
                 Text(job.get("command", "")[:50]),
                 Text(job.get("created_at", "")[:19]),
             )
         console.print(table)
+    elif args.action == "worker":
+        def report_dispatch(summary):
+            if summary["dispatched"]:
+                console.print(
+                    f"[green]Dispatched {len(summary['dispatched'])} job(s): "
+                    f"{', '.join(summary['dispatched'])}[/]"
+                )
+
+        if not args.once:
+            console.print("[cyan]Queue worker running. Press Ctrl+C to stop.[/]")
+        try:
+            summary = task_queue.run_worker(
+                interval=args.interval,
+                once=args.once,
+                on_pass=None if args.once else report_dispatch,
+            )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/]")
+            sys.exit(2)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Queue worker stopped.[/]")
+            return
+        if args.once:
+            console.print(
+                f"[green]Queue pass complete: dispatched {len(summary['dispatched'])}, "
+                f"queued {summary['queued']}, running {summary['running']}.[/]"
+            )
     elif args.action == "cancel":
         result = task_queue.cancel(args.job_id)
         if result is None:
@@ -2360,7 +2399,7 @@ _cloudmesh_args() {{
     case $words[1] in
         server) subcommands='add remove list test info' ;;
         node) subcommands='add remove list test info monitor exec install dashboard gpu job' ;;
-        queue) subcommands='submit status list cancel' ;;
+        queue) subcommands='submit status list cancel worker' ;;
         keys) subcommands='generate list show deploy remove-managed' ;;
         config) subcommands='list export import show' ;;
     esac
@@ -3102,7 +3141,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.2.0")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.3.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -3257,6 +3296,12 @@ def main():
     queue_sub = queue_p.add_subparsers(dest="action")
     queue_submit = queue_sub.add_parser("submit", help="Run a job on the node with the most free resources")
     queue_submit.add_argument("--timeout", "-t", type=int, default=300)
+    queue_submit.add_argument("--priority", "-p", type=int, choices=range(10), default=0,
+                              help="Priority from 0 (normal) to 9 (highest)")
+    queue_submit.add_argument("--min-cpu-free", type=float, default=0,
+                              help="Minimum free CPU percentage required by the job")
+    queue_submit.add_argument("--min-ram-free", type=float, default=0,
+                              help="Minimum free RAM in GB required by the job")
     queue_submit.add_argument("job_command")
     queue_status = queue_sub.add_parser("status", help="Refresh and show a queued job")
     queue_status.add_argument("job_id")
@@ -3264,6 +3309,11 @@ def main():
     queue_list.add_argument("--refresh", action="store_true", help="Refresh running job statuses from nodes")
     queue_cancel = queue_sub.add_parser("cancel", help="Cancel a running queued job")
     queue_cancel.add_argument("job_id")
+    queue_worker = queue_sub.add_parser("worker", help="Process queued jobs as resources become available")
+    queue_worker.add_argument("--interval", "-i", type=float, default=5,
+                              help="Seconds between scheduling passes")
+    queue_worker.add_argument("--once", action="store_true",
+                              help="Run one scheduling pass and exit")
 
     sl_p = subparsers.add_parser("slice", help="Slice files across servers by resources")
     sl_p.add_argument("--files", "-f", required=True, help="Comma-separated file list")
@@ -3974,6 +4024,7 @@ def main():
         "queue": lambda: {
             "submit": cmd_task_queue, "status": cmd_task_queue,
             "list": cmd_task_queue, "cancel": cmd_task_queue,
+            "worker": cmd_task_queue,
         }.get(args.action, lambda: queue_p.print_help())(args),
         "autosync": lambda: cmd_autosync(args),
         "interactive": lambda: cmd_interactive(args),

@@ -18,8 +18,8 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-2.2.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-86%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Version](https://img.shields.io/badge/Version-2.3.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-92%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
 [![Issues](https://img.shields.io/github/issues/ALI88708/CloudMesh?style=for-the-badge&color=orange)](https://github.com/ALI88708/CloudMesh/issues)
@@ -30,7 +30,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 <br>
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
-[![Tests](https://img.shields.io/badge/tests-86_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
+[![Tests](https://img.shields.io/badge/tests-92_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Lint](https://img.shields.io/badge/linting-ok-green?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
@@ -161,11 +161,16 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v2.2.0 (Latest)
+### v2.3.0 (Latest)
 
-- **Smart task queue:** `cm queue submit "command"` selects the configured node with the best available CPU and memory resources.
-- Track queued jobs with `cm queue status JOB_ID` and `cm queue list`; stop them with `cm queue cancel JOB_ID`.
+- **Priority task queue:** submit jobs with priorities and minimum free CPU/RAM requirements; the worker dispatches higher priorities first when a matching node is available.
+- Run `cm queue worker` to continuously process pending jobs; use `cm queue worker --once` for one scheduling pass.
+- Track jobs with `cm queue status JOB_ID` and `cm queue list`; stop pending/running work with `cm queue cancel JOB_ID`.
 - Dispatch retries move to another node only when the request is confirmed not sent, preventing duplicate command execution.
+
+### v2.2.0
+
+- Added the initial resource-aware asynchronous task queue.
 
 ### v2.0.0
 
@@ -337,10 +342,13 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 ### Smart Task Queue
 | Command | Description |
 |---------|-------------|
-| `cm queue submit "cmd"` | Start an async job on the node with the most available CPU and memory |
+| `cm queue submit "cmd"` | Add an async job to the persistent queue |
+| `cm queue submit -p 9 --min-cpu-free 30 --min-ram-free 8 "cmd"` | Set priority and minimum free CPU/RAM requirements |
+| `cm queue worker` | Keep dispatching jobs in priority order as suitable resources become available |
+| `cm queue worker --once` | Run a single scheduling pass |
 | `cm queue status JOB_ID` | Refresh and show a submitted job's status |
 | `cm queue list --refresh` | List submitted jobs and refresh running statuses |
-| `cm queue cancel JOB_ID` | Cancel a running queued job |
+| `cm queue cancel JOB_ID` | Cancel a pending or running queued job |
 
 ### Docker
 | Command | Alias | Description |
@@ -657,12 +665,13 @@ cm node job recover --relaunch                # Recover failed jobs
 
 ### Smart Task Queue
 ```bash
-cm queue submit --timeout 3600 "python train.py"
+cm queue submit --timeout 3600 --priority 8 --min-cpu-free 30 --min-ram-free 8 "python train.py"
+cm queue worker
 cm queue status JOB_ID
 cm queue list --refresh
 cm queue cancel JOB_ID
 ```
-The controller chooses the node with the most available CPU and memory. It only retries another node when it can confirm the request was not sent; uncertain requests are not replayed. If a job is marked `unknown`, inspect `cm node job list -n NODE` before resubmitting it.
+The worker processes higher-priority jobs first and waits for nodes to meet each job's minimum free CPU and RAM requirements. Start one worker in a terminal and submit jobs from another. Use `cm queue worker --once` for a single pass. The controller only retries another node when it can confirm the request was not sent; uncertain requests are not replayed. If a job is marked `unknown`, inspect `cm node job list -n NODE` before resubmitting it.
 
 ### Ghost Ports (SPA)
 ```bash
