@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from core.task_queue import SmartTaskQueue
+from core.task_queue import WorkerAlreadyRunningError
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -78,6 +79,51 @@ def test_submit_selects_node_with_best_cpu_and_memory_resources(tmp_path):
     assert saved["node"] == "available"
 
 
+def test_scheduler_prefers_nodes_with_more_free_disk_space(tmp_path):
+    small_disk = FakeNodeClient(
+        {
+            "cpu_percent": 20,
+            "ram": {"percent": 20},
+            "disk": {"percent": 90, "free_gb": 5},
+        },
+        [{"job_id": "small-job", "status": "running"}],
+    )
+    large_disk = FakeNodeClient(
+        {
+            "cpu_percent": 20,
+            "ram": {"percent": 20},
+            "disk": {"percent": 20, "free_gb": 80},
+        },
+        [{"job_id": "large-job", "status": "running"}],
+    )
+    queue = make_queue(
+        tmp_path, {"small-disk": small_disk, "large-disk": large_disk}
+    )
+
+    job = queue.submit("download and unpack", min_disk_free_gb=30)
+    queue.process_once()
+
+    assert queue.get_job(job["id"], refresh=False)["node"] == "large-disk"
+    assert small_disk.started == []
+    assert large_disk.started == [("download and unpack", 300)]
+
+
+def test_worker_reserves_minimum_disk_for_each_dispatched_job(tmp_path):
+    node = FakeNodeClient(
+        {"cpu_percent": 0, "ram": {"percent": 0}, "disk": {"free_gb": 100}},
+        [{"job_id": "first", "status": "running"}],
+    )
+    queue = make_queue(tmp_path, {"node": node})
+    first = queue.submit("first", priority=5, min_disk_free_gb=60)
+    second = queue.submit("second", priority=1, min_disk_free_gb=60)
+
+    summary = queue.process_once()
+
+    assert summary["dispatched"] == [first["id"]]
+    assert summary["queued"] == 1
+    assert queue.get_job(second["id"], refresh=False)["status"] == "queued"
+
+
 def test_submit_retries_only_when_request_was_not_sent(tmp_path):
     unreachable = FakeNodeClient(
         metrics(5, 10),
@@ -137,6 +183,112 @@ def test_submit_does_not_retry_a_node_policy_rejection(tmp_path):
     assert other.started == []
 
 
+def test_idempotent_running_job_fails_over_after_node_outage_grace(tmp_path):
+    failed_node = FakeNodeClient(
+        metrics(10, 10),
+        [{"job_id": "first-attempt", "status": "running"}],
+        check_result={
+            "type": "error",
+            "message": "Connection refused",
+            "request_sent": False,
+        },
+    )
+    backup_node = FakeNodeClient(
+        metrics(10, 10), [{"job_id": "retry-attempt", "status": "running"}]
+    )
+    queue = SmartTaskQueue(
+        {
+            "a-node": {"host": "a-node", "key": "key"},
+            "z-node": {"host": "z-node", "key": "key"},
+        },
+        queue_dir=tmp_path,
+        client_factory=lambda host, _port, _key: {
+            "a-node": failed_node,
+            "z-node": backup_node,
+        }[host],
+        failover_grace_seconds=0,
+    )
+    job = queue.submit("python repeatable.py", idempotent=True)
+    queue.process_once()
+
+    running = queue.get_job(job["id"], refresh=False)
+    running["unreachable_since"] = (
+        datetime.now() - timedelta(seconds=1)
+    ).isoformat()
+    queue._save_job(running)
+
+    assert queue.get_job(job["id"])["status"] == "queued"
+    summary = queue.process_once()
+
+    retried = queue.get_job(job["id"], refresh=False)
+    assert summary["dispatched"] == [job["id"]]
+    assert retried["status"] == "running"
+    assert retried["node"] == "z-node"
+    assert retried["retry_count"] == 1
+    assert retried["node_job_id"] == "retry-attempt"
+    assert [attempt["status"] for attempt in retried["attempts"]] == [
+        "accepted",
+        "retry_scheduled",
+        "accepted",
+    ]
+    assert failed_node.started == [("python repeatable.py", 300)]
+    assert backup_node.started == [("python repeatable.py", 300)]
+
+
+def test_non_idempotent_outage_is_unknown_and_can_later_be_resolved(tmp_path):
+    node = FakeNodeClient(
+        metrics(10, 10),
+        [{"job_id": "first-attempt", "status": "running"}],
+        check_result={
+            "type": "error",
+            "message": "Connection refused",
+            "request_sent": False,
+        },
+    )
+    queue = SmartTaskQueue(
+        {"node": {"host": "node", "key": "key"}},
+        queue_dir=tmp_path,
+        client_factory=lambda host, _port, _key: node,
+        failover_grace_seconds=0,
+    )
+    job = queue.submit("python one-shot.py")
+    queue.process_once()
+
+    running = queue.get_job(job["id"], refresh=False)
+    running["unreachable_since"] = (
+        datetime.now() - timedelta(seconds=1)
+    ).isoformat()
+    queue._save_job(running)
+
+    uncertain = queue.get_job(job["id"])
+    assert uncertain["status"] == "unknown"
+    assert "not replayed" in uncertain["error"]
+    assert len(uncertain["attempts"]) == 2
+    assert queue.get_job(job["id"])["attempts"] == uncertain["attempts"]
+    assert node.started == [("python one-shot.py", 300)]
+
+    node.check_result = {"status": "completed", "exit_code": 0}
+    assert queue.get_job(job["id"])["status"] == "completed"
+
+
+def test_queue_worker_exclusively_coordinates_a_shared_state_directory(tmp_path):
+    queue = make_queue(tmp_path, {})
+
+    with queue._worker_lock():
+        with pytest.raises(WorkerAlreadyRunningError, match="already coordinates"):
+            queue.run_worker(once=True)
+
+
+def test_queue_directory_can_be_configured_by_environment(tmp_path, monkeypatch):
+    shared_queue = tmp_path / "coordinator-state"
+    monkeypatch.setenv("CLOUDMESH_QUEUE_DIR", str(shared_queue))
+
+    queue = SmartTaskQueue({})
+
+    assert queue.queue_dir == shared_queue
+    assert shared_queue.is_dir()
+
+
 def test_status_refreshes_remote_job_and_cancel_updates_local_record(tmp_path):
     client = FakeNodeClient(
         metrics(20, 20),
@@ -179,6 +331,8 @@ def test_invalid_ids_and_empty_commands_are_rejected(tmp_path):
         queue.submit("echo test", min_cpu_free_percent=101)
     with pytest.raises(ValueError, match="Minimum free RAM"):
         queue.submit("echo test", min_ram_free_gb=-1)
+    with pytest.raises(ValueError, match="Minimum free disk"):
+        queue.submit("echo test", min_disk_free_gb=-1)
 
 
 def test_worker_dispatches_higher_priority_jobs_first(tmp_path):

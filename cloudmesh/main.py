@@ -25,8 +25,8 @@ from core.groups import GroupsManager
 from core.cmdlog import CommandLog
 from core.sync import DirectorySync
 from core.service import ServiceMode
-from core.node_client import NodeClient
-from core.task_queue import SmartTaskQueue
+from core.node_client import NodeClient, save_private_json
+from core.task_queue import SmartTaskQueue, WorkerAlreadyRunningError
 from core.gpu import GPUTelemetry
 from core.jobs import JobManager
 from core.features import (
@@ -109,10 +109,14 @@ COMPLETION_OPTIONS = {
     "server test": ("--name", "-n"),
     "server info": ("--name", "-n"),
     "queue submit": ("--timeout", "-t", "--priority", "-p", "--min-cpu-free",
-                     "--min-ram-free", "--help", "-h"),
-    "queue list": ("--refresh", "--help", "-h"),
-    "queue worker": ("--interval", "-i", "--once", "--help", "-h"),
-    "node add": ("--name", "-n", "--host", "-H", "--port", "-p", "--auth-key", "-k"),
+                     "--min-ram-free", "--min-disk-free", "--idempotent",
+                     "--state-dir", "--help", "-h"),
+    "queue list": ("--refresh", "--state-dir", "--help", "-h"),
+    "queue worker": ("--interval", "-i", "--once", "--state-dir", "--help", "-h"),
+    "queue status": ("--state-dir", "--help", "-h"),
+    "queue cancel": ("--state-dir", "--help", "-h"),
+    "node add": ("--name", "-n", "--host", "-H", "--port", "-p", "--auth-key", "-k",
+                 "--tls", "--ca-file"),
     "node job start": ("--name", "-n", "--timeout", "-t"),
     "node job status": ("--name", "-n", "--job-id", "-j"),
     "node job list": ("--name", "-n"),
@@ -1226,7 +1230,7 @@ def cmd_node_gpu(args):
         if name not in keys:
             continue
         info = keys[name]
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         gpu = client.get_gpu()
         if gpu and gpu.get("available"):
             for g in gpu.get("gpus", []):
@@ -1249,7 +1253,7 @@ def cmd_node_job(args):
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
         info = keys[args.name]
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         console.print(f"[cyan]Starting job on {args.name}: {args.command}[/]")
         result = client.start_job(args.command, timeout=args.timeout)
         if result and result.get("job_id"):
@@ -1261,7 +1265,7 @@ def cmd_node_job(args):
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
         info = keys[args.name]
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         result = client.check_job(args.job_id)
         if result:
             status_color = "green" if result.get("status") == "completed" else "red" if result.get("status") in ("failed", "error") else "yellow"
@@ -1279,7 +1283,7 @@ def cmd_node_job(args):
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
         info = keys[args.name]
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         jobs = client.list_jobs()
         if not jobs:
             console.print("[dim]No jobs.[/]")
@@ -1299,7 +1303,7 @@ def cmd_node_job(args):
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
         info = keys[args.name]
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         result = client.kill_job(args.job_id)
         if result and result.get("success"):
             console.print(f"[green]{result.get('message', 'Killed')}[/]")
@@ -1308,7 +1312,9 @@ def cmd_node_job(args):
 
 
 def cmd_task_queue(args):
-    task_queue = SmartTaskQueue(_load_node_keys())
+    task_queue = SmartTaskQueue(
+        _load_node_keys(), queue_dir=getattr(args, "state_dir", None)
+    )
     if args.action == "submit":
         try:
             job = task_queue.submit(
@@ -1317,6 +1323,8 @@ def cmd_task_queue(args):
                 priority=args.priority,
                 min_cpu_free_percent=args.min_cpu_free,
                 min_ram_free_gb=args.min_ram_free,
+                min_disk_free_gb=args.min_disk_free,
+                idempotent=args.idempotent,
             )
         except ValueError as exc:
             console.print(f"[red]{exc}[/]")
@@ -1373,7 +1381,8 @@ def cmd_task_queue(args):
             requirements = job.get("requirements", {})
             requirement_text = (
                 f"CPU >= {requirements.get('min_cpu_free_percent', 0)}%, "
-                f"RAM >= {requirements.get('min_ram_free_gb', 0)} GB"
+                f"RAM >= {requirements.get('min_ram_free_gb', 0)} GB, "
+                f"Disk >= {requirements.get('min_disk_free_gb', 0)} GB"
             )
             table.add_row(
                 Text(job["id"], style="bold"),
@@ -1407,6 +1416,9 @@ def cmd_task_queue(args):
         except KeyboardInterrupt:
             console.print("\n[yellow]Queue worker stopped.[/]")
             return
+        except WorkerAlreadyRunningError as exc:
+            console.print(f"[red]{exc}[/]")
+            sys.exit(2)
         if args.once:
             console.print(
                 f"[green]Queue pass complete: dispatched {len(summary['dispatched'])}, "
@@ -1460,14 +1472,32 @@ def _load_node_keys():
 
 
 def _save_node_keys(keys):
-    NODE_KEYS_FILE.write_text(json.dumps(keys, indent=2))
+    save_private_json(NODE_KEYS_FILE, keys)
 
 
 def cmd_node_add_cloud(args):
     keys = _load_node_keys()
-    keys[args.name] = {"host": args.host, "port": args.port, "key": args.auth_key}
+    ca_file = getattr(args, "ca_file", None)
+    use_tls = getattr(args, "tls", False)
+    if ca_file and not use_tls:
+        console.print("[red]--ca-file requires --tls.[/]")
+        sys.exit(2)
+    if ca_file:
+        ca_file = str(Path(ca_file).expanduser().resolve())
+        if not Path(ca_file).is_file():
+            console.print(f"[red]CA certificate file not found: {ca_file}[/]")
+            sys.exit(2)
+    node = {"host": args.host, "port": args.port, "key": args.auth_key}
+    if use_tls:
+        node["tls"] = True
+    if ca_file:
+        node["ca_file"] = ca_file
+    keys[args.name] = node
     _save_node_keys(keys)
-    console.print(f"[green]Node '{args.name}' added ({args.host}:{args.port}).[/]")
+    transport = "TLS" if use_tls else "TCP"
+    console.print(
+        f"[green]Node '{args.name}' added ({args.host}:{args.port}, {transport}).[/]"
+    )
 
 
 def cmd_node_remove(args):
@@ -1491,7 +1521,7 @@ def cmd_node_list_cloud(args):
     table.add_column("Port")
     table.add_column("Status")
     for name, info in keys.items():
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         online = client.ping()
         status = "[green]ONLINE[/]" if online else "[red]OFFLINE[/]"
         table.add_row(name, info["host"], str(info["port"]), status)
@@ -1504,12 +1534,13 @@ def cmd_node_test(args):
         console.print(f"[red]Node '{args.name}' not found.[/]")
         return
     info = keys[args.name]
-    client = NodeClient(info["host"], info["port"], info["key"])
+    client = NodeClient.from_config(info)
     console.print(f"[cyan]Testing node '{args.name}'...[/]")
     if client.ping():
         node_info = client.get_info()
         console.print(f"[green]Node ONLINE[/]")
         if node_info:
+            console.print(f"  Node ID: {node_info.get('node_id', 'legacy node')}")
             console.print(f"  Hostname: {node_info.get('hostname', '?')}")
             console.print(f"  Platform: {node_info.get('platform', '?')}")
     else:
@@ -1522,13 +1553,14 @@ def cmd_node_info_cloud(args):
         console.print(f"[red]Node '{args.name}' not found.[/]")
         return
     info = keys[args.name]
-    client = NodeClient(info["host"], info["port"], info["key"])
+    client = NodeClient.from_config(info)
     metrics = client.get_metrics()
     node_info = client.get_info()
     lines = []
     lines.append(f"[bold]Name:[/] {args.name}")
     lines.append(f"[bold]Host:[/] {info['host']}:{info['port']}")
     if node_info:
+        lines.append(f"[bold]Node ID:[/] {node_info.get('node_id', 'legacy node')}")
         lines.append(f"[bold]Hostname:[/] {node_info.get('hostname', '?')}")
         lines.append(f"[bold]Platform:[/] {node_info.get('platform', '?')}")
     if metrics:
@@ -1557,7 +1589,7 @@ def cmd_node_monitor(args):
         if name not in keys:
             continue
         info = keys[name]
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         metrics = client.get_metrics()
         if metrics:
             cpu = metrics.get("cpu_percent") or 0
@@ -1579,7 +1611,7 @@ def cmd_node_exec(args):
         console.print(f"[red]Node '{args.name}' not found.[/]")
         return
     info = keys[args.name]
-    client = NodeClient(info["host"], info["port"], info["key"])
+    client = NodeClient.from_config(info)
     console.print(f"[cyan]Running on {args.name}: {args.command}[/]")
     result = client.execute(args.command)
     if result.get("success"):
@@ -1999,7 +2031,13 @@ def cmd_status(args):
         host = info.get("host", "?")
         entry = {"host": host, "status": "offline", "cpu": None, "ram": None, "disk": None}
         try:
-            client = NodeClient(host, info.get("port", 9999), info.get("auth_key", ""))
+            client = NodeClient(
+                host,
+                info.get("port", 9999),
+                info.get("auth_key", ""),
+                tls=info.get("tls", False),
+                ca_file=info.get("ca_file"),
+            )
             pong = client.send({"action": "ping"})
             if pong and pong.get("type") == "pong":
                 metrics = client.send({"action": "metrics"})
@@ -2058,7 +2096,7 @@ def cmd_exec(args):
         if n not in keys:
             return n, {"success": False, "error": "Node not found"}
         info = keys[n]
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         result = client.execute(command)
         return n, result
 
@@ -2169,7 +2207,7 @@ def cmd_watch(args):
                 for name in names_node:
                     info = keys[name]
                     try:
-                        client = NodeClient(info["host"], info["port"], info["key"])
+                        client = NodeClient.from_config(info)
                         metrics = client.get_metrics()
                         if metrics:
                             cpu = metrics.get("cpu_percent", 0)
@@ -2898,7 +2936,7 @@ def cmd_node_dashboard(args):
     table.add_column("RAM", min_width=22)
     table.add_column("Weight")
     for name, info in keys.items():
-        client = NodeClient(info["host"], info["port"], info["key"])
+        client = NodeClient.from_config(info)
         online = client.ping()
         if online:
             metrics = client.get_metrics()
@@ -3082,7 +3120,13 @@ def cmd_panic(args):
                 host = srv.get("host", "")
                 port = srv.get("port", 9999)
                 key = srv.get("auth_key", "")
-                client = NodeClient(host, port, key)
+                client = NodeClient(
+                    host,
+                    port,
+                    key,
+                    tls=srv.get("tls", False),
+                    ca_file=srv.get("ca_file"),
+                )
                 try:
                     import secrets as _secrets
                     new_auth = _secrets.token_hex(32)
@@ -3176,7 +3220,7 @@ def cmd_weather(args):
                 pass
         for name, info in keys.items():
             try:
-                client = NodeClient(info["host"], info["port"], info["key"])
+                client = NodeClient.from_config(info)
                 metrics = client.get_metrics()
                 weather.learn_from_metrics(name, metrics)
                 count += 1
@@ -3279,7 +3323,7 @@ def cmd_job_checkpoint(args):
         console.print(f"[red]Node '{args.name}' not found.[/]")
         return
     info = keys[args.name]
-    client = NodeClient(info["host"], info["port"], info["key"])
+    client = NodeClient.from_config(info)
     result = client.check_job(args.job_id)
     if not result:
         console.print("[red]Job not found.[/]")
@@ -3352,7 +3396,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.3.2")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 3.0.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -3467,6 +3511,9 @@ def main():
     na_p.add_argument("--host", "-H", required=True)
     na_p.add_argument("--port", "-p", type=int, default=9999)
     na_p.add_argument("--auth-key", "-k", required=True)
+    na_p.add_argument("--tls", action="store_true",
+                      help="Use TLS and verify the node certificate")
+    na_p.add_argument("--ca-file", help="CA certificate file for a private node certificate")
     nr_p = node_sub.add_parser("remove", help="Remove node")
     nr_p.add_argument("--name", "-n", required=True)
     node_sub.add_parser("list", help="List all nodes")
@@ -3513,6 +3560,12 @@ def main():
                               help="Minimum free CPU percentage required by the job")
     queue_submit.add_argument("--min-ram-free", type=float, default=0,
                               help="Minimum free RAM in GB required by the job")
+    queue_submit.add_argument("--min-disk-free", type=float, default=0,
+                              help="Minimum free disk in GB required by the job")
+    queue_submit.add_argument(
+        "--idempotent", action="store_true",
+        help="Allow one automatic retry if the assigned node becomes unreachable",
+    )
     queue_submit.add_argument("job_command")
     queue_status = queue_sub.add_parser("status", help="Refresh and show a queued job")
     queue_status.add_argument("job_id")
@@ -3525,6 +3578,11 @@ def main():
                               help="Seconds between scheduling passes")
     queue_worker.add_argument("--once", action="store_true",
                               help="Run one scheduling pass and exit")
+    for queue_command in (queue_submit, queue_status, queue_list, queue_cancel, queue_worker):
+        queue_command.add_argument(
+            "--state-dir",
+            help="Shared queue directory for coordinating CloudMesh controllers",
+        )
 
     sl_p = subparsers.add_parser("slice", help="Slice files across servers by resources")
     sl_p.add_argument("--files", "-f", required=True, help="Comma-separated file list")

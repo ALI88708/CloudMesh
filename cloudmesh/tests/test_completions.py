@@ -47,7 +47,7 @@ def test_powershell_completion_maps_subcommands_and_options(tmp_path):
 
     assert 'Register-ArgumentCompleter -Native -CommandName cm, cloudmesh' in script
     assert '"queue" = @("submit", "status", "list", "cancel", "worker")' in script
-    assert '"queue worker" = @("--interval", "-i", "--once", "--help", "-h")' in script
+    assert '"queue worker" = @("--interval", "-i", "--once", "--state-dir", "--help", "-h")' in script
     assert "$context = $candidate" in script
 
 

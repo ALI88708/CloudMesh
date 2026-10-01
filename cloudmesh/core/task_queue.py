@@ -1,22 +1,37 @@
+import errno
 import json
 import math
 import os
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from .node_client import NodeClient
 
 
+class WorkerAlreadyRunningError(RuntimeError):
+    """Raised when another worker already coordinates this queue."""
+
+
 class SmartTaskQueue:
     """Persist, prioritize, and dispatch jobs according to node resources."""
 
-    def __init__(self, nodes, queue_dir=None, client_factory=NodeClient):
+    def __init__(
+        self, nodes, queue_dir=None, client_factory=NodeClient,
+        failover_grace_seconds=30,
+    ):
         self.nodes = nodes
-        self.queue_dir = Path(queue_dir or Path(__file__).parent.parent / ".task_queue")
+        default_dir = os.environ.get("CLOUDMESH_QUEUE_DIR")
+        self.queue_dir = Path(
+            queue_dir or default_dir or Path(__file__).parent.parent / ".task_queue"
+        ).expanduser()
         self.client_factory = client_factory
+        self.failover_grace_seconds = self._finite_nonnegative(
+            failover_grace_seconds, "Failover grace period"
+        )
         self.queue_dir.mkdir(parents=True, exist_ok=True)
 
     def _job_file(self, job_id):
@@ -82,19 +97,36 @@ class SmartTaskQueue:
                 pass
         ram_free = 100.0 - ram_used if ram_used is not None else None
 
-        available = [value for value in (cpu_free, ram_free) if value is not None]
+        disk = metrics.get("disk")
+        if not isinstance(disk, dict):
+            disk = {}
+        disk_free_gb = None
+        try:
+            free_disk = float(disk.get("free_gb"))
+            if math.isfinite(free_disk) and free_disk >= 0:
+                disk_free_gb = free_disk
+        except (TypeError, ValueError):
+            pass
+        disk_used = cls._percentage(disk.get("percent"))
+        disk_free = 100.0 - disk_used if disk_used is not None else None
+
+        dimensions = (
+            (cpu_free, 0.4),
+            (ram_free, 0.45),
+            (disk_free, 0.15),
+        )
+        available = [(value, weight) for value, weight in dimensions if value is not None]
         if not available:
             score = None
-        elif cpu_free is None:
-            score = ram_free
-        elif ram_free is None:
-            score = cpu_free
         else:
-            score = cpu_free * 0.6 + ram_free * 0.4
+            total_weight = sum(weight for _, weight in available)
+            score = sum(value * weight for value, weight in available) / total_weight
         return {
             "cpu_free_percent": cpu_free,
             "ram_free_gb": ram_free_gb,
             "ram_free_percent": ram_free,
+            "disk_free_gb": disk_free_gb,
+            "disk_free_percent": disk_free,
             "score": score,
         }
 
@@ -112,6 +144,8 @@ class SmartTaskQueue:
 
     def _client(self, node):
         info = self.nodes[node]
+        if self.client_factory is NodeClient:
+            return NodeClient.from_config(info)
         return self.client_factory(info["host"], info.get("port", 9999), info.get("key"))
 
     def _rank_nodes(self):
@@ -133,18 +167,24 @@ class SmartTaskQueue:
         return ranked, errors
 
     def submit(self, command, timeout=300, priority=0,
-               min_cpu_free_percent=0, min_ram_free_gb=0):
+               min_cpu_free_percent=0, min_ram_free_gb=0,
+               min_disk_free_gb=0, idempotent=False):
         if not isinstance(command, str) or not command.strip():
             raise ValueError("A non-empty command is required")
         if not isinstance(timeout, int) or timeout <= 0:
             raise ValueError("Timeout must be a positive integer")
         if not isinstance(priority, int) or isinstance(priority, bool) or not 0 <= priority <= 9:
             raise ValueError("Priority must be an integer between 0 and 9")
+        if not isinstance(idempotent, bool):
+            raise ValueError("Idempotent must be a boolean")
         min_cpu_free_percent = self._finite_nonnegative(
             min_cpu_free_percent, "Minimum free CPU", maximum=100
         )
         min_ram_free_gb = self._finite_nonnegative(
             min_ram_free_gb, "Minimum free RAM"
+        )
+        min_disk_free_gb = self._finite_nonnegative(
+            min_disk_free_gb, "Minimum free disk"
         )
 
         job_id = uuid.uuid4().hex[:12]
@@ -156,9 +196,12 @@ class SmartTaskQueue:
             "node_job_id": None,
             "timeout": timeout,
             "priority": priority,
+            "idempotent": idempotent,
+            "retry_count": 0,
             "requirements": {
                 "min_cpu_free_percent": min_cpu_free_percent,
                 "min_ram_free_gb": min_ram_free_gb,
+                "min_disk_free_gb": min_disk_free_gb,
             },
             "created_at": datetime.now().isoformat(),
             "attempts": [],
@@ -172,13 +215,14 @@ class SmartTaskQueue:
 
     def _refresh_running_jobs(self):
         for job in self.list_jobs():
-            if job.get("status") == "running":
+            if job.get("status") in ("running", "unknown") and job.get("node_job_id"):
                 self.get_job(job["id"])
 
     def _dispatch(self, job, ranked, capacity):
         requirements = job.get("requirements", {})
         min_cpu = requirements.get("min_cpu_free_percent", 0)
         min_ram = requirements.get("min_ram_free_gb", 0)
+        min_disk = requirements.get("min_disk_free_gb", 0)
         candidates = [
             entry for entry in ranked
             if (
@@ -190,9 +234,20 @@ class SmartTaskQueue:
             and (capacity[entry[1]]["ram_free_gb"] is None
                  or capacity[entry[1]]["ram_free_gb"] >= min_ram)
             and (capacity[entry[1]]["ram_free_gb"] is not None or min_ram == 0)
+            and (capacity[entry[1]]["disk_free_gb"] is None
+                 or capacity[entry[1]]["disk_free_gb"] >= min_disk)
+            and (capacity[entry[1]]["disk_free_gb"] is not None or min_disk == 0)
         ]
+        previous_node = job.get("last_node")
+        alternative_nodes = [
+            entry for entry in candidates if entry[1] != previous_node
+        ]
+        if previous_node and alternative_nodes:
+            candidates = alternative_nodes
         if not candidates:
-            job["last_error"] = "Waiting for a node to meet the requested free CPU and RAM"
+            job["last_error"] = (
+                "Waiting for a node to meet the requested free CPU, RAM, and disk"
+            )
             self._save_job(job)
             return False
 
@@ -225,7 +280,13 @@ class SmartTaskQueue:
                     capacity[name]["ram_free_gb"] = max(
                         0, capacity[name]["ram_free_gb"] - min_ram
                     )
+                if capacity[name]["disk_free_gb"] is not None:
+                    capacity[name]["disk_free_gb"] = max(
+                        0, capacity[name]["disk_free_gb"] - min_disk
+                    )
                 job.pop("last_error", None)
+                job.pop("error", None)
+                job.pop("last_node", None)
                 self._save_job(job)
                 return True
 
@@ -302,13 +363,96 @@ class SmartTaskQueue:
     def run_worker(self, interval=5, once=False, on_pass=None):
         if not isinstance(interval, (int, float)) or not math.isfinite(interval) or interval < 1:
             raise ValueError("Worker interval must be at least one second")
-        while True:
-            summary = self.process_once()
-            if on_pass is not None:
-                on_pass(summary)
-            if once:
-                return summary
-            time.sleep(interval)
+        with self._worker_lock():
+            while True:
+                summary = self.process_once()
+                if on_pass is not None:
+                    on_pass(summary)
+                if once:
+                    return summary
+                time.sleep(interval)
+
+    @contextmanager
+    def _worker_lock(self):
+        lock_path = self.queue_dir / ".worker.lock"
+        with lock_path.open("a+b") as lock_file:
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+                    raise
+                raise WorkerAlreadyRunningError(
+                    "Another queue worker already coordinates this queue"
+                ) from exc
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _handle_unreachable_job(self, job, message):
+        now = datetime.now()
+        unreachable_since = job.get("unreachable_since")
+        if not unreachable_since:
+            job["unreachable_since"] = now.isoformat()
+            job["last_error"] = message
+            self._save_job(job)
+            return
+
+        try:
+            outage = now - datetime.fromisoformat(unreachable_since)
+        except (TypeError, ValueError):
+            outage = timedelta(0)
+        if outage < timedelta(seconds=self.failover_grace_seconds):
+            job["last_error"] = message
+            self._save_job(job)
+            return
+        if job.get("outage_handled"):
+            job["last_error"] = message
+            self._save_job(job)
+            return
+
+        will_retry = job.get("idempotent") and job.get("retry_count", 0) < 1
+        attempt = {
+            "node": job.get("node"),
+            "status": "retry_scheduled" if will_retry else "unknown",
+            "error": message,
+        }
+        job.setdefault("attempts", []).append(attempt)
+        if will_retry:
+            job["retry_count"] = job.get("retry_count", 0) + 1
+            job["last_node"] = job.get("node")
+            job["node"] = None
+            job["node_job_id"] = None
+            job["status"] = "queued"
+            job.pop("unreachable_since", None)
+            job.pop("error", None)
+            job.pop("outage_handled", None)
+            job["last_error"] = (
+                f"{message}. The idempotent job was queued for one automatic retry."
+            )
+        else:
+            job["status"] = "unknown"
+            job["outage_handled"] = True
+            job["error"] = (
+                f"{message}. The remote job may have run; it was not replayed."
+            )
+        self._save_job(job)
 
     def get_job(self, job_id, refresh=True):
         job = self._read_job(job_id)
@@ -332,18 +476,32 @@ class SmartTaskQueue:
                     job["error"] = "The controller stopped before selecting a node"
                 self._save_job(job)
             return job
-        if job.get("status") != "running":
+        if job.get("status") not in ("running", "unknown"):
             return job
         node = job.get("node")
-        if node not in self.nodes or not job.get("node_job_id"):
+        if node not in self.nodes:
             job["last_error"] = "The assigned node is no longer configured"
             self._save_job(job)
+            return job
+        if not job.get("node_job_id"):
+            if job.get("status") != "unknown":
+                job["last_error"] = "The assigned node job ID is unavailable"
+                self._save_job(job)
             return job
         try:
             result = self._client(node).check_job(job["node_job_id"])
         except Exception as exc:
             job["last_error"] = str(exc)
             self._save_job(job)
+            return job
+        if (
+            isinstance(result, dict)
+            and result.get("type") == "error"
+            and result.get("request_sent") is False
+        ):
+            self._handle_unreachable_job(
+                job, result.get("message", "The assigned node is unreachable")
+            )
             return job
         if not isinstance(result, dict) or not result.get("status"):
             if isinstance(result, dict):
@@ -361,6 +519,9 @@ class SmartTaskQueue:
             if field in result:
                 job[field] = result[field]
         job.pop("last_error", None)
+        job.pop("error", None)
+        job.pop("unreachable_since", None)
+        job.pop("outage_handled", None)
         self._save_job(job)
         return job
 

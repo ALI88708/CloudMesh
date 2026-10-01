@@ -386,6 +386,7 @@ Nodes are servers running the lightweight TCP agent. They communicate on port 99
 
 ```bash
 cm node add -n NAME -H HOST -p PORT -k KEY
+cm node add -n NAME -H HOST -p PORT -k KEY --tls --ca-file ca.pem
 ```
 
 **Parameters:**
@@ -393,6 +394,8 @@ cm node add -n NAME -H HOST -p PORT -k KEY
 - `-H / --host`: IP address
 - `-p / --port`: TCP port (default: 9999)
 - `-k / --key`: Auth key (must match the key on the node)
+- `--tls`: Enable TLS with certificate validation on the controller.
+- `--ca-file`: Optional private CA certificate; requires `--tls`.
 
 ### Installing Node Agent Remotely
 
@@ -1860,13 +1863,14 @@ cm node job kill -n gpu-1 -j JOB_ID
 Submit a node job without choosing a node manually:
 
 ```bash
-cm queue submit --timeout 3600 "python train.py"
+cm queue submit --timeout 3600 --min-disk-free 20 "python train.py"
+cm queue submit --idempotent "python repeatable.py"
 cm queue status JOB_ID
 cm queue list --refresh
 cm queue cancel JOB_ID
 ```
 
-CloudMesh stores pending jobs under `.task_queue/`, ordered by descending priority and then submission time. `cm queue worker` polls node resource metrics and dispatches each job only to a node meeting its minimum free CPU and RAM requirements; one worker should be run in a terminal while jobs are submitted from another. `cm queue worker --once` performs one scheduling pass. A fallback node is tried only when the client confirms the request was not sent. If the request may have reached a node but its response is lost, the job is marked `unknown` and is not replayed, avoiding duplicate command execution; inspect that node with `cm node job list -n NODE` before manually resubmitting.
+CloudMesh stores pending jobs under `.task_queue/`, ordered by descending priority and then submission time. The scheduler weighs CPU, RAM, and disk headroom and enforces requested minimums. `cm queue worker` takes an exclusive lock so only one worker coordinates a queue at a time; set `CLOUDMESH_QUEUE_DIR` to shared storage only when it supports file locking. `cm queue worker --once` performs one scheduling pass. A fallback node is tried only when the client confirms the request was not sent. A running job that becomes unreachable is not replayed unless the user explicitly marks it `--idempotent`; in that case, CloudMesh waits for a 30-second grace period and allows one retry. Otherwise the job is marked `unknown` to avoid duplicate command execution. Inspect the original node with `cm node job list -n NODE` before manually resubmitting.
 
 ---
 
