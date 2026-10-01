@@ -31,13 +31,14 @@ jobs:
         find cloudmesh -name "*.py" -exec python -m py_compile {} \;
         echo "All files compile successfully"
 
-    - name: Run security tests
+    - name: Run tests with coverage
       run: |
-        pip install pytest pytest-timeout
         cd cloudmesh
-        python -m pytest tests/ -v --timeout=10
+        python main.py test --suite --coverage
 
-    - name: Verify CLI help works
+    - name: Verify CLI commands work
       run: |
         cd cloudmesh
         python main.py --help
+        python main.py test --help
+        python main.py queue worker --help
