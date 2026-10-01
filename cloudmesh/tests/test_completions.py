@@ -26,6 +26,8 @@ def test_completions_include_missing_top_level_command_and_queue_actions(
     assert "worker" in script
     assert "min-cpu-free" in script
     assert "--once" in script
+    assert "test" in script
+    assert "--coverage" in script
 
 
 def test_zsh_completion_uses_command_position_for_nested_actions(tmp_path):

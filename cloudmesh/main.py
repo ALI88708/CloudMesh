@@ -2,6 +2,7 @@ import argparse
 import sys
 import os
 import json
+import subprocess
 import tempfile
 import shlex
 from pathlib import Path
@@ -56,7 +57,7 @@ COMPLETION_COMMANDS = (
     "alias version doctor update status discover bench schedule notify api panic tripwire "
     "weather trust profile audit ssh template map docker firewall ssl logagg reshistory "
     "plugins acl webhooks watcher tunnel database node exec watch keys config completions "
-    "tw triw"
+    "tw triw test"
 ).split()
 
 COMPLETION_SUBCOMMANDS = {
@@ -95,6 +96,7 @@ COMPLETION_SUBCOMMANDS = {
 
 COMPLETION_OPTIONS = {
     "": ("--help", "-h", "--version", "-V"),
+    "test": ("--name", "-n", "--suite", "--coverage", "--help", "-h"),
     "monitor": ("--name", "-n", "--local", "-l"),
     "dashboard": ("--live", "-l", "--interval", "-i"),
     "watch": ("--interval", "-i"),
@@ -680,6 +682,41 @@ def cmd_server_test(args):
     else:
         console.print(f"[red]{msg}[/]")
         sys.exit(1)
+
+
+def cmd_test(args):
+    if not args.suite:
+        if args.coverage:
+            console.print("[red]--coverage requires --suite.[/]")
+            sys.exit(2)
+        if not args.name:
+            console.print("[red]Specify --name for a server connection test, or use --suite.[/]")
+            sys.exit(2)
+        cmd_server_test(args)
+        return
+
+    tests_dir = Path(__file__).parent / "tests"
+    if not tests_dir.is_dir():
+        console.print("[red]Project tests are unavailable; run this from a source checkout.[/]")
+        sys.exit(2)
+
+    command = [sys.executable, "-m", "pytest", "tests", "-q", "--tb=short"]
+    if args.coverage:
+        command.extend([
+            "--cov=core",
+            "--cov=cloudmesh_node",
+            "--cov-report=term-missing",
+            "--cov-fail-under=25",
+        ])
+    console.print("[cyan]Running the CloudMesh test suite...[/]")
+    result = subprocess.run(command, cwd=Path(__file__).parent, check=False)
+    if result.returncode == 0:
+        console.print("[green bold]CloudMesh test suite passed.[/]")
+    else:
+        console.print(
+            f"[red]CloudMesh test suite failed with exit code {result.returncode}.[/]"
+        )
+    sys.exit(result.returncode)
 
 
 def cmd_monitor(args):
@@ -3315,7 +3352,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.3.1")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 2.3.2")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -4014,8 +4051,12 @@ def main():
     rm_node = subparsers.add_parser("rmnode", help="[alias] Remove node")
     rm_node.add_argument("--name", "-n", required=True)
 
-    test_alias = subparsers.add_parser("test", help="[alias] Test connection")
+    test_alias = subparsers.add_parser("test", help="Test a server connection or run the project test suite")
     test_alias.add_argument("--name", "-n")
+    test_alias.add_argument("--suite", action="store_true",
+                            help="Run the complete CloudMesh test suite")
+    test_alias.add_argument("--coverage", action="store_true",
+                            help="Include a coverage report (requires --suite)")
 
     info_alias = subparsers.add_parser("info", help="[alias] Server info")
     info_alias.add_argument("--name", "-n")
@@ -4268,7 +4309,7 @@ def main():
         "add": lambda: cmd_server_add(args),
         "rm": lambda: cmd_server_remove(args),
         "rmnode": lambda: cmd_node_remove(args),
-        "test": lambda: cmd_server_test(args),
+        "test": lambda: cmd_test(args),
         "info": lambda: cmd_node_info(args),
         "monnode": lambda: cmd_node_monitor(args),
         "gpunode": lambda: cmd_node_gpu(args),

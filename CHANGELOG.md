@@ -4,6 +4,13 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [2.3.2] - 2026-10-01
+
+### Added
+- `cm test --suite` runs the complete project test suite; `--coverage` adds a per-file coverage report.
+- CI now executes the suite through the CLI and publishes coverage results in the job log.
+- Added tests for the test-runner command while preserving `cm test --name` connection checks.
+
 ## [2.3.1] - 2026-10-01
 
 ### Fixed
