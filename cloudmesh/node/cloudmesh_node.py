@@ -442,6 +442,8 @@ class NodeAgent:
     def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",
                  tls_cert=None, tls_key=None,
                  spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
+        if bool(tls_cert) != bool(tls_key):
+            raise ValueError("--tls-cert and --tls-key must be supplied together")
         self.port = port
         self.auth_key = auth_key or get_or_create_key()
         self.bind_host = bind_host
@@ -1037,6 +1039,8 @@ def main():
     sub.add_parser("status")
     args = p.parse_args()
     if args.command == "start":
+        if bool(args.tls_cert) != bool(args.tls_key):
+            p.error("both --tls-cert and --tls-key must be supplied together")
         cmd_start(port=args.port, bind_host=args.bind, tls_cert=args.tls_cert, tls_key=args.tls_key,
                   spa=args.spa, spa_port=args.spa_port, spa_window=args.spa_window)
     elif args.command == "stop":

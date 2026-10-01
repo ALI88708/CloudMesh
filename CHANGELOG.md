@@ -4,6 +4,17 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.0.2] - 2026-10-01
+
+### Added
+- Queue jobs can declare CPU, RAM, and disk resource claims independently of node eligibility minimums; omitted claims retain the previous threshold behavior.
+
+### Fixed
+- Configuration and encryption-key persistence now use atomic writes; concurrent backup creation reserves unique filenames.
+- SSH command execution drains stdout and stderr concurrently and reports useful stderr, exit status, and timeout diagnostics.
+- Node TLS startup now rejects incomplete certificate/key pairs instead of silently running without TLS.
+- Server OS checks report the live probe result, and remote database failures no longer appear as successful empty results.
+
 ## [3.0.1] - 2026-10-01
 
 ### Fixed

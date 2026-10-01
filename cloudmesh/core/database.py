@@ -3,6 +3,16 @@ from core.ssh_util import run_ssh, run_ssh_with_stdin
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
+
+def _remote_result(operation, output, return_code):
+    if return_code == 0:
+        return output
+    message = f"Database {operation} failed (exit code {return_code})"
+    if output:
+        message += f": {output}"
+    return message
+
+
 def _load_config():
     p = os.path.join(DATA_DIR, "cloudmesh.json")
     if os.path.exists(p):
@@ -52,7 +62,7 @@ def list_databases(server_name, db_type="mysql", host="127.0.0.1", port=None, us
         return f"Unsupported database type: {db_type}"
 
     out, rc = run_ssh(ssh_host, ssh_user, ssh_key, cmd)
-    return out
+    return _remote_result("list", out, rc)
 
 def db_status(server_name, db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):
     srv = _get_server(server_name)
@@ -72,7 +82,7 @@ def db_status(server_name, db_type="mysql", host="127.0.0.1", port=None, user="r
         return f"Unsupported: {db_type}"
 
     out, rc = run_ssh(ssh_host, ssh_user, ssh_key, cmd)
-    return out
+    return _remote_result("status", out, rc)
 
 def db_query(server_name, query, db_type="mysql", database="mysql", host="127.0.0.1", port=None, user="root", password=""):
     srv = _get_server(server_name)
@@ -90,7 +100,7 @@ def db_query(server_name, query, db_type="mysql", database="mysql", host="127.0.
         return f"Unsupported: {db_type}"
 
     out, rc = run_ssh(ssh_host, ssh_user, ssh_key, cmd)
-    return out
+    return _remote_result("query", out, rc)
 
 def db_backup(server_name, database, backup_path="/tmp", db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):
     srv = _get_server(server_name)
@@ -130,5 +140,10 @@ def db_check_all(db_type="mysql", host="127.0.0.1", port=None, user="root", pass
     for section in ["servers", "nodes"]:
         for name, srv in cfg.get(section, {}).items():
             status = db_status(name, db_type, host, port, user, password)
-            results.append({"server": name, "status": "ok" if status else "unreachable", "details": status[:200] if status else ""})
+            failed = status.startswith("Database status failed (exit code ")
+            results.append({
+                "server": name,
+                "status": "unreachable" if failed or not status else "ok",
+                "details": status[:200] if status else "",
+            })
     return results

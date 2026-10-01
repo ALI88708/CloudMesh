@@ -108,7 +108,7 @@ def test_scheduler_prefers_nodes_with_more_free_disk_space(tmp_path):
     assert large_disk.started == [("download and unpack", 300)]
 
 
-def test_worker_reserves_minimum_disk_for_each_dispatched_job(tmp_path):
+def test_threshold_only_jobs_keep_legacy_same_pass_reservations(tmp_path):
     node = FakeNodeClient(
         {"cpu_percent": 0, "ram": {"percent": 0}, "disk": {"free_gb": 100}},
         [{"job_id": "first", "status": "running"}],
@@ -122,6 +122,63 @@ def test_worker_reserves_minimum_disk_for_each_dispatched_job(tmp_path):
     assert summary["dispatched"] == [first["id"]]
     assert summary["queued"] == 1
     assert queue.get_job(second["id"], refresh=False)["status"] == "queued"
+
+
+@pytest.mark.parametrize(
+    ("claim_kwargs", "claim_key", "claim_value"),
+    [
+        ({"cpu_claim_percent": 60}, "cpu_claim_percent", 60),
+        ({"ram_claim_gb": 10}, "ram_claim_gb", 10),
+        ({"disk_claim_gb": 30}, "disk_claim_gb", 30),
+    ],
+)
+def test_explicit_resource_claims_reserve_same_pass_node_capacity(
+    tmp_path, claim_kwargs, claim_key, claim_value
+):
+    node = FakeNodeClient(
+        {
+            "cpu_percent": 0,
+            "ram": {"percent": 0, "free_gb": 16},
+            "disk": {"free_gb": 50},
+        },
+        [{"job_id": "first", "status": "running"}],
+    )
+    queue = make_queue(tmp_path, {"node": node})
+    first = queue.submit("first", priority=5, **claim_kwargs)
+    second = queue.submit("second", priority=1, **claim_kwargs)
+
+    summary = queue.process_once()
+
+    assert summary["dispatched"] == [first["id"]]
+    assert summary["queued"] == 1
+    assert queue.get_job(second["id"], refresh=False)["status"] == "queued"
+    assert [command for command, _ in node.started] == ["first"]
+    saved = json.loads(
+        (tmp_path / f"{first['id']}.json").read_text(encoding="utf-8")
+    )
+    assert saved["requirements"][claim_key] == claim_value
+
+
+def test_explicit_claims_are_independent_of_minimum_free_thresholds(tmp_path):
+    node = FakeNodeClient(
+        {"cpu_percent": 0, "ram": {"percent": 0, "free_gb": 16}},
+        [
+            {"job_id": "first", "status": "running"},
+            {"job_id": "second", "status": "running"},
+        ],
+    )
+    queue = make_queue(tmp_path, {"node": node})
+    first = queue.submit(
+        "first", priority=5, min_ram_free_gb=12, ram_claim_gb=4
+    )
+    second = queue.submit(
+        "second", priority=1, min_ram_free_gb=12, ram_claim_gb=4
+    )
+
+    summary = queue.process_once()
+
+    assert summary["dispatched"] == [first["id"], second["id"]]
+    assert [command for command, _ in node.started] == ["first", "second"]
 
 
 def test_submit_retries_only_when_request_was_not_sent(tmp_path):
@@ -350,6 +407,12 @@ def test_invalid_ids_and_empty_commands_are_rejected(tmp_path):
         queue.submit("echo test", min_ram_free_gb=-1)
     with pytest.raises(ValueError, match="Minimum free disk"):
         queue.submit("echo test", min_disk_free_gb=-1)
+    with pytest.raises(ValueError, match="CPU claim"):
+        queue.submit("echo test", cpu_claim_percent=101)
+    with pytest.raises(ValueError, match="RAM claim"):
+        queue.submit("echo test", ram_claim_gb=-1)
+    with pytest.raises(ValueError, match="Disk claim"):
+        queue.submit("echo test", disk_claim_gb=-1)
 
 
 def test_worker_dispatches_higher_priority_jobs_first(tmp_path):

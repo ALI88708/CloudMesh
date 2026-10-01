@@ -840,3 +840,141 @@ class TestRestoreBackup:
         except (ValueError, FileNotFoundError):
             raised = True
         assert raised is True
+
+    def test_encrypted_config_round_trip_and_backup_restore(self, tmp_path, monkeypatch):
+        mgr, base = self._make(tmp_path, monkeypatch)
+        original = {"servers": {"one": {"host": "127.0.0.1"}}, "settings": {"max_backups": 10}}
+        restored = {"servers": {"two": {"host": "127.0.0.2"}}, "settings": {"max_backups": 10}}
+
+        mgr.save_config(original)
+        encrypted = mgr.config_path.read_bytes()
+        assert encrypted != json.dumps(original, indent=2).encode()
+        assert mgr.load_config() == original
+        assert mgr.fernet.decrypt(encrypted) == json.dumps(original, indent=2).encode()
+
+        backup = base / "backups" / "restore.json"
+        backup.write_text(json.dumps(restored))
+        mgr.restore_backup(str(backup))
+        assert mgr.load_config() == restored
+        assert mgr.fernet.decrypt(mgr.config_path.read_bytes()) == backup.read_bytes()
+
+    def test_failed_atomic_replace_preserves_previous_config(self, tmp_path, monkeypatch):
+        import core.security as security
+
+        mgr, _ = self._make(tmp_path, monkeypatch)
+        previous = {"servers": {"one": {"host": "127.0.0.1"}}}
+        mgr.save_config(previous)
+        old_bytes = mgr.config_path.read_bytes()
+
+        def fail_replace(source, destination):
+            raise OSError("simulated replacement failure")
+
+        monkeypatch.setattr(security.os, "replace", fail_replace)
+        with pytest.raises(OSError, match="simulated replacement failure"):
+            mgr.save_config({"servers": {"two": {"host": "127.0.0.2"}}})
+
+        assert mgr.config_path.read_bytes() == old_bytes
+        assert mgr.load_config() == previous
+        assert list(mgr.base_dir.glob(".config.json.*.tmp")) == []
+
+    def test_new_key_is_persisted_atomically_with_secure_permissions(self, tmp_path):
+        from core.security import SecurityManager
+
+        base = tmp_path / "key-test"
+        base.mkdir()
+        mgr = SecurityManager(base_dir=base)
+        generated = mgr._get_or_create_key()
+
+        assert mgr.key_path.read_bytes() == generated
+        assert mgr._get_or_create_key() == generated
+        assert list(base.glob("..secret.key.*.tmp")) == []
+        if os.name != "nt":
+            assert mgr.key_path.stat().st_mode & 0o777 == 0o600
+
+    def test_key_creation_keeps_key_created_by_racing_process(self, tmp_path, monkeypatch):
+        import core.security as security
+
+        base = tmp_path / "key-race"
+        base.mkdir()
+        mgr = security.SecurityManager(base_dir=base)
+        competing_key = security.Fernet.generate_key()
+        monkeypatch.setattr(security.Fernet, "generate_key", lambda: b"generated-local-key")
+
+        def another_process_wins(source, destination):
+            Path(destination).write_bytes(competing_key)
+            raise FileExistsError(destination)
+
+        monkeypatch.setattr(security.os, "link", another_process_wins)
+        assert mgr._get_or_create_key() == competing_key
+        assert mgr.key_path.read_bytes() == competing_key
+        assert list(base.glob("..secret.key.*.tmp")) == []
+
+    def test_backup_names_do_not_collide_within_same_second(self, tmp_path, monkeypatch):
+        import core.security as security
+        from datetime import datetime as real_datetime
+
+        class FixedDatetime:
+            @staticmethod
+            def now():
+                return real_datetime(2025, 1, 2, 3, 4, 5)
+
+        mgr, _ = self._make(tmp_path, monkeypatch)
+        monkeypatch.setattr(security, "datetime", FixedDatetime)
+        mgr.save_config({"servers": {"one": {}}})
+        mgr.save_config({"servers": {"two": {}}})
+        mgr.save_config({"servers": {"three": {}}})
+
+        backup_names = sorted(path.name for path in mgr.backups_dir.glob("config_backup_*"))
+        assert backup_names == [
+            "config_backup_2025-01-02_03-04-05.json",
+            "config_backup_2025-01-02_03-04-05_1.json",
+        ]
+
+    def test_concurrent_backup_saves_reserve_distinct_names(self, tmp_path, monkeypatch):
+        import core.security as security
+        from datetime import datetime as real_datetime
+
+        class FixedDatetime:
+            @staticmethod
+            def now():
+                return real_datetime(2025, 1, 2, 3, 4, 5)
+
+        mgr, _ = self._make(tmp_path, monkeypatch)
+        config = {"servers": {"one": {"host": "127.0.0.1"}}}
+        mgr.save_config(config)
+        monkeypatch.setattr(security, "datetime", FixedDatetime)
+
+        original_open = security.os.open
+        first_attempts = threading.Barrier(2)
+        thread_state = threading.local()
+
+        def synchronized_open(path, *args, **kwargs):
+            if (
+                Path(path).name.startswith("config_backup_")
+                and not getattr(thread_state, "has_waited", False)
+            ):
+                thread_state.has_waited = True
+                first_attempts.wait(timeout=5)
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(security.os, "open", synchronized_open)
+        errors = []
+
+        def save_backup():
+            try:
+                mgr._backup_config()
+            except Exception as e:
+                errors.append(e)
+
+        workers = [threading.Thread(target=save_backup) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=5)
+
+        backups = list(mgr.backups_dir.glob("config_backup_*"))
+        assert all(not worker.is_alive() for worker in workers)
+        assert errors == []
+        assert len(backups) == 2
+        expected_backup = json.dumps(config, indent=2).encode()
+        assert all(backup.read_bytes() == expected_backup for backup in backups)
