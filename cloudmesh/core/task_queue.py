@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,7 +11,7 @@ from .node_client import NodeClient
 
 
 class SmartTaskQueue:
-    """Submit async jobs to the node with the most available CPU and memory."""
+    """Persist, prioritize, and dispatch jobs according to node resources."""
 
     def __init__(self, nodes, queue_dir=None, client_factory=NodeClient):
         self.nodes = nodes
@@ -53,7 +54,7 @@ class SmartTaskQueue:
         return min(100.0, max(0.0, value))
 
     @classmethod
-    def _resource_score(cls, metrics):
+    def _node_resources(cls, metrics):
         cpu_free = None
         cpu = cls._percentage(metrics.get("cpu_percent"))
         if cpu is not None:
@@ -62,27 +63,52 @@ class SmartTaskQueue:
         ram = metrics.get("ram")
         if not isinstance(ram, dict):
             ram = {}
+        ram_free_gb = None
+        try:
+            free = float(ram.get("free_gb"))
+            if math.isfinite(free) and free >= 0:
+                ram_free_gb = free
+        except (TypeError, ValueError):
+            pass
         ram_used = cls._percentage(ram.get("percent"))
         if ram_used is None:
             total = ram.get("total_gb")
-            free = ram.get("free_gb")
             try:
                 total = float(total)
-                free = float(free)
-                if math.isfinite(total) and math.isfinite(free) and total > 0:
-                    ram_used = cls._percentage((total - free) / total * 100)
+                free_percent = float(ram.get("free_percent"))
+                if math.isfinite(total) and math.isfinite(free_percent) and total > 0:
+                    ram_used = cls._percentage(100.0 - free_percent)
             except (TypeError, ValueError):
                 pass
         ram_free = 100.0 - ram_used if ram_used is not None else None
 
         available = [value for value in (cpu_free, ram_free) if value is not None]
         if not available:
-            return None
-        if cpu_free is None:
-            return ram_free
-        if ram_free is None:
-            return cpu_free
-        return cpu_free * 0.6 + ram_free * 0.4
+            score = None
+        elif cpu_free is None:
+            score = ram_free
+        elif ram_free is None:
+            score = cpu_free
+        else:
+            score = cpu_free * 0.6 + ram_free * 0.4
+        return {
+            "cpu_free_percent": cpu_free,
+            "ram_free_gb": ram_free_gb,
+            "ram_free_percent": ram_free,
+            "score": score,
+        }
+
+    @staticmethod
+    def _finite_nonnegative(value, name, maximum=None):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a non-negative number") from None
+        if not math.isfinite(number) or number < 0 or (
+                maximum is not None and number > maximum):
+            suffix = f" between 0 and {maximum}" if maximum is not None else ""
+            raise ValueError(f"{name} must be a non-negative number{suffix}")
+        return number
 
     def _client(self, node):
         info = self.nodes[node]
@@ -98,88 +124,126 @@ class SmartTaskQueue:
             except Exception as exc:
                 errors.append({"node": name, "error": str(exc)})
                 continue
-            score = self._resource_score(metrics) if isinstance(metrics, dict) else None
-            if score is None:
+            resources = self._node_resources(metrics) if isinstance(metrics, dict) else None
+            if resources is None or resources["score"] is None:
                 errors.append({"node": name, "error": "Resource metrics unavailable"})
                 continue
-            ranked.append((score, name, client))
+            ranked.append((resources["score"], name, client, resources))
         ranked.sort(key=lambda entry: (-entry[0], entry[1]))
         return ranked, errors
 
-    def submit(self, command, timeout=300):
+    def submit(self, command, timeout=300, priority=0,
+               min_cpu_free_percent=0, min_ram_free_gb=0):
         if not isinstance(command, str) or not command.strip():
             raise ValueError("A non-empty command is required")
         if not isinstance(timeout, int) or timeout <= 0:
             raise ValueError("Timeout must be a positive integer")
+        if not isinstance(priority, int) or isinstance(priority, bool) or not 0 <= priority <= 9:
+            raise ValueError("Priority must be an integer between 0 and 9")
+        min_cpu_free_percent = self._finite_nonnegative(
+            min_cpu_free_percent, "Minimum free CPU", maximum=100
+        )
+        min_ram_free_gb = self._finite_nonnegative(
+            min_ram_free_gb, "Minimum free RAM"
+        )
 
         job_id = uuid.uuid4().hex[:12]
         job = {
             "id": job_id,
             "command": command,
-            "status": "dispatching",
+            "status": "queued",
             "node": None,
             "node_job_id": None,
             "timeout": timeout,
+            "priority": priority,
+            "requirements": {
+                "min_cpu_free_percent": min_cpu_free_percent,
+                "min_ram_free_gb": min_ram_free_gb,
+            },
             "created_at": datetime.now().isoformat(),
             "attempts": [],
         }
         self._save_job(job)
+        return job
 
-        ranked, errors = self._rank_nodes()
-        if not ranked:
-            job["status"] = "failed"
-            details = "; ".join(
-                f"{item['node']}: {item['error']}" for item in errors
+    @staticmethod
+    def _job_order(job):
+        return (-job.get("priority", 0), job.get("created_at", ""), job["id"])
+
+    def _refresh_running_jobs(self):
+        for job in self.list_jobs():
+            if job.get("status") == "running":
+                self.get_job(job["id"])
+
+    def _dispatch(self, job, ranked, capacity):
+        requirements = job.get("requirements", {})
+        min_cpu = requirements.get("min_cpu_free_percent", 0)
+        min_ram = requirements.get("min_ram_free_gb", 0)
+        candidates = [
+            entry for entry in ranked
+            if (
+                capacity[entry[1]]["cpu_free_percent"] is not None
+                and capacity[entry[1]]["cpu_free_percent"] >= min_cpu
+                or capacity[entry[1]]["cpu_free_percent"] is None
+                and min_cpu == 0
             )
-            job["error"] = "No configured node returned usable resource metrics"
-            if details:
-                job["error"] += f" ({details})"
-            job["attempts"] = errors
+            and (capacity[entry[1]]["ram_free_gb"] is None
+                 or capacity[entry[1]]["ram_free_gb"] >= min_ram)
+            and (capacity[entry[1]]["ram_free_gb"] is not None or min_ram == 0)
+        ]
+        if not candidates:
+            job["last_error"] = "Waiting for a node to meet the requested free CPU and RAM"
             self._save_job(job)
-            return job
+            return False
 
-        for _, name, client in ranked:
+        for _, name, client, _ in candidates:
             job["node"] = name
             job["status"] = "dispatching"
             job["dispatch_started_at"] = datetime.now().isoformat()
             self._save_job(job)
             try:
-                result = client.start_job(command, timeout=timeout)
+                result = client.start_job(job["command"], timeout=job["timeout"])
             except Exception as exc:
                 job["status"] = "unknown"
                 job["error"] = (
                     f"Could not confirm whether the node accepted the job: {exc}. "
                     "It was not retried to avoid duplicate execution."
                 )
-                job["attempts"].append({"node": name, "error": str(exc)})
+                job["attempts"].append({"node": name, "status": "unknown", "error": str(exc)})
                 self._save_job(job)
-                return job
+                return False
 
             if isinstance(result, dict) and result.get("job_id"):
                 job["status"] = result.get("status", "running")
                 job["node_job_id"] = result["job_id"]
                 job["attempts"].append({"node": name, "status": "accepted"})
+                if capacity[name]["cpu_free_percent"] is not None:
+                    capacity[name]["cpu_free_percent"] = max(
+                        0, capacity[name]["cpu_free_percent"] - min_cpu
+                    )
+                if capacity[name]["ram_free_gb"] is not None:
+                    capacity[name]["ram_free_gb"] = max(
+                        0, capacity[name]["ram_free_gb"] - min_ram
+                    )
+                job.pop("last_error", None)
                 self._save_job(job)
-                return job
+                return True
 
             if (isinstance(result, dict) and result.get("type") == "error"
                     and result.get("request_sent") is False):
                 error = result.get("message", "Connection failed before sending the job")
                 job["attempts"].append({
-                    "node": name,
-                    "status": "not_sent",
-                    "error": error,
+                    "node": name, "status": "not_sent", "error": error,
                 })
-                job["error"] = error
-                self._save_job(job)
                 continue
 
             error = "Node rejected the job"
             if isinstance(result, dict):
                 error = result.get("stderr") or result.get("message") or error
-            job["node"] = name
             job["error"] = str(error)
-            job["attempts"].append({"node": name, "status": "rejected", "error": str(error)})
+            job["attempts"].append({
+                "node": name, "status": "rejected", "error": str(error),
+            })
             if isinstance(result, dict) and result.get("type") == "error" \
                     and result.get("request_sent") is True:
                 job["status"] = "unknown"
@@ -190,18 +254,61 @@ class SmartTaskQueue:
             else:
                 job["status"] = "failed"
             self._save_job(job)
-            return job
+            return False
 
+        job["status"] = "queued"
         job["node"] = None
-        job["status"] = "failed"
-        details = "; ".join(
-            f"{item['node']}: {item['error']}" for item in job["attempts"]
-        )
-        job["error"] = "Could not send the job to any node with available metrics"
-        if details:
-            job["error"] += f" ({details})"
+        job["last_error"] = "No eligible node accepted the job; it will be retried"
         self._save_job(job)
-        return job
+        return False
+
+    def process_once(self):
+        """Refresh active jobs and dispatch queued jobs in priority order."""
+        self._refresh_running_jobs()
+        pending = sorted(
+            (job for job in self.list_jobs() if job.get("status") == "queued"),
+            key=self._job_order,
+        )
+        if not pending:
+            return {"dispatched": [], "queued": 0, "running": 0}
+
+        ranked, errors = self._rank_nodes()
+        if not ranked:
+            message = "No node returned usable resource metrics"
+            if errors:
+                message += ": " + "; ".join(
+                    f"{item['node']}: {item['error']}" for item in errors
+                )
+            for job in pending:
+                job["last_error"] = message
+                self._save_job(job)
+            return {"dispatched": [], "queued": len(pending), "running": 0}
+
+        capacity = {
+            name: dict(resources)
+            for _, name, _, resources in ranked
+        }
+        dispatched = []
+        for job in pending:
+            if self._dispatch(job, ranked, capacity):
+                dispatched.append(job["id"])
+        jobs = self.list_jobs()
+        return {
+            "dispatched": dispatched,
+            "queued": sum(job.get("status") == "queued" for job in jobs),
+            "running": sum(job.get("status") == "running" for job in jobs),
+        }
+
+    def run_worker(self, interval=5, once=False, on_pass=None):
+        if not isinstance(interval, (int, float)) or not math.isfinite(interval) or interval < 1:
+            raise ValueError("Worker interval must be at least one second")
+        while True:
+            summary = self.process_once()
+            if on_pass is not None:
+                on_pass(summary)
+            if once:
+                return summary
+            time.sleep(interval)
 
     def get_job(self, job_id, refresh=True):
         job = self._read_job(job_id)
@@ -269,6 +376,11 @@ class SmartTaskQueue:
         job = self.get_job(job_id, refresh=False)
         if job is None:
             return None
+        if job.get("status") == "queued":
+            job["status"] = "cancelled"
+            job["finished_at"] = datetime.now().isoformat()
+            self._save_job(job)
+            return {"success": True, "job": job}
         if job.get("status") != "running" or not job.get("node_job_id"):
             return {"success": False, "job": job, "error": f"Job status: {job.get('status')}"}
         if job.get("node") not in self.nodes:

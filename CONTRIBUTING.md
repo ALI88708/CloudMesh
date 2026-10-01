@@ -1864,7 +1864,7 @@ cm queue list --refresh
 cm queue cancel JOB_ID
 ```
 
-CloudMesh ranks configured nodes by current free CPU and memory, starts the job asynchronously on the best candidate, and saves the controller-side job record under `.task_queue/`. A fallback node is tried only when the client confirms the request was not sent. If the request may have reached a node but its response is lost, the job is marked `unknown` and is not replayed, avoiding duplicate command execution; inspect that node with `cm node job list -n NODE` before manually resubmitting.
+CloudMesh stores pending jobs under `.task_queue/`, ordered by descending priority and then submission time. `cm queue worker` polls node resource metrics and dispatches each job only to a node meeting its minimum free CPU and RAM requirements; one worker should be run in a terminal while jobs are submitted from another. `cm queue worker --once` performs one scheduling pass. A fallback node is tried only when the client confirms the request was not sent. If the request may have reached a node but its response is lost, the job is marked `unknown` and is not replayed, avoiding duplicate command execution; inspect that node with `cm node job list -n NODE` before manually resubmitting.
 
 ---
 

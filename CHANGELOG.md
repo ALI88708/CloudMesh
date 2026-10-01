@@ -4,6 +4,12 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [2.3.0] - 2026-10-01
+
+### Added
+- **Priority and resource-aware task queue** — queue jobs with priority 0–9 and minimum free CPU/RAM requirements.
+- **Queue worker** — `cm queue worker` dispatches higher-priority jobs first and keeps waiting jobs until a suitable node is available.
+
 ## [2.2.0] - 2026-09-30
 
 ### Added
