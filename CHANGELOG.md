@@ -4,6 +4,14 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.0.1] - 2026-10-01
+
+### Fixed
+- Queue workers now recover stale `dispatching` records after controller restarts instead of leaving those jobs stuck indefinitely.
+- Node agents now report previously running jobs as `unknown` after restart when their final outcome cannot be confirmed.
+- Queue and node job state files are replaced atomically to reduce the risk of corrupted records after an interrupted write.
+- Invalid persisted node-job records are logged rather than silently discarded.
+
 ## [3.0.0] - 2026-10-01
 
 ### Added
