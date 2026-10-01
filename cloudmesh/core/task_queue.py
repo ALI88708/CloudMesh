@@ -1,5 +1,4 @@
 import errno
-import json
 import math
 import os
 import re
@@ -9,7 +8,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .node_client import NodeClient, save_private_json
+from .node_client import NodeClient
+from .queue_storage import SQLiteJobStore
 
 
 class WorkerAlreadyRunningError(RuntimeError):
@@ -33,26 +33,19 @@ class SmartTaskQueue:
             failover_grace_seconds, "Failover grace period"
         )
         self.queue_dir.mkdir(parents=True, exist_ok=True)
-
-    def _job_file(self, job_id):
-        if not isinstance(job_id, str) or not re.fullmatch(r"[a-f0-9]{12}", job_id):
-            return None
-        return self.queue_dir / f"{job_id}.json"
+        self._store = SQLiteJobStore(self.queue_dir)
 
     def _save_job(self, job):
-        path = self._job_file(job["id"])
-        if path is None:
+        if not isinstance(job.get("id"), str) or not re.fullmatch(
+            r"[a-f0-9]{12}", job["id"]
+        ):
             raise ValueError("Invalid queued job ID")
-        save_private_json(path, job)
+        self._store.save(job)
 
     def _read_job(self, job_id):
-        path = self._job_file(job_id)
-        if path is None or not path.exists():
+        if not isinstance(job_id, str) or not re.fullmatch(r"[a-f0-9]{12}", job_id):
             return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"Could not read queued job {job_id}: {exc}") from exc
+        return self._store.get(job_id)
 
     @staticmethod
     def _percentage(value):
@@ -547,10 +540,8 @@ class SmartTaskQueue:
 
     def list_jobs(self, refresh=False):
         jobs = []
-        for path in self.queue_dir.glob("*.json"):
-            job = self._read_job(path.stem)
-            if job is not None:
-                jobs.append(self.get_job(job["id"]) if refresh else job)
+        for job in self._store.list():
+            jobs.append(self.get_job(job["id"]) if refresh else job)
         return sorted(jobs, key=lambda item: item.get("created_at", ""), reverse=True)
 
     def cancel(self, job_id):

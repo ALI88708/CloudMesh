@@ -3399,7 +3399,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 3.0.2")
+    parser.add_argument("--version", "-V", action="version", version="CloudMesh 3.1.0")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")

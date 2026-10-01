@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-import json
 import sys
 from pathlib import Path
 
@@ -75,7 +74,7 @@ def test_submit_selects_node_with_best_cpu_and_memory_resources(tmp_path):
     assert stored["node_job_id"] == "remote-job"
     assert available.started == [("python work.py", 45)]
     assert busy.started == []
-    saved = json.loads((tmp_path / f"{job['id']}.json").read_text(encoding="utf-8"))
+    saved = queue.get_job(job["id"], refresh=False)
     assert saved["node"] == "available"
 
 
@@ -153,9 +152,7 @@ def test_explicit_resource_claims_reserve_same_pass_node_capacity(
     assert summary["queued"] == 1
     assert queue.get_job(second["id"], refresh=False)["status"] == "queued"
     assert [command for command, _ in node.started] == ["first"]
-    saved = json.loads(
-        (tmp_path / f"{first['id']}.json").read_text(encoding="utf-8")
-    )
+    saved = queue.get_job(first["id"], refresh=False)
     assert saved["requirements"][claim_key] == claim_value
 
 
