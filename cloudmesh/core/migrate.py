@@ -12,7 +12,7 @@ from typing import Dict, Any
 
 from cryptography.fernet import Fernet
 
-from storage import StorageManager
+from .storage import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -318,8 +318,14 @@ class MigrationManager:
             data = json.loads(templates_file.read_text())
             count = 0
             
-            for name, command in data.items():
+            for name, template_data in data.items():
                 try:
+                    # TemplateManager stores templates as dict with 'command', 'description', 'created'
+                    if isinstance(template_data, dict):
+                        command = template_data.get("command", "")
+                    else:
+                        command = str(template_data)
+                    
                     with self.storage._get_connection() as conn:
                         conn.execute("""
                             INSERT OR REPLACE INTO templates (name, command)
@@ -375,22 +381,25 @@ class MigrationManager:
             logger.error("Failed to load .schedule.json: %s", e)
             return 0
     
-    def migrate_all(self) -> Dict[str, int]:
+    def migrate_all(self, dry_run: bool = False) -> Dict[str, int]:
         """Run full migration."""
         logger.info("Starting migration from JSON to extended SQLite storage...")
+        
+        if dry_run:
+            logger.info("DRY RUN MODE - No data will be written")
         
         config = self._load_encrypted_config()
         
         results = {
-            "servers": self.migrate_servers(config),
-            "nodes": self.migrate_nodes(),
-            "groups": self.migrate_groups(config),
-            "settings": self.migrate_settings(config),
-            "alerts": self.migrate_alerts(),
-            "acl_users": self.migrate_acl(),
-            "aliases": self.migrate_aliases(),
-            "templates": self.migrate_templates(),
-            "schedules": self.migrate_schedule(),
+            "servers": self.migrate_servers(config) if not dry_run else 0,
+            "nodes": self.migrate_nodes() if not dry_run else 0,
+            "groups": self.migrate_groups(config) if not dry_run else 0,
+            "settings": self.migrate_settings(config) if not dry_run else 0,
+            "alerts": self.migrate_alerts() if not dry_run else 0,
+            "acl_users": self.migrate_acl() if not dry_run else 0,
+            "aliases": self.migrate_aliases() if not dry_run else 0,
+            "templates": self.migrate_templates() if not dry_run else 0,
+            "schedules": self.migrate_schedule() if not dry_run else 0,
         }
         
         self.migrated = True
@@ -444,14 +453,16 @@ def run_migration(base_dir: Path = None, dry_run: bool = False) -> Dict:
         # Backup old files first
         backup_path = manager.backup_old_files()
         logger.info("Old JSON files backed up to: %s", backup_path)
+    else:
+        backup_path = None
     
-    results = manager.migrate_all()
+    results = manager.migrate_all(dry_run=dry_run)
     
     return {
         "success": manager.migrated,
         "results": results,
         "errors": manager.errors,
-        "backup_path": backup_path if not dry_run else None
+        "backup_path": backup_path
     }
 
 

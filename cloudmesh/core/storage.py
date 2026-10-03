@@ -243,10 +243,15 @@ class StorageManager:
         """Add a server."""
         with self._get_connection() as conn:
             try:
+                # Encrypt sensitive data
+                encrypted_password = None
+                if password and self.fernet:
+                    encrypted_password = self.fernet.encrypt(password.encode()).decode()
+                
                 conn.execute("""
                     INSERT INTO servers (name, host, user, port, key_path, password)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, (name, host, user, port, key_path, password))
+                """, (name, host, user, port, key_path, encrypted_password))
                 conn.commit()
                 return True
             except sqlite3.IntegrityError:
@@ -265,14 +270,31 @@ class StorageManager:
         with self._get_connection() as conn:
             row = conn.execute("SELECT * FROM servers WHERE name = ?", (name,)).fetchone()
             if row:
-                return dict(row)
+                server = dict(row)
+                # Decrypt password
+                if server.get("password") and self.fernet:
+                    try:
+                        server["password"] = self.fernet.decrypt(server["password"].encode()).decode()
+                    except Exception as e:
+                        logger.warning("Failed to decrypt password for server %s: %s", name, e)
+                return server
             return None
     
     def list_servers(self) -> List[Dict]:
         """List all servers."""
         with self._get_connection() as conn:
             rows = conn.execute("SELECT * FROM servers").fetchall()
-            return [dict(row) for row in rows]
+            servers = []
+            for row in rows:
+                server = dict(row)
+                # Decrypt password
+                if server.get("password") and self.fernet:
+                    try:
+                        server["password"] = self.fernet.decrypt(server["password"].encode()).decode()
+                    except Exception as e:
+                        logger.warning("Failed to decrypt password for server %s: %s", server["name"], e)
+                servers.append(server)
+            return servers
     
     def update_server_status(self, name: str, status: str) -> bool:
         """Update server status."""
@@ -289,10 +311,15 @@ class StorageManager:
         """Add a node."""
         with self._get_connection() as conn:
             try:
+                # Encrypt sensitive data
+                encrypted_key = None
+                if auth_key and self.fernet:
+                    encrypted_key = self.fernet.encrypt(auth_key.encode()).decode()
+                
                 conn.execute("""
                     INSERT INTO nodes (name, host, port, auth_key)
                     VALUES (?, ?, ?, ?)
-                """, (name, host, port, auth_key))
+                """, (name, host, port, encrypted_key))
                 conn.commit()
                 return True
             except sqlite3.IntegrityError:
@@ -311,22 +338,44 @@ class StorageManager:
         with self._get_connection() as conn:
             row = conn.execute("SELECT * FROM nodes WHERE name = ?", (name,)).fetchone()
             if row:
-                return dict(row)
+                node = dict(row)
+                # Decrypt auth_key
+                if node.get("auth_key") and self.fernet:
+                    try:
+                        node["auth_key"] = self.fernet.decrypt(node["auth_key"].encode()).decode()
+                    except Exception as e:
+                        logger.warning("Failed to decrypt auth_key for node %s: %s", name, e)
+                return node
             return None
     
     def list_nodes(self) -> List[Dict]:
         """List all nodes."""
         with self._get_connection() as conn:
             rows = conn.execute("SELECT * FROM nodes").fetchall()
-            return [dict(row) for row in rows]
+            nodes = []
+            for row in rows:
+                node = dict(row)
+                # Decrypt auth_key
+                if node.get("auth_key") and self.fernet:
+                    try:
+                        node["auth_key"] = self.fernet.decrypt(node["auth_key"].encode()).decode()
+                    except Exception as e:
+                        logger.warning("Failed to decrypt auth_key for node %s: %s", node["name"], e)
+                nodes.append(node)
+            return nodes
     
     def update_node_auth_key(self, name: str, auth_key: str) -> bool:
         """Update node auth key."""
         with self._get_connection() as conn:
+            # Encrypt sensitive data
+            encrypted_key = None
+            if auth_key and self.fernet:
+                encrypted_key = self.fernet.encrypt(auth_key.encode()).decode()
+            
             cursor = conn.execute("""
                 UPDATE nodes SET auth_key = ?, updated_at = CURRENT_TIMESTAMP 
                 WHERE name = ?
-            """, (auth_key, name))
+            """, (encrypted_key, name))
             conn.commit()
             return cursor.rowcount > 0
     
@@ -502,13 +551,18 @@ class StorageManager:
     
     # Backup operations
     def backup_database(self) -> str:
-        """Create a backup of the database."""
+        """Create a backup of the database using SQLite backup API."""
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         backup_path = self.backups_dir / f"cloudmesh_backup_{timestamp}.db"
         
-        # Copy database file
-        import shutil
-        shutil.copy2(self.db_path, backup_path)
+        # Use SQLite backup API for proper WAL handling
+        with self._get_connection() as source:
+            dest = sqlite3.connect(str(backup_path))
+            try:
+                source.backup(dest)
+                dest.commit()
+            finally:
+                dest.close()
         
         # Cleanup old backups
         max_backups = self.get_setting("max_backups", 10)
