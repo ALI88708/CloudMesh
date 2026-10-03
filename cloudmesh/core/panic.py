@@ -9,7 +9,7 @@ from datetime import datetime
 
 from cryptography.fernet import Fernet
 
-from core.shamir import ShamirSecretSharing
+from cloudmesh.core.shamir import ShamirSecretSharing
 
 
 class PanicManager:

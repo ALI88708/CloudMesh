@@ -12,35 +12,35 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import box
 
-from core.security import SecurityManager
-from core.server import ServerManager
-from core.monitor import ResourceMonitor
-from core.scheduler import TaskScheduler
-from core.dashboard import Dashboard
-from core.transfer import FileTransfer
-from core.history import HistoryManager
-from core.deploy import PackageDeployer
-from core.alerts import AlertManager
-from core.groups import GroupsManager
-from core.cmdlog import CommandLog
-from core.sync import DirectorySync
-from core.service import ServiceMode
-from core.node_client import NodeClient, save_private_json
-from core.task_queue import SmartTaskQueue, WorkerAlreadyRunningError
-from core.gpu import GPUTelemetry
-from core.jobs import JobManager
-from core.features import (
+from cloudmesh.core.security import SecurityManager
+from cloudmesh.core.server import ServerManager
+from cloudmesh.core.monitor import ResourceMonitor
+from cloudmesh.core.scheduler import TaskScheduler
+from cloudmesh.core.dashboard import Dashboard
+from cloudmesh.core.transfer import FileTransfer
+from cloudmesh.core.history import HistoryManager
+from cloudmesh.core.deploy import PackageDeployer
+from cloudmesh.core.alerts import AlertManager
+from cloudmesh.core.groups import GroupsManager
+from cloudmesh.core.cmdlog import CommandLog
+from cloudmesh.core.sync import DirectorySync
+from cloudmesh.core.service import ServiceMode
+from cloudmesh.core.node_client import NodeClient, save_private_json
+from cloudmesh.core.task_queue import SmartTaskQueue, WorkerAlreadyRunningError
+from cloudmesh.core.gpu import GPUTelemetry
+from cloudmesh.core.jobs import JobManager
+from cloudmesh.core.features import (
     ping_all, get_uptime, get_top_processes, get_disk_detail,
     get_network_info, get_logged_users, search_files, get_recent_logs,
     export_config, import_config, encrypt_file, decrypt_file,
     network_speed_test, scan_subnet, cleanup_old, generate_report,
     create_alias, get_aliases, remove_alias, get_version,
 )
-from core.panic import PanicManager, TripwireManager, ShamirPanicManager
-from core.weather import WeatherForecast
-from core.gossip import GossipManager
-from core.checkpoint import CheckpointManager
-from core.advanced import (
+from cloudmesh.core.panic import PanicManager, TripwireManager, ShamirPanicManager
+from cloudmesh.core.weather import WeatherForecast
+from cloudmesh.core.gossip import GossipManager
+from cloudmesh.core.checkpoint import CheckpointManager
+from cloudmesh.core.advanced import (
     discover_network, run_full_benchmark, ScheduleManager, NotifyManager,
     CloudMeshAPI, ProfileManager, audit_server, quick_ssh,
     TemplateManager, generate_network_map,

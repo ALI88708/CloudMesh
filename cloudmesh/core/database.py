@@ -1,5 +1,5 @@
 import json, os, shlex, tempfile
-from core.ssh_util import run_ssh, run_ssh_with_stdin
+from cloudmesh.core.ssh_util import run_ssh, run_ssh_with_stdin
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
