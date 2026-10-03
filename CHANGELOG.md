@@ -4,6 +4,48 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.2.0] - 2026-10-03
+
+### ⚠️ BREAKING CHANGES
+- **Full SQLite Backend**: Extended SQLite storage to cover all data types (servers, nodes, groups, alerts, ACL, aliases, templates, schedules)
+  - Previously only task queue used SQLite (v3.1.0)
+  - All JSON-based data now migrated to SQLite
+  - Automatic migration script included (`core/migrate.py`)
+  - Old JSON files backed up to `backups/json_backup_<timestamp>/` before migration
+  - **Migration required**: Run `python -m cloudmesh.core.migrate` after upgrading to v3.2.0
+
+### Added
+- **Extended StorageManager**: New tables in `core/storage.py` for all data types
+  - Servers, nodes, groups, settings, alerts, ACL users/roles, aliases, templates, schedules
+  - Extends existing queue storage with additional tables
+  - Built-in backup and restore functionality
+  - Thread-safe operations with WAL mode
+- **MigrationManager**: New `core/migrate.py` for seamless JSON → SQLite migration
+  - Migrates all existing data including encrypted config
+  - Preserves passwords, auth keys, and all settings
+  - Dry-run mode for testing (`--dry-run`)
+  - Detailed error reporting
+- **Test Suite**: New `core/test_storage.py` for testing storage operations
+
+### Changed
+- **Database Schema**: Extended existing `cloudmesh.db` with additional tables
+  - Existing queue tables remain unchanged
+  - New tables: servers, nodes, groups, group_members, settings, alert_rules, alert_history, alert_cooldowns, acl_users, acl_roles, aliases, templates, schedules
+
+### Migration Guide
+1. Upgrade to v3.2.0 via pip or installer
+2. Run migration: `python -m cloudmesh.core.migrate`
+3. Verify migration: Check new tables exist in `cloudmesh.db`
+4. Old JSON files are backed up automatically
+5. If issues occur, restore from backup and report bug
+
+### Technical Details
+- Database: SQLite with WAL mode (existing from v3.1.0)
+- Schema: Extended with normalized tables and foreign key constraints
+- Encryption: Existing `.secret.key` reused for sensitive data
+- Backups: Database backups stored in `backups/` directory
+- Compatibility: Python 3.10+ (no change)
+
 ## [3.1.0] - 2026-10-01
 
 ### Changed
