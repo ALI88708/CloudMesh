@@ -14,6 +14,8 @@ class GroupsManager:
     legacy JSON groups are imported once into SQLite on init.
     """
 
+    _IMPORT_MARKER = "legacy_groups_imported"
+
     def __init__(self, security_manager, storage=None):
         self.security = security_manager
         self.config = self.security.load_config()
@@ -25,8 +27,16 @@ class GroupsManager:
         self._import_legacy_groups()
 
     def _import_legacy_groups(self):
+        """Import JSON-config groups once (guarded by a persistent marker).
+
+        An empty groups table is valid (e.g. after a restore), so the marker
+        — not table emptiness — decides. With the marker present, SQLite is
+        authoritative and the JSON mirror is repaired from it.
+        """
         try:
-            if self.storage.list_groups():
+            # NOTE: get_setting JSON-decodes "1" to int 1; normalize before compare.
+            if str(self.storage.get_setting(self._IMPORT_MARKER, None)) == "1":
+                self._push_mirror_from_storage()
                 return
         except Exception:
             return
@@ -42,6 +52,24 @@ class GroupsManager:
                     self.storage.add_to_group(group_name, device, "server")
                 except Exception:
                     continue
+        try:
+            self.storage.set_setting(self._IMPORT_MARKER, "1")
+        except Exception:
+            pass
+        self._push_mirror_from_storage()
+
+    def _push_mirror_from_storage(self):
+        """Repair the JSON mirror from SQLite (SQLite wins)."""
+        try:
+            groups = self.storage.list_groups()
+        except Exception:
+            return
+        if groups != self.config.get("groups", {}):
+            self.config["groups"] = dict(groups)
+            try:
+                self._save()
+            except Exception:
+                pass
 
     def _save(self):
         self.security.save_config(self.config)
@@ -125,9 +153,3 @@ class GroupsManager:
         for device in devices:
             self.add_to_group(new_name, device)
         self.delete_group(old_name)
-
-    def rename_group(self, old_name, new_name):
-        if old_name not in self.config["groups"]:
-            raise ValueError(f"Group '{old_name}' not found")
-        self.config["groups"][new_name] = self.config["groups"].pop(old_name)
-        self._save()

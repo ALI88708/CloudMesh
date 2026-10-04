@@ -4,6 +4,15 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.2.3] - 2026-10-04
+
+### Fixed (re-review dca74bc)
+- **Restore resurrection**: legacy one-time import is now guarded by a persistent settings marker instead of table emptiness; with the marker present SQLite is authoritative and the JSON mirror is repaired from it (empty stays empty after restoring an empty backup). Same fix applied to groups.
+- **Marker type trap**: `get_setting` JSON-decodes `"1"` to int `1`; marker checks normalize with `str(...)` so the guard actually matches (previously always false).
+- **Duplicate `rename_group`**: removed the leftover JSON-only definition that shadowed the storage-wired one; rename now updates SQLite, the fresh-manager view, and the mirror.
+- **Minor**: `cm storage` validates the action before creating `StorageManager` (no stray DB/key files on usage errors).
+- **Tests**: resurrection scenario, once-only import, duplicate-definition guard, rename reflection (177 passed).
+
 ## [3.2.2] - 2026-10-04
 
 ### Fixed (follow-up review 2026-10-04)

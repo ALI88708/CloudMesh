@@ -18,6 +18,7 @@ class ServerManager:
     """
 
     _LEGACY_FIELDS = ("host", "user", "port", "key_path", "password", "status", "os_type")
+    _IMPORT_MARKER = "legacy_servers_imported"
 
     def __init__(self, security_manager, storage=None):
         self.security = security_manager
@@ -31,9 +32,18 @@ class ServerManager:
         self._import_legacy_servers()
 
     def _import_legacy_servers(self):
-        """One-time best-effort import of JSON-config servers into SQLite."""
+        """Import JSON-config servers into SQLite once (guarded by a marker).
+
+        An empty servers table is a valid state (e.g. after restoring a
+        backup with no servers), so the persistent marker — not table
+        emptiness — decides whether the legacy import runs. When the marker
+        is present, SQLite is authoritative and the JSON mirror is repaired
+        from it instead.
+        """
         try:
-            if self.storage.list_servers():
+            # NOTE: get_setting JSON-decodes "1" to int 1; normalize before compare.
+            if str(self.storage.get_setting(self._IMPORT_MARKER, None)) == "1":
+                self._push_mirror_from_storage()
                 return
         except Exception:
             return
@@ -51,6 +61,27 @@ class ServerManager:
                 )
             except Exception:
                 continue
+        try:
+            self.storage.set_setting(self._IMPORT_MARKER, "1")
+        except Exception:
+            pass
+        self._push_mirror_from_storage()
+
+    def _push_mirror_from_storage(self):
+        """Repair the JSON mirror from SQLite (SQLite wins)."""
+        try:
+            rows = {
+                s["name"]: {k: s.get(k) for k in self._LEGACY_FIELDS}
+                for s in self.storage.list_servers()
+            }
+        except Exception:
+            return
+        if rows != self.config.get("servers", {}):
+            self.config["servers"] = rows
+            try:
+                self._save()
+            except Exception:
+                pass
 
     def _save(self):
         self.security.save_config(self.config)
