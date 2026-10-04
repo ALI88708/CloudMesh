@@ -477,7 +477,10 @@ class StorageManager:
         """Insert or update a node atomically.
 
         Unlike remove+re-add, a failed upsert leaves the existing row
-        (and its encrypted auth key) intact.
+        (and its encrypted auth key) intact. Return True after committing or
+        False on SQL/commit errors. Connection errors and key loading or
+        encryption errors propagate. Nonempty auth keys are encrypted;
+        None and empty keys are stored as empty strings.
         """
         with self._get_connection() as conn:
             try:
@@ -607,7 +610,11 @@ class StorageManager:
     def add_alert_history(self, rule_name: str, server: str, metric: str, value: float,
                           threshold: float, operator: str, severity: str,
                           timestamp=None) -> None:
-        """Add alert to history. An explicit timestamp preserves original event times on import."""
+        """Add an alert to history, preserving an explicit event timestamp.
+
+        timestamp=None uses SQLite's current timestamp. Database errors
+        propagate.
+        """
         with self._get_connection() as conn:
             if timestamp is None:
                 conn.execute("""

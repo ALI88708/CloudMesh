@@ -1966,8 +1966,9 @@ def cmd_version(args):
 def cmd_doctor(args):
     """Print local source, configuration, and storage health checks.
 
-    Storage checks may initialize database/key files, import nodes, and
-    refresh their mirror. Report storage failures in the table; source read
+    args.base_dir selects source files, node/schedule mirrors, and storage,
+    defaulting to the package directory. Storage checks may initialize
+    database/key files. Report storage failures in the table; source read
     and file stat errors outside those checks propagate. Failed checks do
     not set an exit status.
     """
@@ -2122,6 +2123,11 @@ def cmd_doctor(args):
 
 
 def cmd_update(args):
+    """Fetch origin/main and offer to pull changes and install requirements.
+
+    args.yes skips confirmation. Print progress and errors; subprocess
+    timeouts and other update failures are caught.
+    """
     import subprocess
     import shutil
 
@@ -2201,6 +2207,12 @@ def cmd_update(args):
 
 
 def cmd_status(args):
+    """Probe configured nodes and print status and resource percentages.
+
+    args.as_json selects JSON output; otherwise print a table and online
+    count. Loading node keys may initialize storage. Per-node connection
+    and metric errors are caught so remaining nodes can be checked.
+    """
     servers = _load_node_keys()
     if not servers:
         if getattr(args, "as_json", False):

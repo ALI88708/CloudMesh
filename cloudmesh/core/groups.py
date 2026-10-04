@@ -30,6 +30,8 @@ class GroupsManager:
         An empty groups table is valid (e.g. after a restore), so the marker
         — not table emptiness — decides. With the marker present, SQLite is
         authoritative and the JSON mirror is repaired from it.
+        Group/member write exceptions leave the marker unset and mirror
+        untouched; successful writes before a failure remain in storage.
         """
         try:
             if self.storage.legacy_imported("groups"):

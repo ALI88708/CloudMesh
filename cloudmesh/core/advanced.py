@@ -167,8 +167,8 @@ class ScheduleManager:
     def _ensure_imported(self):
         """Import cached schedules unless marked, then refresh the mirror.
 
-        Skip individual storage failures and attempt to mark the import even
-        if some entries failed.
+        Skip failed entries, but leave the marker unset and mirror untouched
+        if any storage write raises.
         """
         try:
             if self.storage.legacy_imported("schedules"):
@@ -648,8 +648,8 @@ class TemplateManager:
         """Import cached templates unless marked, then refresh the mirror.
 
         Accept command strings or dictionaries with template metadata.
-        Skip individual storage failures and attempt to mark the import
-        even if some entries failed.
+        Skip failed entries, but leave the marker unset and mirror untouched
+        if any storage write raises.
         """
         try:
             if self.storage.legacy_imported("templates"):

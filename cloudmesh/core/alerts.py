@@ -53,8 +53,10 @@ class AlertManager:
     def _ensure_imported(self):
         """Import legacy rules, history, and cooldowns unless already marked.
 
-        Skip failed entries and attempt to mark the import even after partial
-        failure, then refresh the JSON mirror.
+        Read or entry import failures leave the marker unset and mirror
+        untouched. Successful history imports preserve supplied timestamps.
+        Malformed rule/history collections or cooldown mappings can raise
+        TypeError or AttributeError.
         """
         try:
             if self.storage.legacy_imported("alerts"):

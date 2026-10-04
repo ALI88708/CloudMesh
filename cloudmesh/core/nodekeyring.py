@@ -84,8 +84,9 @@ class NodeKeyring:
     def _ensure_imported(self) -> None:
         """Import legacy node dictionaries unless marked, then refresh JSON.
 
-        Skip invalid entries and storage failures; attempt to mark the import
-        even if some nodes failed.
+        Skip non-dictionary entries. Read errors, non-object JSON, or failed
+        node inserts leave the marker unset and mirror untouched, allowing
+        a later retry. Successful inserts before a failure remain in storage.
         """
         try:
             if self.storage.legacy_imported("nodes"):
@@ -128,7 +129,10 @@ class NodeKeyring:
         self._push_mirror()
 
     def _push_mirror(self) -> None:
-        """Refresh changed JSON from stored nodes; leave it intact on read failure."""
+        """Refresh changed JSON from stored nodes; leave it intact on read failure.
+
+        Mirror write errors are suppressed; writer import errors propagate.
+        """
         try:
             rows = {n["name"]: self._to_legacy(n) for n in self.storage.list_nodes()}
         except Exception:
@@ -158,7 +162,7 @@ class NodeKeyring:
         entries and attempt to remove stored names absent from keys. Storage
         failures are suppressed, so updates may be partial and the mirror
         reflects stored rows, not necessarily keys. Invalid mapping conversion
-        raises TypeError or ValueError.
+        raises TypeError or ValueError. Mirror writer import errors propagate.
         """
         keys = dict(keys or {})
         try:

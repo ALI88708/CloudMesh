@@ -235,9 +235,10 @@ def create_alias(name, command, aliases_file=None, storage=None):
 
     command may be a value converted to text or a dictionary containing
     command. With storage, attempt a marker-guarded JSON import and mirror
-    the updated database; storage failures fall back to writing JSON alone.
-    Mirror write errors are suppressed on the storage path, but file write
-    errors from the JSON-only path propagate.
+    the updated database. After a partial import, leave the marker unset
+    and merge only this alias into JSON. Storage exceptions fall back to
+    writing JSON alone. Full mirror refresh errors are suppressed; errors
+    from the fallback JSON write propagate.
     """
     f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
     if isinstance(command, dict):
@@ -289,9 +290,10 @@ def _push_alias_mirror(storage, f):
 
 
 def get_aliases(aliases_file=None, storage=None):
-    """Return aliases from storage, falling back to JSON when empty or failing.
+    """Return aliases from storage, including an empty result.
 
     Supplying storage also attempts a marker-guarded legacy import.
+    Without storage or when storage raises, fall back to JSON.
     Missing or unreadable JSON yields an empty dictionary.
     """
     f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")

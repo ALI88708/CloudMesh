@@ -600,10 +600,11 @@ class MigrationManager:
         """Run full migration and return counts by data type.
 
         dry_run=True only previews counts and writes nothing (no DB, no dirs).
-        Otherwise, attempt imports and record legacy markers even when some
-        items fail. self.migrated indicates that the import pass finished;
-        consult self.errors for collected failures. Config key read/validation
-        errors and malformed config shapes can propagate.
+        Otherwise, record markers only for eligible kinds whose import section
+        adds no errors. self.migrated indicates that the import pass finished;
+        consult self.errors for collected failures. Section exceptions are
+        recorded with a zero count; earlier writes remain. Config key read
+        and validation errors propagate.
         """
         logger.info("Starting migration from JSON to extended SQLite storage...")
 
