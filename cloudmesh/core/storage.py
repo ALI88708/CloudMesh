@@ -446,7 +446,13 @@ class StorageManager:
     # Node operations
     def add_node(self, name: str, host: str, port: int = 9999, auth_key: str = "",
                  tls: bool = False, ca_file: Optional[str] = None) -> bool:
-        """Add a node. Auth keys are always encrypted, never plaintext."""
+        """Add a node, encrypting nonempty auth keys; None is stored as empty.
+
+        tls and ca_file store connection preferences without validating the
+        certificate path. Return True after insertion or False on a constraint
+        violation, including duplicate names. Other database errors and key
+        loading or encryption errors propagate.
+        """
         with self._get_connection() as conn:
             try:
                 encrypted_key = self._encrypt_secret(auth_key)
@@ -653,7 +659,10 @@ class StorageManager:
             conn.commit()
 
     def list_alert_cooldowns(self) -> Dict[str, float]:
-        """Return {rule|server: timestamp} cooldown map."""
+        """Return {rule|server: timestamp}, with times in seconds since the epoch.
+
+        Database errors propagate.
+        """
         with self._get_connection() as conn:
             rows = conn.execute(
                 "SELECT rule_name, server, last_notified FROM alert_cooldowns"
@@ -734,7 +743,12 @@ class StorageManager:
     def upsert_schedule(self, name: str, command: str, interval_seconds: int,
                         enabled: bool = True, last_run=None, server=None,
                         created=None, run_count: int = 0) -> None:
-        """Insert or replace a scheduled task."""
+        """Insert or update a scheduled task by name.
+
+        Preserve an existing created value when created is None; other supplied
+        fields are overwritten. interval_seconds is stored without range validation.
+        Database errors propagate.
+        """
         with self._get_connection() as conn:
             conn.execute("""
                 INSERT INTO schedules
@@ -753,7 +767,10 @@ class StorageManager:
             conn.commit()
 
     def remove_schedule(self, name: str) -> bool:
-        """Remove a scheduled task."""
+        """Delete a scheduled task and return whether a row existed.
+
+        Database errors propagate.
+        """
         with self._get_connection() as conn:
             cursor = conn.execute("DELETE FROM schedules WHERE name = ?", (name,))
             conn.commit()
@@ -768,7 +785,11 @@ class StorageManager:
     # Template operations
     def upsert_template(self, name: str, command: str, description: str = "",
                         created=None) -> None:
-        """Insert or replace a command template."""
+        """Insert or update a command template by name.
+
+        Preserve an existing created value when created is None, and store an
+        empty description for a false value. Database errors propagate.
+        """
         with self._get_connection() as conn:
             conn.execute("""
                 INSERT INTO templates (name, command, description, created)
@@ -781,7 +802,10 @@ class StorageManager:
             conn.commit()
 
     def remove_template(self, name: str) -> bool:
-        """Remove a command template."""
+        """Delete a command template and return whether a row existed.
+
+        Database errors propagate.
+        """
         with self._get_connection() as conn:
             cursor = conn.execute("DELETE FROM templates WHERE name = ?", (name,))
             conn.commit()
@@ -805,7 +829,10 @@ class StorageManager:
             conn.commit()
 
     def remove_alias(self, name: str) -> bool:
-        """Remove a command alias."""
+        """Delete a command alias and return whether a row existed.
+
+        Database errors propagate.
+        """
         with self._get_connection() as conn:
             cursor = conn.execute("DELETE FROM aliases WHERE name = ?", (name,))
             conn.commit()
@@ -819,7 +846,11 @@ class StorageManager:
 
     # Backup operations
     def _ensure_column(self, conn, table: str, column: str, ddl: str) -> None:
-        """Add a column to an existing table if missing (schema upgrades)."""
+        """Attempt to add a missing column, suppressing SQLite errors.
+
+        table, column, and ddl must be trusted SQL fragments. The caller owns
+        the connection and commits the schema change.
+        """
         try:
             existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         except sqlite3.Error:
@@ -831,7 +862,10 @@ class StorageManager:
                 logger.warning("Failed to add column %s.%s: %s", table, column, e)
 
     def legacy_imported(self, kind: str) -> bool:
-        """Whether the one-time legacy JSON import for `kind` already ran.
+        """Return whether the legacy JSON import marker for kind is set.
+
+        Return False if the marker cannot be read. A set marker records an
+        import attempt, not that every item was imported successfully.
 
         NOTE: get_setting JSON-decodes, so a stored "1" reads back as int 1;
         normalize before comparing.
@@ -842,6 +876,7 @@ class StorageManager:
             return False
 
     def mark_legacy_imported(self, kind: str) -> None:
+        """Attempt to record the legacy import marker for kind, suppressing errors."""
         try:
             self.set_setting(f"legacy_{kind}_imported", "1")
         except Exception as e:

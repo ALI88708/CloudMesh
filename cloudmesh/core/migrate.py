@@ -100,7 +100,12 @@ class MigrationManager:
         return count
     
     def migrate_nodes(self) -> int:
-        """Migrate nodes from .node_keys.json."""
+        """Import .node_keys.json and return the number of nodes added.
+
+        Accept node dictionaries or bare host values. Missing input returns
+        zero; read and per-node failures, including duplicates, are collected
+        in self.errors instead of raised.
+        """
         node_keys_file = self.base_dir / ".node_keys.json"
         if not node_keys_file.exists():
             logger.info("No .node_keys.json found")
@@ -354,7 +359,13 @@ class MigrationManager:
             return 0
     
     def migrate_templates(self) -> int:
-        """Migrate templates from .templates.json."""
+        """Import .templates.json and return the number of templates written.
+
+        Accept command values or dictionaries with command, description, and
+        created fields. Update existing names, retaining their creation value
+        when incoming created is None. Missing input returns zero; read and
+        per-template failures are collected in self.errors.
+        """
         templates_file = self.base_dir / ".templates.json"
         if not templates_file.exists():
             logger.info("No .templates.json found")
@@ -399,7 +410,12 @@ class MigrationManager:
             return 0
     
     def migrate_schedule(self) -> int:
-        """Migrate schedule from .schedule.json."""
+        """Import .schedule.json and return the number of schedules written.
+
+        Update existing names, preserving created when the incoming value is
+        None. Legacy interval values are seconds, defaulting to 3600. Missing
+        input returns zero; read and per-schedule failures go to self.errors.
+        """
         schedule_file = self.base_dir / ".schedule.json"
         if not schedule_file.exists():
             logger.info("No .schedule.json found")
@@ -488,15 +504,24 @@ class MigrationManager:
         return counts
 
     def verify(self) -> Dict:
-        """Compare JSON sources with SQLite content without writing.
+        """Compare JSON and SQLite names or counts without importing records.
 
-        Returns {"ok": bool, "checks": [{type, json, sqlite, match, detail}]}.
+        Compare name sets for servers, nodes, and groups, and counts for alert
+        rules, ACL users, aliases, templates, and schedules. Field values and
+        settings are not compared. Accessing storage may initialize its files,
+        schema, and defaults.
+
+        Return ok, checks (type, json, sqlite, match, detail), and accumulated
+        errors, including earlier errors on this manager. ok requires all
+        checks to match and no errors. Storage query failures are collected;
+        key read/validation errors and malformed config shapes can propagate.
         """
         config = self._load_encrypted_config()
         expected = self._preview_counts(config)
         checks = []
 
         def _names(rows, key="name"):
+            """Collect the selected field into a set, or return an empty set on error."""
             try:
                 return {r[key] for r in rows}
             except Exception:
@@ -563,12 +588,23 @@ class MigrationManager:
         return {"ok": ok, "checks": checks, "errors": list(self.errors)}
 
     def _count_table(self, table: str) -> int:
+        """Count rows in an internal table; propagate storage errors.
+
+        table must be a trusted SQL identifier, not user input.
+        """
         with self.storage._get_connection() as conn:
             row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
             return int(row["n"])
 
     def migrate_all(self, dry_run: bool = False) -> Dict[str, int]:
-        """Run full migration. dry_run=True writes nothing (no DB, no dirs)."""
+        """Run full migration and return counts by data type.
+
+        dry_run=True only previews counts and writes nothing (no DB, no dirs).
+        Otherwise, attempt imports and record legacy markers even when some
+        items fail. self.migrated indicates that the import pass finished;
+        consult self.errors for collected failures. Config key read/validation
+        errors and malformed config shapes can propagate.
+        """
         logger.info("Starting migration from JSON to extended SQLite storage...")
 
         if dry_run:

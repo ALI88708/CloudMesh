@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 class NodeKeyring:
     def __init__(self, storage=None, json_path=None, base_dir=None):
+        """Open a keyring and attempt a marker-guarded JSON import.
+
+        Create storage under base_dir if omitted. json_path defaults to
+        .node_keys.json under base_dir, or the supplied storage's base directory.
+        Storage initialization errors propagate.
+        """
         if storage is None:
             storage = StorageManager(base_dir)
         self.storage = storage
@@ -37,6 +43,7 @@ class NodeKeyring:
     # -- internal ------------------------------------------------------
     @staticmethod
     def _to_legacy(row: dict) -> dict:
+        """Return host, port, and key fields plus truthy TLS and CA settings."""
         entry = {
             "host": row.get("host"),
             "port": row.get("port", 9999),
@@ -49,6 +56,7 @@ class NodeKeyring:
         return entry
 
     def _read_json(self) -> Dict:
+        """Return the JSON keyring, or {} for missing, unreadable, or non-object data."""
         if not self.json_path.exists():
             return {}
         try:
@@ -58,6 +66,11 @@ class NodeKeyring:
             return {}
 
     def _write_json(self, keys: Dict) -> None:
+        """Write a private JSON mirror, creating its parent directory if needed.
+
+        Serialization and filesystem errors are suppressed; failure to import
+        the writer propagates.
+        """
         try:
             from cloudmesh.core.node_client import save_private_json
         except ImportError:
@@ -69,6 +82,11 @@ class NodeKeyring:
             logger.warning("Failed to write node keys mirror: %s", e)
 
     def _ensure_imported(self) -> None:
+        """Import legacy node dictionaries unless marked, then refresh JSON.
+
+        Skip invalid entries and storage failures; attempt to mark the import
+        even if some nodes failed.
+        """
         try:
             if self.storage.legacy_imported("nodes"):
                 self._push_mirror()
@@ -110,6 +128,7 @@ class NodeKeyring:
         self._push_mirror()
 
     def _push_mirror(self) -> None:
+        """Refresh changed JSON from stored nodes; leave it intact on read failure."""
         try:
             rows = {n["name"]: self._to_legacy(n) for n in self.storage.list_nodes()}
         except Exception:
@@ -119,7 +138,11 @@ class NodeKeyring:
 
     # -- public dict-style API ------------------------------------------
     def load(self) -> Dict:
-        """Return all nodes in legacy keyring shape (SQLite first)."""
+        """Return nodes by name with host, port, key, and optional TLS settings.
+
+        Use SQLite rows when nonempty; otherwise fall back to the JSON mirror,
+        including on storage failure. Missing or unreadable JSON yields {}.
+        """
         try:
             rows = self.storage.list_nodes()
             if rows:
@@ -129,7 +152,14 @@ class NodeKeyring:
         return self._read_json()
 
     def save(self, keys: Dict) -> None:
-        """Reconcile SQLite with `keys`, then rewrite the JSON mirror."""
+        """Reconcile SQLite with a legacy keyring and refresh JSON from storage.
+
+        Accept a name-to-node mapping; None means empty. Skip non-dictionary
+        entries and attempt to remove stored names absent from keys. Storage
+        failures are suppressed, so updates may be partial and the mirror
+        reflects stored rows, not necessarily keys. Invalid mapping conversion
+        raises TypeError or ValueError.
+        """
         keys = dict(keys or {})
         try:
             current = {n["name"] for n in self.storage.list_nodes()}

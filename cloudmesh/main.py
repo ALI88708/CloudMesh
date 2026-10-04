@@ -631,6 +631,12 @@ def cmd_database(args):
 
 
 def cmd_migrate(args):
+    """Print migration, preview, or verification results for args.base_dir.
+
+    verify takes precedence over dry_run and may initialize storage.
+    Raise SystemExit(1) for a reported failure; uncaught migration,
+    verification, and backup errors propagate.
+    """
     from cloudmesh.core.migrate import MigrationManager, run_migration
     from pathlib import Path as _Path
     base = _Path(args.base_dir) if getattr(args, "base_dir", None) else None
@@ -1550,6 +1556,11 @@ def cmd_node_info(args):
 
 
 def _get_node_keyring():
+    """Open the node keyring using storage beside NODE_KEYS_FILE.
+
+    Construction may import legacy nodes and refresh the JSON mirror;
+    initialization errors propagate.
+    """
     try:
         from cloudmesh.core.nodekeyring import NodeKeyring
     except ImportError:
@@ -1560,6 +1571,10 @@ def _get_node_keyring():
 
 
 def _load_node_keys():
+    """Load the node keyring, falling back to JSON if keyring access raises.
+
+    Return {} if the fallback file is missing or cannot be decoded.
+    """
     try:
         return _get_node_keyring().load()
     except Exception:
@@ -1572,6 +1587,11 @@ def _load_node_keys():
 
 
 def _save_node_keys(keys):
+    """Save through the keyring, using private JSON if keyring access raises.
+
+    Errors from the fallback JSON serialization or file write propagate.
+    Storage failures suppressed by the keyring do not trigger the fallback.
+    """
     try:
         _get_node_keyring().save(keys)
     except Exception:
@@ -1905,6 +1925,11 @@ def cmd_report(args):
 
 
 def cmd_alias(args):
+    """Remove, list, or create aliases, in that precedence order, and print results.
+
+    Initialize storage in the package directory. Storage initialization and
+    JSON fallback write errors propagate.
+    """
     from cloudmesh.core.storage import StorageManager
     storage = StorageManager(Path(__file__).parent)
     if args.remove:
@@ -1939,6 +1964,13 @@ def cmd_version(args):
 
 
 def cmd_doctor(args):
+    """Print local source, configuration, and storage health checks.
+
+    Storage checks may initialize database/key files, import nodes, and
+    refresh their mirror. Report storage failures in the table; source read
+    and file stat errors outside those checks propagate. Failed checks do
+    not set an exit status.
+    """
     console.print(Panel("[bold bright_blue]CloudMesh Doctor — Security & Health Check[/]", border_style="bright_blue"))
     checks = []
     base = Path(getattr(args, "base_dir", None) or Path(__file__).parent)
@@ -3554,6 +3586,11 @@ def cmd_job_checkpoints(args):
 
 
 def main():
+    """Parse process arguments and dispatch the selected CloudMesh command.
+
+    Print help and return when no command is given. Argument parsing may
+    raise SystemExit; command handler exceptions propagate.
+    """
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
     parser.add_argument("--version", "-V", action="version", version=f"CloudMesh {get_version()['version']}")
     subparsers = parser.add_subparsers(dest="command", help="Command")

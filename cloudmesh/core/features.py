@@ -212,6 +212,10 @@ def generate_report(server_mgr, monitor, node_keys=None):
 
 
 def _read_alias_mirror(f):
+    """Read a name-to-command map, accepting strings or command dictionaries.
+
+    Missing, unreadable, invalid, or non-object JSON yields an empty map.
+    """
     aliases = {}
     if f.exists():
         try:
@@ -227,6 +231,14 @@ def _read_alias_mirror(f):
 
 
 def create_alias(name, command, aliases_file=None, storage=None):
+    """Create or replace an alias and return True on completion.
+
+    command may be a value converted to text or a dictionary containing
+    command. With storage, attempt a marker-guarded JSON import and mirror
+    the updated database; storage failures fall back to writing JSON alone.
+    Mirror write errors are suppressed on the storage path, but file write
+    errors from the JSON-only path propagate.
+    """
     f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
     if isinstance(command, dict):
         command = command.get("command", "")
@@ -264,6 +276,7 @@ def create_alias(name, command, aliases_file=None, storage=None):
 
 
 def _push_alias_mirror(storage, f):
+    """Rewrite changed alias JSON from storage, suppressing read/write errors."""
     try:
         rows = storage.list_aliases()
     except Exception:
@@ -276,6 +289,11 @@ def _push_alias_mirror(storage, f):
 
 
 def get_aliases(aliases_file=None, storage=None):
+    """Return aliases from storage, falling back to JSON when empty or failing.
+
+    Supplying storage also attempts a marker-guarded legacy import.
+    Missing or unreadable JSON yields an empty dictionary.
+    """
     f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
     if storage is not None:
         try:
@@ -297,6 +315,11 @@ def get_aliases(aliases_file=None, storage=None):
 
 
 def remove_alias(name, aliases_file=None, storage=None):
+    """Remove an alias and return whether it was found before deletion.
+
+    With storage, suppress database and mirror errors; True does not confirm
+    a successful deletion. Without storage, JSON file write errors propagate.
+    """
     f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
     if storage is not None:
         try:
@@ -318,6 +341,10 @@ def remove_alias(name, aliases_file=None, storage=None):
 
 
 def get_version():
+    """Return package version, Python version, and platform information.
+
+    Use 3.3.0 when installed package metadata cannot be read.
+    """
     try:
         from importlib.metadata import version as _pkg_version
         try:

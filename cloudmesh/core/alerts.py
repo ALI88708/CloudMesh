@@ -30,6 +30,11 @@ class AlertManager:
     """
 
     def __init__(self, resource_monitor, base_dir=None, notifier=None, storage=None):
+        """Attach a metric monitor and optional notifier, then import legacy data.
+
+        base_dir locates alerts.json and, when storage is omitted, the new
+        StorageManager. Storage initialization errors propagate.
+        """
         self.monitor = resource_monitor
         if base_dir is None:
             base_dir = Path(__file__).parent.parent
@@ -46,6 +51,11 @@ class AlertManager:
         self._ensure_imported()
 
     def _ensure_imported(self):
+        """Import legacy rules, history, and cooldowns unless already marked.
+
+        Skip failed entries and attempt to mark the import even after partial
+        failure, then refresh the JSON mirror.
+        """
         try:
             if self.storage.legacy_imported("alerts"):
                 self._push_mirror()
@@ -108,6 +118,10 @@ class AlertManager:
         self._push_mirror()
 
     def _push_mirror(self):
+        """Write rules, up to 500 recent alerts, and cooldowns to JSON.
+
+        Suppress storage, serialization, and file write errors.
+        """
         try:
             rules = self.storage.list_alert_rules()
             history = [
@@ -134,6 +148,15 @@ class AlertManager:
 
     def add_rule(self, name, metric, threshold, operator="gt", server=None,
                  severity="warning", cooldown=DEFAULT_COOLDOWN):
+        """Attempt to store an enabled rule and return its requested values.
+
+        Recognized metrics are cpu, ram, disk, load, and gpu; threshold uses
+        the monitor's units. Operators are gt, lt, gte, lte, and eq. A missing
+        server applies the rule to any server being checked. Unknown severity
+        becomes warning; cooldown is converted to integer seconds and clamped
+        to zero. Conversion errors propagate. Duplicate rules and persistence
+        failures do not prevent returning the rule dictionary.
+        """
         if severity not in SEVERITY_LEVELS:
             severity = "warning"
         rule = {
@@ -157,6 +180,7 @@ class AlertManager:
         return rule
 
     def remove_rule(self, name):
+        """Attempt to delete the named rule and refresh JSON, suppressing errors."""
         try:
             self.storage.remove_alert_rule(name)
         except Exception as e:
@@ -164,6 +188,7 @@ class AlertManager:
         self._push_mirror()
 
     def list_rules(self):
+        """Return stored rule dictionaries, or an empty list on storage failure."""
         try:
             return self.storage.list_alert_rules()
         except Exception as e:
@@ -189,6 +214,12 @@ class AlertManager:
         return f"{rule_name}|{server}"
 
     def _cooldown_passed(self, key, rule):
+        """Return whether the rule's cooldown in seconds has elapsed.
+
+        key is formatted as rule_name|server. Missing or unreadable timestamps
+        allow notification. Invalid cooldown conversion or timestamp arithmetic
+        errors propagate when a nonzero timestamp is available.
+        """
         try:
             rule_name, server = key.split("|")
             last = self.storage.get_alert_cooldown(rule_name, server)
@@ -206,6 +237,14 @@ class AlertManager:
         return line
 
     def check_alerts(self, server_names=None, send_notifications=True):
+        """Return triggered alert dictionaries and attempt to record each one.
+
+        If server_names is None, check only servers explicitly named in rules.
+        Cooldowns gate notifications, not returned alerts or history; elapsed
+        cooldowns are updated even when send_notifications is False. Failures
+        within a server's check are suppressed and remaining servers continue.
+        Refresh the JSON mirror after checking.
+        """
         rules = self.list_rules()
         if server_names is None:
             server_names = list(dict.fromkeys(r.get("server") for r in rules if r.get("server")))
@@ -295,6 +334,11 @@ class AlertManager:
             logger.error("Notification error: %s", e)
 
     def get_history(self, limit=50):
+        """Return recent alert dictionaries in descending timestamp order.
+
+        limit is the SQLite row limit: zero returns none and a negative value
+        removes the limit. Storage or conversion failures return an empty list.
+        """
         try:
             return [
                 {
@@ -314,6 +358,10 @@ class AlertManager:
             return []
 
     def clear_history(self):
+        """Attempt to clear stored history and refresh JSON, preserving cooldowns.
+
+        Storage and mirror write errors are suppressed.
+        """
         try:
             self.storage.clear_alert_history()
         except Exception as e:

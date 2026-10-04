@@ -138,6 +138,12 @@ class ScheduleManager:
     """
 
     def __init__(self, schedule_file=None, storage=None, base_dir=None):
+        """Load schedules and attempt a marker-guarded legacy import.
+
+        If storage is omitted, create it in base_dir or the schedule file's
+        parent directory; base_dir does not relocate the JSON file.
+        Storage initialization errors propagate.
+        """
         self.file = Path(schedule_file or Path(__file__).parent.parent / ".schedule.json")
         self._schedules = self._load()
         if storage is None:
@@ -159,6 +165,11 @@ class ScheduleManager:
         self.file.write_text(json.dumps(self._schedules, indent=2))
 
     def _ensure_imported(self):
+        """Import cached schedules unless marked, then refresh the mirror.
+
+        Skip individual storage failures and attempt to mark the import even
+        if some entries failed.
+        """
         try:
             if self.storage.legacy_imported("schedules"):
                 self._push_mirror()
@@ -192,6 +203,11 @@ class ScheduleManager:
         self._push_mirror()
 
     def _push_mirror(self):
+        """Refresh cached schedules and changed JSON from SQLite.
+
+        Storage read failures leave the cache intact; mirror write failures
+        are suppressed.
+        """
         try:
             rows = {
                 s["name"]: {
@@ -215,6 +231,11 @@ class ScheduleManager:
                 pass
 
     def _sync_one(self, name):
+        """Refresh a cached schedule if found in SQLite and save the mirror.
+
+        Keep the cached entry on a missing row or read failure, and suppress
+        mirror write failures.
+        """
         try:
             for s in self.storage.list_schedules():
                 if s["name"] == name:
@@ -236,6 +257,11 @@ class ScheduleManager:
             pass
 
     def add(self, name, command, interval_seconds=3600, server=None):
+        """Add or replace an enabled schedule, resetting its run history.
+
+        The interval is in seconds and server is an optional target name.
+        Return True even if storage or mirror writes fail.
+        """
         entry = {
             "command": command,
             "interval": interval_seconds,
@@ -258,6 +284,11 @@ class ScheduleManager:
         return True
 
     def remove(self, name):
+        """Remove a schedule from storage and the local cache.
+
+        Return whether the name was cached. Storage errors are suppressed;
+        JSON serialization and file write errors propagate.
+        """
         try:
             self.storage.remove_schedule(name)
         except Exception:
@@ -289,6 +320,12 @@ class ScheduleManager:
         return f"{mins}m {secs}s"
 
     def toggle(self, name, enabled=None):
+        """Set a cached schedule's enabled state, or invert it for None.
+
+        Return False for an uncached name, otherwise True after saving.
+        Storage errors are suppressed; JSON serialization and file write
+        errors propagate.
+        """
         if name in self._schedules:
             if enabled is None:
                 enabled = not self._schedules[name]["enabled"]
@@ -581,6 +618,12 @@ class TemplateManager:
     """
 
     def __init__(self, templates_file=None, storage=None, base_dir=None):
+        """Load templates and attempt a marker-guarded legacy import.
+
+        If storage is omitted, create it in base_dir or the template file's
+        parent directory; base_dir does not relocate the JSON file.
+        Storage initialization errors propagate.
+        """
         self.file = Path(templates_file or Path(__file__).parent.parent / ".templates.json")
         self._templates = self._load()
         if storage is None:
@@ -602,6 +645,12 @@ class TemplateManager:
         self.file.write_text(json.dumps(self._templates, indent=2))
 
     def _ensure_imported(self):
+        """Import cached templates unless marked, then refresh the mirror.
+
+        Accept command strings or dictionaries with template metadata.
+        Skip individual storage failures and attempt to mark the import
+        even if some entries failed.
+        """
         try:
             if self.storage.legacy_imported("templates"):
                 self._push_mirror()
@@ -632,6 +681,11 @@ class TemplateManager:
         self._push_mirror()
 
     def _push_mirror(self):
+        """Refresh cached templates and changed JSON from SQLite.
+
+        Storage read failures leave the cache intact; mirror write failures
+        are suppressed.
+        """
         try:
             rows = {
                 t["name"]: {
@@ -651,6 +705,11 @@ class TemplateManager:
                 pass
 
     def add(self, name, command, description=""):
+        """Add or replace a template with a new creation timestamp.
+
+        Update the cache and JSON mirror even if the storage write fails.
+        JSON serialization and file write errors propagate.
+        """
         entry = {"command": command, "description": description, "created": datetime.now().isoformat()}
         try:
             self.storage.upsert_template(
@@ -668,6 +727,11 @@ class TemplateManager:
         return self._templates
 
     def remove(self, name):
+        """Remove a template from storage and the local cache.
+
+        Return whether the name was cached. Storage errors are suppressed;
+        JSON serialization and file write errors propagate.
+        """
         try:
             self.storage.remove_template(name)
         except Exception:
