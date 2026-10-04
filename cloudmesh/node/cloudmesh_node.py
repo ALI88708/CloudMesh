@@ -139,6 +139,67 @@ def _check_tripwire(key_used):
     return False, None
 
 
+class _StandaloneDDoSProtection:
+    """Minimal rate-limit/ban fallback used only when core.ddos is absent.
+
+    Mirrors the DDoSProtection interface (check_connection, release_connection,
+    on_auth_failure, on_auth_success) so the standalone agent keeps basic
+    brute-force protection without the core package.
+    """
+
+    def __init__(self, rate_max=30, rate_window=60, conn_per_ip=5,
+                 ban_threshold=5, ban_duration=300):
+        self.rate_max = rate_max
+        self.rate_window = rate_window
+        self.conn_per_ip = conn_per_ip
+        self.ban_threshold = ban_threshold
+        self.ban_duration = ban_duration
+        self._lock = threading.Lock()
+        self._hits = {}
+        self._conns = {}
+        self._fails = {}
+        self._banned_until = {}
+
+    def _now(self):
+        return time.time()
+
+    def _banned(self, ip):
+        return self._banned_until.get(ip, 0) > self._now()
+
+    def check_connection(self, ip):
+        now = self._now()
+        with self._lock:
+            if self._banned(ip):
+                return False, "IP is banned"
+            window_start = now - self.rate_window
+            self._hits[ip] = [t for t in self._hits.get(ip, []) if t > window_start]
+            if len(self._hits[ip]) >= self.rate_max:
+                return False, "Rate limit exceeded"
+            if sum(self._conns.values()) >= 100 or self._conns.get(ip, 0) >= self.conn_per_ip:
+                return False, "Too many connections"
+            self._hits[ip].append(now)
+            self._conns[ip] = self._conns.get(ip, 0) + 1
+        return True, "OK"
+
+    def release_connection(self, ip):
+        with self._lock:
+            if self._conns.get(ip, 0) > 0:
+                self._conns[ip] -= 1
+
+    def on_auth_failure(self, ip):
+        with self._lock:
+            fails = self._fails.get(ip, 0) + 1
+            self._fails[ip] = fails
+            if fails >= self.ban_threshold:
+                self._banned_until[ip] = self._now() + self.ban_duration
+                return True
+        return False
+
+    def on_auth_success(self, ip):
+        with self._lock:
+            self._fails.pop(ip, None)
+
+
 def get_gpu_info():
     try:
         result = subprocess.run(
@@ -463,8 +524,19 @@ class NodeAgent:
         self._spa_event = threading.Event()
         self._spa_expire = 0.0
 
-        from core.ddos import DDoSProtection
-        self._ddos = DDoSProtection()
+        try:
+            from core.ddos import DDoSProtection
+        except ImportError:
+            try:
+                from cloudmesh.core.ddos import DDoSProtection
+            except ImportError:
+                DDoSProtection = None
+        if DDoSProtection is not None:
+            self._ddos = DDoSProtection()
+        else:
+            # Standalone fallback: the agent is deployed without the core
+            # package, so a missing DDoS module must never prevent startup.
+            self._ddos = _StandaloneDDoSProtection()
         self._spac = None
 
     def _on_spa_knock(self, window, source_ip):

@@ -113,3 +113,112 @@ def firewall_check_all():
             enabled = "active" in out.lower()
             results.append({"server": name, "status": out, "enabled": enabled})
     return results
+
+
+def _parse_ufw_rules(status_output):
+    """Parse `ufw status numbered` lines into rule dicts (best effort)."""
+    import re
+    rules = []
+    for line in (status_output or "").splitlines():
+        m = re.match(r"\s*\[\s*(\d+)\]\s+(\S+)\s+(ALLOW|DENY|REJECT|LIMIT)\s+(?:IN|OUT)\s+(\S+)",
+                     line.strip(), re.I)
+        if not m:
+            continue
+        _, port_proto, action, source = m.groups()
+        if "/" in port_proto:
+            port, proto = port_proto.split("/", 1)
+        else:
+            port, proto = port_proto, "tcp"
+        v6 = "(v6)" in line
+        rules.append({
+            "port": port, "protocol": proto.lower(), "action": action.lower(),
+            "source": ("*" if source.lower() in ("anywhere",) else source) + (" (v6)" if v6 else ""),
+        })
+    return rules
+
+
+class FirewallManager:
+    """Adapter exposing the CLI-facing firewall API over the functions above."""
+
+    def list_rules(self, server=None):
+        if not server:
+            results = firewall_check_all()
+            rules = []
+            for r in results:
+                rules.append({"port": "?", "protocol": "?", "action": r.get("status", ""), "source": r.get("server", "")})
+            return rules
+        out = firewall_list(server)
+        if not isinstance(out, str) or "not found" in out:
+            return []
+        rules = _parse_ufw_rules(out)
+        if rules:
+            return rules
+        # Non-UFW output (e.g. iptables): expose raw text as a single row.
+        text = out.strip()
+        if not text or text == "No firewall found":
+            return []
+        return [{"port": "?", "protocol": "?", "action": "raw", "source": ""}]
+
+    def add_rule(self, port, proto="tcp", action="allow", server=None):
+        if server is None:
+            return "Specify a server with --server"
+        return firewall_add_rule(server, f"{action} {port}/{proto}")
+
+    def remove_rule(self, port, proto="tcp", server=None):
+        if server is None:
+            return "Specify a server with --server"
+        return firewall_delete_rule(server, f"allow {port}/{proto}")
+
+    def status(self, server=None):
+        if server is None:
+            results = firewall_check_all()
+            if not results:
+                return "No servers configured"
+            return "\n".join(f"{r['server']}: {r['status']}" for r in results)
+        return firewall_list(server)
+
+    def check_port(self, port, server=None):
+        if server is None:
+            return "Specify a server with --server"
+        srv = _get_server(server)
+        if not srv:
+            return f"Server '{server}' not found"
+        out, rc = _run_ssh(srv.get("host"), srv.get("user", "root"), srv.get("key", ""),
+                            f"ss -tln 2>/dev/null | grep -E ':{port} ' || echo 'closed'")
+        state = "open" if "closed" not in out else "closed"
+        return f"Port {port} on {server}: {state}"
+
+    def backup(self, server=None, output="firewall_backup.json"):
+        import json as _json
+        rules = self.list_rules(server)
+        try:
+            with open(output, "w") as f:
+                _json.dump(rules, f, indent=2)
+            return f"Backed up {len(rules)} rule(s) to {output}"
+        except OSError as e:
+            return f"Backup failed: {e}"
+
+    def load_rules(self, path, server=None):
+        import json as _json
+        if server is None:
+            return "Specify a server with --server"
+        try:
+            with open(path) as f:
+                data = _json.load(f)
+        except (OSError, ValueError) as e:
+            return f"Load failed: {e}"
+        items = data if isinstance(data, list) else [data]
+        applied, failed = 0, 0
+        for item in items:
+            if isinstance(item, dict):
+                rule = f"{item.get('action', 'allow')} {item.get('port', '')}"
+                if item.get("protocol"):
+                    rule += f"/{item['protocol']}"
+            else:
+                rule = str(item)
+            res = firewall_add_rule(server, rule)
+            if res.startswith("Rule added"):
+                applied += 1
+            else:
+                failed += 1
+        return f"Applied {applied} rule(s), {failed} failed"

@@ -145,3 +145,85 @@ def docker_deploy(server_name, image, name=None, ports=None, env=None):
 
     out, rc = _run_ssh(host, user, key, cmd)
     return f"Deployed {image}" if rc == 0 else f"Failed: {out}"
+
+
+class DockerManager:
+    """Adapter exposing the CLI-facing Docker API over the functions above."""
+
+    def list_servers(self):
+        cfg = _load_config()
+        names = list(cfg.get("servers", {}).keys()) + list(cfg.get("nodes", {}).keys())
+        if not names:
+            return "No servers configured. Add servers with: cm server add"
+        return names
+
+    def list_containers(self, server):
+        results = docker_list()
+        if isinstance(results, str):
+            return results
+        for entry in results:
+            if entry.get("server") == server:
+                containers = entry.get("containers", [])
+                if entry.get("error"):
+                    return f"{server}: {entry['error']}"
+                if not containers:
+                    return f"{server}: no running containers"
+                lines = [f"{c['id'][:12]}  {c['name']}  {c['image']}  {c['status']}" for c in containers]
+                return "\n".join(lines)
+        return f"Server '{server}' not found"
+
+    def docker_compose(self, path, server, action="up"):
+        srv = _get_server(server)
+        if not srv:
+            return f"Server '{server}' not found"
+        host, user, key = srv.get("host", ""), srv.get("user", "root"), srv.get("key", "")
+        if action == "down":
+            return docker_action(server, "compose_down")
+        cmd = f"cd {path} && docker compose up -d 2>/dev/null || docker-compose up -d 2>/dev/null"
+        out, rc = _run_ssh(host, user, key, cmd)
+        return "Compose started" if rc == 0 else f"Failed: {out}"
+
+    def container_stats(self, server):
+        return docker_action(server, "stats")
+
+    def list_images(self, server):
+        return docker_action(server, "images")
+
+    def pull_image(self, image, server):
+        srv = _get_server(server)
+        if not srv:
+            return f"Server '{server}' not found"
+        out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
+                            f"docker pull {image}")
+        return f"Pulled {image}" if rc == 0 else f"Failed: {out}"
+
+    def exec_command(self, container, cmd, server):
+        srv = _get_server(server)
+        if not srv:
+            return f"Server '{server}' not found"
+        out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
+                            f"docker exec {container} {cmd}")
+        return out if rc == 0 else f"Failed: {out}"
+
+    def container_logs(self, container, server, lines=50):
+        srv = _get_server(server)
+        if not srv:
+            return f"Server '{server}' not found"
+        try:
+            lines = max(int(lines), 1)
+        except (TypeError, ValueError):
+            lines = 50
+        out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
+                            f"docker logs --tail {lines} {container} 2>&1")
+        return out if rc == 0 else f"Failed: {out}"
+
+    def cleanup(self, server):
+        srv = _get_server(server)
+        if not srv:
+            return f"Server '{server}' not found"
+        out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
+                            "docker container prune -f && docker image prune -f")
+        return out if rc == 0 else f"Failed: {out}"
+
+    def prune(self, server):
+        return docker_action(server, "prune")
