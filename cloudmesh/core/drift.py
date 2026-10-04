@@ -24,6 +24,12 @@ TRACKED = ("servers", "nodes", "groups", "schedules", "templates", "aliases", "a
 
 class DriftManager:
     def __init__(self, server_mgr=None, storage=None, base_dir=None):
+        """Use the supplied storage or initialize SQLite storage at base_dir.
+
+        With neither storage nor base_dir, use StorageManager's default
+        directory. Initialization may create storage files and its errors
+        propagate. server_mgr, when supplied, is the source of server entries.
+        """
         self.server_mgr = server_mgr
         if storage is None:
             base = Path(base_dir) if base_dir is not None else None
@@ -32,7 +38,13 @@ class DriftManager:
 
     # -- collection ----------------------------------------------------
     def collect(self) -> Dict[str, Any]:
-        """Capture current managed state (no secrets)."""
+        """Return tracked collections keyed by name with selected state fields.
+
+        Server credentials and node auth keys are excluded; command strings
+        and descriptions are retained verbatim. Schedule intervals are in
+        seconds. Failed collections become empty mappings, and servers whose
+        info lookup fails are omitted, which can appear as removals in a diff.
+        """
         state: Dict[str, Any] = {}
         try:
             if self.server_mgr is not None:
@@ -106,7 +118,11 @@ class DriftManager:
 
     # -- baseline ------------------------------------------------------
     def snapshot(self) -> Dict[str, Any]:
-        """Record the current state as the drift baseline."""
+        """Replace the stored drift baseline and return the collected state.
+
+        Collection failures can produce a partial baseline. Errors saving it,
+        including SQLite and JSON serialization errors, propagate to callers.
+        """
         state = self.collect()
         try:
             self.storage.set_setting(BASELINE_KEY, state)
@@ -116,7 +132,7 @@ class DriftManager:
         return state
 
     def get_baseline(self) -> Optional[Dict[str, Any]]:
-        """Return the recorded baseline, or None when absent."""
+        """Return the baseline, or None if absent, unreadable, or not a dict."""
         try:
             base = self.storage.get_setting(BASELINE_KEY, None)
         except Exception:
@@ -124,7 +140,10 @@ class DriftManager:
         return base if isinstance(base, dict) else None
 
     def clear(self) -> None:
-        """Remove the recorded baseline."""
+        """Remove the recorded baseline, suppressing storage errors.
+
+        Return None whether deletion succeeds, fails, or no baseline exists.
+        """
         try:
             with self.storage._get_connection() as conn:
                 conn.execute("DELETE FROM settings WHERE key = ?", (BASELINE_KEY,))
@@ -135,7 +154,13 @@ class DriftManager:
     # -- diff ----------------------------------------------------------
     @staticmethod
     def diff_states(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
-        """Diff two state snapshots per collection."""
+        """Return added, removed, and modified entries for each tracked collection.
+
+        Snapshots map collection names to mappings of item names to values.
+        Missing or false-valued collections are treated as empty; untracked
+        collections are ignored. Added and removed names are sorted lists.
+        Modified names map to before/after values that compare unequal.
+        """
         result: Dict[str, Any] = {}
         for kind in TRACKED:
             old = before.get(kind, {}) or {}
@@ -156,6 +181,10 @@ class DriftManager:
         """Diff live state against the baseline.
 
         Returns {"has_baseline": bool, "drifted": bool, "diff": {...}}.
+        An absent, unreadable, or non-dict baseline returns both flags False
+        and an empty diff without collecting live state. Collection failures
+        can appear as removals; malformed baseline collections can raise
+        errors during comparison.
         """
         baseline = self.get_baseline()
         if baseline is None:
