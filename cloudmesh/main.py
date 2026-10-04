@@ -6,6 +6,14 @@ import subprocess
 import tempfile
 import shlex
 from pathlib import Path
+
+# Allow running as `cd cloudmesh && python main.py` (CI) as well as
+# `python -m cloudmesh.main` from the repo root and the installed `cm` entry
+# point. When executed as a script from inside cloudmesh/, the top-level
+# `cloudmesh` package is not otherwise importable (no install in CI).
+_PKG_ROOT = Path(__file__).resolve().parent.parent
+if str(_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PKG_ROOT))
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
