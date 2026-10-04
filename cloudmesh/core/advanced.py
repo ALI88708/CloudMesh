@@ -165,6 +165,7 @@ class ScheduleManager:
                 return
         except Exception:
             return
+        ok = True
         for name, info in list(self._schedules.items()):
             if not isinstance(info, dict):
                 continue
@@ -180,7 +181,10 @@ class ScheduleManager:
                     run_count=info.get("run_count", 0),
                 )
             except Exception:
+                ok = False
                 continue
+        if not ok:
+            return
         try:
             self.storage.mark_legacy_imported("schedules")
         except Exception:
@@ -604,6 +608,7 @@ class TemplateManager:
                 return
         except Exception:
             return
+        ok = True
         for name, data in list(self._templates.items()):
             try:
                 if isinstance(data, dict):
@@ -616,7 +621,10 @@ class TemplateManager:
                     name=name, command=command, description=description, created=created
                 )
             except Exception:
+                ok = False
                 continue
+        if not ok:
+            return
         try:
             self.storage.mark_legacy_imported("templates")
         except Exception:

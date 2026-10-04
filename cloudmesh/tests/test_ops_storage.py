@@ -139,11 +139,33 @@ def test_migrate_verify_ok_and_drift(tmp_path):
     assert any(c["type"] == "aliases" and not c["match"] for c in result2["checks"])
 
 
-def test_doctor_reports_storage_checks(capsys):
+def test_doctor_reports_storage_checks(tmp_path, capsys):
     try:
         import cloudmesh.main as cloudmesh_main
     except ImportError:
         import main as cloudmesh_main
-    cloudmesh_main.cmd_doctor(argparse.Namespace())
+    cloudmesh_main.cmd_doctor(argparse.Namespace(base_dir=str(tmp_path)))
     out = capsys.readouterr().out
     assert "Storage" in out
+
+
+def test_status_empty_keyring_no_crash(tmp_path, monkeypatch, capsys):
+    try:
+        import cloudmesh.main as cloudmesh_main
+    except ImportError:
+        import main as cloudmesh_main
+    monkeypatch.setattr(cloudmesh_main, "NODE_KEYS_FILE", tmp_path / ".node_keys.json")
+    cloudmesh_main.cmd_status(argparse.Namespace(as_json=False))
+    out = capsys.readouterr().out
+    assert "No servers configured" in out
+
+
+def test_alert_history_preserves_import_timestamps(tmp_path):
+    store = StorageManager(tmp_path)
+    store.add_alert_history("r1", "s1", "cpu", 95.0, 80.0, "gt", "critical",
+                            timestamp="2026-01-01T00:00:00")
+    rows = store.get_alert_history()
+    assert rows and rows[0]["timestamp"] == "2026-01-01T00:00:00"
+    # default path still stamps current time
+    store.add_alert_history("r2", "s1", "cpu", 95.0, 80.0, "gt", "warning")
+    assert store.get_alert_history(limit=2)[0]["timestamp"] != "2026-01-01T00:00:00"

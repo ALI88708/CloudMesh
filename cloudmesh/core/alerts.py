@@ -55,12 +55,15 @@ class AlertManager:
         if self.alerts_file.exists():
             try:
                 data = json.loads(self.alerts_file.read_text())
+                if not isinstance(data, dict):
+                    raise ValueError("alerts.json is not an object")
             except Exception as e:
                 logger.error("Failed to load alerts: %s", e)
-                data = {}
-            for rule in data.get("rules", []) if isinstance(data, dict) else []:
+                return  # leave marker unset; do not touch the mirror
+            ok = True
+            for rule in data.get("rules", []):
                 try:
-                    self.storage.add_alert_rule(
+                    if not self.storage.add_alert_rule(
                         name=rule.get("name"),
                         metric=rule.get("metric"),
                         threshold=rule.get("threshold"),
@@ -68,10 +71,12 @@ class AlertManager:
                         server=rule.get("server"),
                         severity=rule.get("severity", "warning"),
                         cooldown=rule.get("cooldown", DEFAULT_COOLDOWN),
-                    )
+                    ):
+                        raise RuntimeError("storage rejected alert rule")
                 except Exception:
+                    ok = False
                     continue
-            for alert in data.get("history", []) if isinstance(data, dict) else []:
+            for alert in data.get("history", []):
                 try:
                     self.storage.add_alert_history(
                         rule_name=alert.get("rule"),
@@ -81,15 +86,21 @@ class AlertManager:
                         threshold=alert.get("threshold"),
                         operator=alert.get("operator"),
                         severity=alert.get("severity"),
+                        timestamp=alert.get("timestamp"),
                     )
                 except Exception:
+                    ok = False
                     continue
-            for key, timestamp in (data.get("last_notified", {}) if isinstance(data, dict) else {}).items():
+            for key, timestamp in data.get("last_notified", {}).items():
                 try:
                     rule_name, server = key.split("|")
                     self.storage.set_alert_cooldown(rule_name, server, timestamp)
                 except Exception:
+                    ok = False
                     continue
+            if not ok:
+                logger.warning("Alerts import incomplete; marker left unset")
+                return
         try:
             self.storage.mark_legacy_imported("alerts")
         except Exception:

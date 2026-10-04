@@ -1941,8 +1941,9 @@ def cmd_version(args):
 def cmd_doctor(args):
     console.print(Panel("[bold bright_blue]CloudMesh Doctor — Security & Health Check[/]", border_style="bright_blue"))
     checks = []
+    base = Path(getattr(args, "base_dir", None) or Path(__file__).parent)
 
-    api_src = Path(__file__).parent / "core" / "advanced.py"
+    api_src = base / "core" / "advanced.py"
     if api_src.exists():
         content = api_src.read_text()
         api_ok = "compare_digest" in content
@@ -1954,7 +1955,7 @@ def cmd_doctor(args):
     else:
         checks.append(("API source", False, "advanced.py not found"))
 
-    node_src = Path(__file__).parent / "node" / "cloudmesh_node.py"
+    node_src = base / "node" / "cloudmesh_node.py"
     if node_src.exists():
         ncontent = node_src.read_text()
         auth_ok = "compare_digest" in ncontent
@@ -1968,42 +1969,42 @@ def cmd_doctor(args):
     else:
         checks.append(("Node source", False, "cloudmesh_node.py not found"))
 
-    ddos_src = Path(__file__).parent / "core" / "ddos.py"
+    ddos_src = base / "core" / "ddos.py"
     checks.append(("DDoS module", ddos_src.exists(), "core/ddos.py present"))
 
-    ssh_src = Path(__file__).parent / "core" / "ssh_util.py"
+    ssh_src = base / "core" / "ssh_util.py"
     if ssh_src.exists():
         sc = ssh_src.read_text()
         checks.append(("SSH: centralized", "MITMWarning" in sc, "MITM warnings enabled"))
     else:
         checks.append(("SSH: centralized", False, "ssh_util.py not found"))
 
-    fw_src = Path(__file__).parent / "core" / "firewall.py"
+    fw_src = base / "core" / "firewall.py"
     if fw_src.exists():
         fc = fw_src.read_text()
         checks.append(("Firewall: allowlist", "ALLOWED_RULES" in fc, "Rule validation enabled"))
     else:
         checks.append(("Firewall", False, "firewall.py not found"))
 
-    db_src = Path(__file__).parent / "core" / "database.py"
+    db_src = base / "core" / "database.py"
     if db_src.exists():
         dc = db_src.read_text()
         checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))
     else:
         checks.append(("Database", False, "database.py not found"))
 
-    tests_dir = Path(__file__).parent / "tests"
+    tests_dir = base / "tests"
     has_tests = (tests_dir / "test_security.py").exists()
     checks.append(("Test suite", has_tests, "tests/test_security.py exists"))
 
-    secret_key = Path(__file__).parent / ".secret.key"
+    secret_key = base / ".secret.key"
     if secret_key.exists():
         key_size = secret_key.stat().st_size
         checks.append(("Encryption key", key_size > 10, f"Key file present ({key_size} bytes)"))
     else:
         checks.append(("Encryption key", False, ".secret.key missing"))
 
-    node_keys = Path(__file__).parent / ".node_keys.json"
+    node_keys = base / ".node_keys.json"
     if node_keys.exists():
         try:
             nk = json.loads(node_keys.read_text())
@@ -2013,7 +2014,7 @@ def cmd_doctor(args):
     else:
         checks.append(("Cloud nodes", False, "No nodes configured"))
 
-    sched = Path(__file__).parent / ".schedule.json"
+    sched = base / ".schedule.json"
     if sched.exists():
         try:
             s = json.loads(sched.read_text())
@@ -2027,8 +2028,8 @@ def cmd_doctor(args):
     # === Storage backend health (SQLite source of truth) ===
     try:
         from cloudmesh.core.storage import StorageManager
-        _sm = StorageManager(Path(__file__).parent)
-        _db = Path(__file__).parent / "cloudmesh.db"
+        _sm = StorageManager(base)
+        _db = base / "cloudmesh.db"
         if _db.exists():
             if os.name == "nt":
                 checks.append(("Storage: database", True, "cloudmesh.db present"))
@@ -2037,7 +2038,7 @@ def cmd_doctor(args):
                 checks.append(("Storage: database perms", _mode == "0o600", f"cloudmesh.db mode {_mode}"))
         else:
             checks.append(("Storage: database", False, "cloudmesh.db missing (run cm migrate)"))
-        _key = Path(__file__).parent / ".secret.key"
+        _key = base / ".secret.key"
         if _key.exists() and os.name != "nt":
             _kmode = oct(_key.stat().st_mode & 0o777)
             checks.append(("Storage: key perms", _kmode == "0o600", f".secret.key mode {_kmode}"))
@@ -2052,7 +2053,14 @@ def cmd_doctor(args):
             _db_servers = {s["name"] for s in _sm.list_servers()}
             checks.append(("Storage: servers mirror", _json_servers == _db_servers,
                            f"json={len(_json_servers)} sqlite={len(_db_servers)}"))
-            _json_nodes = set(_load_node_keys().keys())
+            # Read the JSON mirror file directly: _load_node_keys() may
+            # return SQLite data, which would compare SQLite with itself.
+            _mirror_file = base / ".node_keys.json"
+            try:
+                _json_nodes = set(json.loads(_mirror_file.read_text()).keys()) \
+                    if _mirror_file.exists() else set()
+            except Exception:
+                _json_nodes = set()
             _db_nodes = {n["name"] for n in _sm.list_nodes()}
             checks.append(("Storage: nodes mirror", _json_nodes == _db_nodes,
                            f"json={len(_json_nodes)} sqlite={len(_db_nodes)}"))
@@ -2138,12 +2146,20 @@ def cmd_update(args):
                 console.print(f"[yellow]pip install warning: {pip.stderr.strip()[:200]}[/]")
 
         new_ver = "unknown"
-        vf = repo_dir / "cloudmesh" / "core" / "features.py"
-        if vf.exists():
-            for line in vf.read_text().splitlines():
-                if '"version"' in line and ':' in line:
-                    new_ver = line.split('"version"')[1].split('"')[1]
-                    break
+        try:
+            new_ver = get_version().get("version", "unknown")
+        except Exception:
+            pass
+        if new_ver == "unknown":
+            try:
+                import re
+                pyproject = repo_dir / "pyproject.toml"
+                if pyproject.exists():
+                    m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.M)
+                    if m:
+                        new_ver = m.group(1)
+            except Exception:
+                pass
 
         console.print(f"[green bold]Updated to CloudMesh v{new_ver}[/]")
     except subprocess.TimeoutExpired:
@@ -2153,8 +2169,7 @@ def cmd_update(args):
 
 
 def cmd_status(args):
-    mgr = ServerManager()
-    servers = mgr.list_servers()
+    servers = _load_node_keys()
     if not servers:
         if getattr(args, "as_json", False):
             console.print("{}")
@@ -3540,7 +3555,7 @@ def cmd_job_checkpoints(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 3.1.0")
+    parser.add_argument("--version", "-V", action="version", version=f"CloudMesh {get_version()['version']}")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")

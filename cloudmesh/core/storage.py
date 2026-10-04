@@ -466,6 +466,35 @@ class StorageManager:
                     logger.error("Failed to add node '%s': %s", name, e)
                 return False
     
+    def upsert_node(self, name: str, host: str, port: int = 9999, auth_key: str = "",
+                    tls: bool = False, ca_file: Optional[str] = None) -> bool:
+        """Insert or update a node atomically.
+
+        Unlike remove+re-add, a failed upsert leaves the existing row
+        (and its encrypted auth key) intact.
+        """
+        with self._get_connection() as conn:
+            try:
+                encrypted_key = self._encrypt_secret(auth_key)
+                if encrypted_key is None:
+                    encrypted_key = ""
+                conn.execute("""
+                    INSERT INTO nodes (name, host, port, auth_key, tls, ca_file)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(name) DO UPDATE SET
+                        host = excluded.host,
+                        port = excluded.port,
+                        auth_key = excluded.auth_key,
+                        tls = excluded.tls,
+                        ca_file = excluded.ca_file,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (name, host, port, encrypted_key, int(bool(tls)), ca_file))
+                conn.commit()
+                return True
+            except sqlite3.Error as e:
+                logger.error("Failed to upsert node '%s': %s", name, e)
+                return False
+
     def remove_node(self, name: str) -> bool:
         """Remove a node."""
         with self._get_connection() as conn:
@@ -570,13 +599,20 @@ class StorageManager:
             return [dict(row) for row in rows]
     
     def add_alert_history(self, rule_name: str, server: str, metric: str, value: float,
-                         threshold: float, operator: str, severity: str) -> None:
-        """Add alert to history."""
+                          threshold: float, operator: str, severity: str,
+                          timestamp=None) -> None:
+        """Add alert to history. An explicit timestamp preserves original event times on import."""
         with self._get_connection() as conn:
-            conn.execute("""
-                INSERT INTO alert_history (rule_name, server, metric, value, threshold, operator, severity)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (rule_name, server, metric, value, threshold, operator, severity))
+            if timestamp is None:
+                conn.execute("""
+                    INSERT INTO alert_history (rule_name, server, metric, value, threshold, operator, severity)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (rule_name, server, metric, value, threshold, operator, severity))
+            else:
+                conn.execute("""
+                    INSERT INTO alert_history (rule_name, server, metric, value, threshold, operator, severity, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (rule_name, server, metric, value, threshold, operator, severity, timestamp))
             conn.commit()
     
     def get_alert_history(self, limit: int = 50) -> List[Dict]:

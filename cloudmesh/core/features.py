@@ -233,17 +233,27 @@ def create_alias(name, command, aliases_file=None, storage=None):
     command = str(command)
     if storage is not None:
         try:
-            if storage.legacy_imported("aliases"):
-                _push_alias_mirror(storage, f)
-            else:
+            imported_clean = storage.legacy_imported("aliases")
+            if not imported_clean:
+                ok = True
                 for aname, acmd in _read_alias_mirror(f).items():
                     try:
                         storage.upsert_alias(aname, acmd)
                     except Exception:
+                        ok = False
                         continue
-                storage.mark_legacy_imported("aliases")
+                if ok:
+                    storage.mark_legacy_imported("aliases")
+                    imported_clean = True
             storage.upsert_alias(name, command)
-            _push_alias_mirror(storage, f)
+            if imported_clean:
+                _push_alias_mirror(storage, f)
+            else:
+                # Import incomplete: merge only the new key so unimported
+                # legacy rows in the JSON source are never clobbered.
+                mirror = _read_alias_mirror(f)
+                mirror[name] = command
+                f.write_text(json.dumps(mirror, indent=2))
             return True
         except Exception:
             pass
@@ -270,15 +280,17 @@ def get_aliases(aliases_file=None, storage=None):
     if storage is not None:
         try:
             if not storage.legacy_imported("aliases"):
+                ok = True
                 for aname, acmd in _read_alias_mirror(f).items():
                     try:
                         storage.upsert_alias(aname, acmd)
                     except Exception:
+                        ok = False
                         continue
-                storage.mark_legacy_imported("aliases")
+                if ok:
+                    storage.mark_legacy_imported("aliases")
             rows = storage.list_aliases()
-            if rows:
-                return rows
+            return rows
         except Exception:
             pass
     return _read_alias_mirror(f)

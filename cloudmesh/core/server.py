@@ -1,5 +1,6 @@
 import paramiko
 import os
+import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -7,6 +8,8 @@ try:
     from cloudmesh.core.storage import StorageManager
 except ImportError:  # `cd cloudmesh && pytest tests` without installed package
     from core.storage import StorageManager
+
+logger = logging.getLogger(__name__)
 
 
 class ServerManager:
@@ -37,7 +40,8 @@ class ServerManager:
         backup with no servers), so the persistent marker — not table
         emptiness — decides whether the legacy import runs. When the marker
         is present, SQLite is authoritative and the JSON mirror is repaired
-        from it instead.
+        from it instead. On any incomplete import the marker is left unset
+        and the mirror untouched so the JSON source stays intact.
         """
         try:
             if self.storage.legacy_imported("servers"):
@@ -45,20 +49,26 @@ class ServerManager:
                 return
         except Exception:
             return
+        ok = True
         for name, info in list(self.config.get("servers", {}).items()):
             if not isinstance(info, dict):
                 continue
             try:
-                self.storage.add_server(
+                if not self.storage.add_server(
                     name=name,
                     host=info.get("host"),
                     user=info.get("user"),
                     port=info.get("port", 22),
                     key_path=info.get("key_path"),
                     password=info.get("password"),
-                )
+                ):
+                    raise RuntimeError("storage rejected server")
             except Exception:
+                ok = False
                 continue
+        if not ok:
+            logger.warning("Servers import incomplete; marker left unset")
+            return
         try:
             self.storage.mark_legacy_imported("servers")
         except Exception:

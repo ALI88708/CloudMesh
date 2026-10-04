@@ -588,31 +588,45 @@ class MigrationManager:
 
         config = self._load_encrypted_config()
 
-        results = {
-            "servers": self.migrate_servers(config),
-            "nodes": self.migrate_nodes(),
-            "groups": self.migrate_groups(config),
-            "settings": self.migrate_settings(config),
-            "alerts": self.migrate_alerts(),
-            "acl_users": self.migrate_acl(),
-            "aliases": self.migrate_aliases(),
-            "templates": self.migrate_templates(),
-            "schedules": self.migrate_schedule(),
-        }
+        # Track per-kind success: a kind is marked imported only when its
+        # section added no new errors, so later manager inits retry (rather
+        # than skip) incomplete kinds and never treat partial data as final.
+        tracked = (
+            ("servers", lambda: self.migrate_servers(config)),
+            ("nodes", self.migrate_nodes),
+            ("groups", lambda: self.migrate_groups(config)),
+            ("settings", lambda: self.migrate_settings(config)),
+            ("alerts", self.migrate_alerts),
+            ("acl_users", self.migrate_acl),
+            ("aliases", self.migrate_aliases),
+            ("templates", self.migrate_templates),
+            ("schedules", self.migrate_schedule),
+        )
+        results = {}
+        clean_kinds = []
+        for kind, fn in tracked:
+            before = len(self.errors)
+            try:
+                results[kind] = fn()
+            except Exception as e:
+                self.errors.append(f"Migration section {kind} crashed: {e}")
+                results[kind] = 0
+            if len(self.errors) == before:
+                clean_kinds.append(kind)
 
         self.migrated = True
 
-        if not dry_run:
-            # The bulk migration is the canonical importer: record the markers
-            # so later manager inits treat SQLite as authoritative instead of
-            # re-importing (an empty table is a valid state, e.g. after a
-            # restore, and must not trigger a legacy re-import).
-            try:
-                for kind in ("servers", "groups", "nodes", "alerts", "schedules",
-                             "templates", "aliases"):
+        # The bulk migration is the canonical importer: record the markers
+        # for clean kinds so later manager inits treat SQLite as authoritative
+        # instead of re-importing (an empty table is a valid state, e.g. after
+        # a restore, and must not trigger a legacy re-import).
+        for kind in clean_kinds:
+            if kind in ("servers", "groups", "nodes", "alerts", "schedules",
+                        "templates", "aliases"):
+                try:
                     self.storage.mark_legacy_imported(kind)
-            except Exception as e:
-                self.errors.append(f"Failed to record migration markers: {e}")
+                except Exception as e:
+                    self.errors.append(f"Failed to record migration marker for {kind}: {e}")
 
         if self.errors:
             logger.warning("Migration completed with %d errors", len(self.errors))

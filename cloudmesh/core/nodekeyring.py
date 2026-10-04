@@ -75,20 +75,34 @@ class NodeKeyring:
                 return
         except Exception:
             return
-        for name, info in list(self._read_json().items()):
+        try:
+            raw = self.json_path.read_text() if self.json_path.exists() else "{}"
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("node keys file is not an object")
+        except Exception as e:
+            logger.error("NodeKeyring cannot read legacy keys; marker left unset: %s", e)
+            return
+        ok = True
+        for name, info in list(data.items()):
             if not isinstance(info, dict):
                 continue
             try:
-                self.storage.add_node(
+                if not self.storage.add_node(
                     name=name,
                     host=info.get("host"),
                     port=info.get("port", 9999),
                     auth_key=info.get("key", ""),
                     tls=bool(info.get("tls", False)),
                     ca_file=info.get("ca_file"),
-                )
+                ):
+                    raise RuntimeError("storage rejected node")
             except Exception:
+                ok = False
                 continue
+        if not ok:
+            logger.warning("NodeKeyring import incomplete; marker left unset")
+            return
         try:
             self.storage.mark_legacy_imported("nodes")
         except Exception:
@@ -125,25 +139,15 @@ class NodeKeyring:
             if not isinstance(info, dict):
                 continue
             try:
-                ok = self.storage.add_node(
+                if not self.storage.upsert_node(
                     name=name,
                     host=info.get("host"),
                     port=info.get("port", 9999),
                     auth_key=info.get("key", ""),
                     tls=bool(info.get("tls", False)),
                     ca_file=info.get("ca_file"),
-                )
-                if not ok:
-                    # Already exists: update fields in place.
-                    self.storage.remove_node(name)
-                    self.storage.add_node(
-                        name=name,
-                        host=info.get("host"),
-                        port=info.get("port", 9999),
-                        auth_key=info.get("key", ""),
-                        tls=bool(info.get("tls", False)),
-                        ca_file=info.get("ca_file"),
-                    )
+                ):
+                    raise RuntimeError(f"upsert failed for node {name}")
             except Exception as e:
                 logger.warning("Failed to save node %s: %s", name, e)
         for stale in current - set(keys):
