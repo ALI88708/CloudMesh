@@ -33,15 +33,18 @@ class _Monitor:
 
 
 def test_node_keyring_roundtrip_and_mirror(tmp_path):
+    secret1 = "k1-secret-9f2c4b7e1a5d8f3c6b0e2a4d7c9e1b3d5"
+    secret2 = "k2-secret-1a3c5e7b9d2f4a6c8e0b2d4f6a8c0e2a4"
     ring = NodeKeyring(storage=StorageManager(tmp_path), json_path=tmp_path / ".node_keys.json")
-    ring.save({"n1": {"host": "10.0.0.1", "port": 9999, "key": "k1"},
-               "n2": {"host": "10.0.0.2", "port": 9998, "key": "k2", "tls": True}})
+    ring.save({"n1": {"host": "10.0.0.1", "port": 9999, "key": secret1},
+               "n2": {"host": "10.0.0.2", "port": 9998, "key": secret2, "tls": True}})
     keys = ring.load()
-    assert keys["n1"]["key"] == "k1"
+    assert keys["n1"]["key"] == secret1
     assert keys["n2"]["tls"] is True
-    # secrets encrypted at rest, mirror present
+    # secrets encrypted at rest (long needles: no false positives), mirror present
     raw = (tmp_path / "cloudmesh.db").read_bytes()
-    assert b"k1" not in raw
+    assert secret1.encode() not in raw
+    assert secret2.encode() not in raw
     mirror = json.loads((tmp_path / ".node_keys.json").read_text())
     assert mirror["n1"]["host"] == "10.0.0.1"
     # delete propagates

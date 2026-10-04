@@ -4,6 +4,17 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [Unreleased]
+
+### Added
+- **Smart diagnostics**: `cm diagnose` inspects resources, SSL expiries,
+  watcher alerts, backup freshness, and drift, then prints severity-ranked
+  findings with fix suggestions (`--json` for scripting, exit 2 on critical).
+- **Drift detection**: `cm drift snapshot` records a baseline of managed
+  state (servers, nodes, groups, schedules, templates, aliases, alert rules,
+  never secrets); `cm drift check` reports added/removed/modified entries
+  (exit 1 on drift); `cm drift list/clear` manage the baseline.
+
 ## [3.3.0] - 2026-10-04
 
 ### Stable SQLite backend release

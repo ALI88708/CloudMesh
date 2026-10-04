@@ -64,7 +64,7 @@ COMPLETION_COMMANDS = (
     "disk network who find logs export import encrypt decrypt speed scan cleanup report "
     "alias version doctor update status discover bench schedule notify api panic tripwire "
     "weather trust profile audit ssh template map docker firewall ssl logagg reshistory "
-    "plugins acl webhooks watcher tunnel database migrate storage node exec watch keys config completions "
+    "plugins acl webhooks watcher tunnel database migrate storage drift diagnose node exec watch keys config completions "
     "tw triw test"
 ).split()
 
@@ -100,6 +100,8 @@ COMPLETION_SUBCOMMANDS = {
     "database": ("list", "status", "query", "backup"),
     "migrate": (),
     "storage": ("backup", "list", "restore"),
+    "drift": ("snapshot", "check", "list", "clear"),
+    "diagnose": (),
     "acl": ("users", "add-user", "remove-user", "set-role", "enable", "disable",
             "roles", "add-role", "remove-role"),
 }
@@ -141,6 +143,7 @@ COMPLETION_OPTIONS = {
     "config export": ("--output", "-o"),
     "completions": ("--shell", "-s", "--output", "-o"),
     "migrate": ("--dry-run", "--verify", "--base-dir", "--help", "-h"),
+    "diagnose": ("--name", "-n", "--json", "--help", "-h"),
     "storage restore": ("--help", "-h"),
     "service start": ("--interval", "-i"),
     "service logs": ("--limit", "-l"),
@@ -704,6 +707,100 @@ def cmd_storage(args):
         else:
             console.print(f"[red]Restore failed: {args.path}[/]")
             sys.exit(1)
+
+
+def cmd_drift(args):
+    """Run args.action (snapshot, check, list, or clear) and print its result.
+
+    snapshot replaces the baseline; clear attempts to remove it. check
+    raises SystemExit(1) when drift is reported, but returns normally for
+    no baseline or a collection error returned by DriftManager.check().
+    Component initialization and snapshot errors propagate.
+    """
+    from cloudmesh.core.drift import DriftManager
+    _, server_mgr, *_ = init_components()
+    from cloudmesh.core.storage import StorageManager
+    sm = StorageManager(Path(__file__).parent)
+    dm = DriftManager(server_mgr=server_mgr, storage=sm)
+    action = getattr(args, "action", None)
+    if action == "snapshot":
+        state = dm.snapshot()
+        total = sum(len(v) for v in state.values() if isinstance(v, dict))
+        console.print(f"[green]Baseline recorded: {total} tracked item(s).[/]")
+    elif action == "check":
+        result = dm.check()
+        if not result.get("has_baseline"):
+            console.print("[yellow]No baseline recorded. Run: cm drift snapshot[/]")
+            return
+        if not result.get("drifted"):
+            console.print("[green]No drift: live state matches the baseline.[/]")
+            return
+        table = Table(title="Configuration Drift", box=box.ROUNDED)
+        table.add_column("Collection", style="cyan")
+        table.add_column("Change")
+        for line in dm.summarize(result["diff"]):
+            kind, _, change = line.partition(": ")
+            table.add_row(kind, change)
+        console.print(table)
+        sys.exit(1)
+    elif action == "list":
+        baseline = dm.get_baseline()
+        if not baseline:
+            console.print("[yellow]No baseline recorded.[/]")
+            return
+        table = Table(title="Drift Baseline", box=box.ROUNDED)
+        table.add_column("Collection", style="cyan")
+        table.add_column("Items")
+        for kind in ("servers", "nodes", "groups", "schedules", "templates", "aliases", "alert_rules"):
+            items = baseline.get(kind, {})
+            names = sorted(items) if isinstance(items, dict) else []
+            table.add_row(kind, ", ".join(names[:5]) + ("..." if len(names) > 5 else "") or "-")
+        console.print(table)
+    elif action == "clear":
+        dm.clear()
+        console.print("[green]Drift baseline cleared.[/]")
+    else:
+        console.print("[red]Usage: cm drift <snapshot|check|list|clear>[/]")
+
+
+def cmd_diagnose(args):
+    """Print diagnostic findings and raise SystemExit(2) if any are critical.
+
+    A nonempty args.name limits resource checks to that server and excludes
+    local metrics; otherwise check local metrics and all configured servers.
+    Other checks remain enabled. args.as_json emits findings in check order;
+    table output sorts by severity. Initialization and uncaught diagnostic
+    errors propagate.
+    """
+    from cloudmesh.core.diagnose import DiagnoseEngine
+    from cloudmesh.core.storage import StorageManager
+    _, server_mgr, monitor, *_ = init_components()
+    sm = StorageManager(Path(__file__).parent)
+    engine = DiagnoseEngine(monitor=monitor, server_mgr=server_mgr, storage=sm,
+                            base_dir=Path(__file__).parent)
+    names = None
+    if getattr(args, "name", None):
+        names = [args.name]
+    findings = engine.diagnose(names=names, include_local=not bool(getattr(args, "name", None)))
+    if getattr(args, "as_json", False):
+        # Plain print: Rich console may wrap or interpret markup inside JSON.
+        print(json.dumps(findings, indent=2))
+    else:
+        colors = {"info": "cyan", "warning": "yellow", "critical": "red"}
+        table = Table(title="CloudMesh Diagnose", box=box.ROUNDED)
+        table.add_column("Severity", style="bold")
+        table.add_column("Target", style="cyan")
+        table.add_column("Finding")
+        table.add_column("Suggestion", style="dim")
+        order = {"critical": 0, "warning": 1, "info": 2}
+        for f in sorted(findings, key=lambda f: order.get(f["severity"], 3)):
+            color = colors.get(f["severity"], "white")
+            table.add_row(f"[{color}]{f['severity'].upper()}[/]", f["target"],
+                          f"{f['title']}\n[dim]{f['detail']}[/]" if f["detail"] else f["title"],
+                          f["suggestion"])
+        console.print(table)
+    if any(f["severity"] == "critical" for f in findings):
+        sys.exit(2)
 
 
 def init_components():
@@ -4301,6 +4398,17 @@ def main():
     sto_res = sto_sub.add_parser("restore", help="Restore SQLite backup")
     sto_res.add_argument("path", help="Backup file or name inside backups/")
 
+    drf_p = subparsers.add_parser("drift", help="Detect configuration drift")
+    drf_sub = drf_p.add_subparsers(dest="action")
+    drf_sub.add_parser("snapshot", help="Record drift baseline")
+    drf_sub.add_parser("check", help="Compare live state with baseline")
+    drf_sub.add_parser("list", help="Show baseline summary")
+    drf_sub.add_parser("clear", help="Remove baseline")
+
+    dia_p = subparsers.add_parser("diagnose", help="Smart health diagnostics")
+    dia_p.add_argument("--name", "-n", help="Diagnose a single server")
+    dia_p.add_argument("--json", dest="as_json", action="store_true", help="Output as JSON")
+
     mon = subparsers.add_parser("mon", help="[alias] Monitor resources")
     mon.add_argument("--name", "-n")
 
@@ -4579,6 +4687,8 @@ def main():
         "database": lambda: cmd_database(args),
         "migrate": lambda: cmd_migrate(args),
         "storage": lambda: cmd_storage(args),
+        "drift": lambda: cmd_drift(args),
+        "diagnose": lambda: cmd_diagnose(args),
         "ls": lambda: cmd_server_list(args),
         "add": lambda: cmd_server_add(args),
         "rm": lambda: cmd_server_remove(args),
