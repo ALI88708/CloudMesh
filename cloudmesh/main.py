@@ -654,9 +654,12 @@ def cmd_migrate(args):
 
 
 def cmd_storage(args):
+    action = getattr(args, "action", None)
+    if action not in ("backup", "list", "restore"):
+        console.print("[red]Usage: cm storage <backup|list|restore>[/]")
+        return
     from cloudmesh.core.storage import StorageManager
     sm = StorageManager()
-    action = getattr(args, "action", None)
     if action == "backup":
         path = sm.backup_database()
         console.print(f"[green]Backup created: {path}[/]")
@@ -674,8 +677,6 @@ def cmd_storage(args):
         else:
             console.print(f"[red]Restore failed: {args.path}[/]")
             sys.exit(1)
-    else:
-        console.print("[red]Usage: cm storage <backup|list|restore>[/]")
 
 
 def init_components():

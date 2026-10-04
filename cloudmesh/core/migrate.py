@@ -495,6 +495,17 @@ class MigrationManager:
 
         self.migrated = True
 
+        if not dry_run:
+            # The bulk migration is the canonical importer: record the markers
+            # so later manager inits treat SQLite as authoritative instead of
+            # re-importing (an empty table is a valid state, e.g. after a
+            # restore, and must not trigger a legacy re-import).
+            try:
+                self.storage.set_setting("legacy_servers_imported", "1")
+                self.storage.set_setting("legacy_groups_imported", "1")
+            except Exception as e:
+                self.errors.append(f"Failed to record migration markers: {e}")
+
         if self.errors:
             logger.warning("Migration completed with %d errors", len(self.errors))
             for error in self.errors:

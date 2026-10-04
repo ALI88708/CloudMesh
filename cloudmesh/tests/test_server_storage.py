@@ -92,3 +92,57 @@ def test_groups_shared_between_manager_and_storage(tmp_path):
     assert gm2.get_group_devices("db") == ["db1"]
     gm.delete_group("web")
     assert storage.list_groups().get("web") is None
+
+
+def test_legacy_import_runs_once_and_empty_stays_empty(tmp_path):
+    """After the marker is set, later JSON edits must not re-import."""
+    security, storage = _managers(tmp_path)
+    ServerManager(security, storage)  # marker set on empty state
+    cfg = security.load_config()
+    cfg["servers"]["sneaky"] = {"host": "1.2.3.4", "user": "root"}
+    security.save_config(cfg)
+    fresh = ServerManager(security, storage)
+    assert "sneaky" not in fresh.list_servers()
+    assert security.load_config().get("servers", {}) == {}
+
+
+def test_restore_empty_backup_does_not_resurrect(tmp_path):
+    """Empty server/group lists are valid: restore must win over JSON mirror."""
+    security, storage = _managers(tmp_path)
+    mgr = ServerManager(security, storage)
+    gm = GroupsManager(security, storage)
+    empty_backup = storage.backup_database()
+
+    mgr.add_server("web1", "10.0.0.1", "root")
+    gm.create_group("web")
+    gm.add_to_group("web", "web1")
+
+    assert storage.restore_backup(empty_backup) is True
+
+    fresh_mgr = ServerManager(security, storage)
+    fresh_gm = GroupsManager(security, storage)
+    assert fresh_mgr.list_servers() == []
+    assert fresh_gm.list_groups() == {}
+    # JSON mirrors repaired from SQLite (no stale resurrection data).
+    disk = security.load_config()
+    assert disk.get("servers", {}) == {}
+    assert disk.get("groups", {}) == {}
+
+
+def test_rename_group_updates_storage_and_fresh_manager(tmp_path):
+    src = Path(__file__).resolve().parent.parent / "core" / "groups.py"
+    assert src.read_text().count("def rename_group") == 1
+
+    security, storage = _managers(tmp_path)
+    gm = GroupsManager(security, storage)
+    gm.create_group("old")
+    gm.add_to_group("old", "dev1")
+    gm.rename_group("old", "new")
+
+    assert storage.get_group_devices("new") == ["dev1"]
+    assert "old" not in storage.list_groups()
+    fresh = GroupsManager(security, storage)
+    assert fresh.get_group_devices("new") == ["dev1"]
+    assert "old" not in fresh.list_groups()
+    with pytest.raises(ValueError):
+        gm.rename_group("missing", "other")
