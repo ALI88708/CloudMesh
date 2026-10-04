@@ -1,5 +1,5 @@
 import json, os, subprocess, signal, time
-from core.ssh_util import build_ssh_cmd
+from cloudmesh.core.ssh_util import build_ssh_cmd
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 

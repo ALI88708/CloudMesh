@@ -1,13 +1,16 @@
-"""Test script for extended SQLite storage backend."""
+"""Manual smoke script for extended SQLite storage backend."""
 
 import sys
 import tempfile
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Allow `python cloudmesh/core/test_storage.py` from repo root and as module.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from storage import StorageManager
+try:
+    from cloudmesh.core.storage import StorageManager
+except ImportError:  # fallback when cloudmesh/ itself is on sys.path
+    from core.storage import StorageManager
 
 
 def test_storage():

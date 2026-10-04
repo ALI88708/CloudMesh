@@ -6,41 +6,49 @@ import subprocess
 import tempfile
 import shlex
 from pathlib import Path
+
+# Allow running as `cd cloudmesh && python main.py` (CI) as well as
+# `python -m cloudmesh.main` from the repo root and the installed `cm` entry
+# point. When executed as a script from inside cloudmesh/, the top-level
+# `cloudmesh` package is not otherwise importable (no install in CI).
+_PKG_ROOT = Path(__file__).resolve().parent.parent
+if str(_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PKG_ROOT))
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 from rich import box
 
-from core.security import SecurityManager
-from core.server import ServerManager
-from core.monitor import ResourceMonitor
-from core.scheduler import TaskScheduler
-from core.dashboard import Dashboard
-from core.transfer import FileTransfer
-from core.history import HistoryManager
-from core.deploy import PackageDeployer
-from core.alerts import AlertManager
-from core.groups import GroupsManager
-from core.cmdlog import CommandLog
-from core.sync import DirectorySync
-from core.service import ServiceMode
-from core.node_client import NodeClient, save_private_json
-from core.task_queue import SmartTaskQueue, WorkerAlreadyRunningError
-from core.gpu import GPUTelemetry
-from core.jobs import JobManager
-from core.features import (
+from cloudmesh.core.security import SecurityManager
+from cloudmesh.core.server import ServerManager
+from cloudmesh.core.monitor import ResourceMonitor
+from cloudmesh.core.scheduler import TaskScheduler
+from cloudmesh.core.dashboard import Dashboard
+from cloudmesh.core.transfer import FileTransfer
+from cloudmesh.core.history import HistoryManager
+from cloudmesh.core.deploy import PackageDeployer
+from cloudmesh.core.alerts import AlertManager
+from cloudmesh.core.groups import GroupsManager
+from cloudmesh.core.cmdlog import CommandLog
+from cloudmesh.core.sync import DirectorySync
+from cloudmesh.core.service import ServiceMode
+from cloudmesh.core.node_client import NodeClient, save_private_json
+from cloudmesh.core.task_queue import SmartTaskQueue, WorkerAlreadyRunningError
+from cloudmesh.core.gpu import GPUTelemetry
+from cloudmesh.core.jobs import JobManager
+from cloudmesh.core.features import (
     ping_all, get_uptime, get_top_processes, get_disk_detail,
     get_network_info, get_logged_users, search_files, get_recent_logs,
     export_config, import_config, encrypt_file, decrypt_file,
     network_speed_test, scan_subnet, cleanup_old, generate_report,
     create_alias, get_aliases, remove_alias, get_version,
 )
-from core.panic import PanicManager, TripwireManager, ShamirPanicManager
-from core.weather import WeatherForecast
-from core.gossip import GossipManager
-from core.checkpoint import CheckpointManager
-from core.advanced import (
+from cloudmesh.core.panic import PanicManager, TripwireManager, ShamirPanicManager
+from cloudmesh.core.weather import WeatherForecast
+from cloudmesh.core.gossip import GossipManager
+from cloudmesh.core.checkpoint import CheckpointManager
+from cloudmesh.core.advanced import (
     discover_network, run_full_benchmark, ScheduleManager, NotifyManager,
     CloudMeshAPI, ProfileManager, audit_server, quick_ssh,
     TemplateManager, generate_network_map,
@@ -56,7 +64,7 @@ COMPLETION_COMMANDS = (
     "disk network who find logs export import encrypt decrypt speed scan cleanup report "
     "alias version doctor update status discover bench schedule notify api panic tripwire "
     "weather trust profile audit ssh template map docker firewall ssl logagg reshistory "
-    "plugins acl webhooks watcher tunnel database node exec watch keys config completions "
+    "plugins acl webhooks watcher tunnel database migrate storage node exec watch keys config completions "
     "tw triw test"
 ).split()
 
@@ -90,6 +98,8 @@ COMPLETION_SUBCOMMANDS = {
     "watcher": ("list", "add", "remove", "check", "check-status", "alerts"),
     "tunnel": ("list", "add", "remove", "start", "stop", "stop-all", "status", "quick"),
     "database": ("list", "status", "query", "backup"),
+    "migrate": (),
+    "storage": ("backup", "list", "restore"),
     "acl": ("users", "add-user", "remove-user", "set-role", "enable", "disable",
             "roles", "add-role", "remove-role"),
 }
@@ -137,7 +147,7 @@ COMPLETION_OPTIONS = {
 
 
 def cmd_docker(args):
-    from core.docker import DockerManager
+    from cloudmesh.core.docker import DockerManager
     dm = DockerManager()
     if args.action == "list-servers":
         result = dm.list_servers()
@@ -166,7 +176,7 @@ def cmd_docker(args):
 
 
 def cmd_firewall(args):
-    from core.firewall import FirewallManager
+    from cloudmesh.core.firewall import FirewallManager
     fm = FirewallManager()
     if args.action == "list-rules":
         rules = fm.list_rules(args.server if hasattr(args, "server") else None)
@@ -205,7 +215,7 @@ def cmd_firewall(args):
 
 
 def cmd_ssl(args):
-    from core.sslcheck import SSLChecker
+    from cloudmesh.core.sslcheck import SSLChecker
     sc = SSLChecker()
     if args.action == "check":
         result = sc.check_domain(args.domain, args.port)
@@ -262,7 +272,7 @@ def cmd_ssl(args):
 
 
 def cmd_logagg(args):
-    from core.logagg import LogAggregator
+    from cloudmesh.core.logagg import LogAggregator
     la = LogAggregator()
     if args.action == "add-source":
         result = la.add_source(args.server, args.path, args.tag)
@@ -306,7 +316,7 @@ def cmd_logagg(args):
 
 
 def cmd_reshistory(args):
-    from core.reshistory import (
+    from cloudmesh.core.reshistory import (
         snapshot, show_history, summary, clear_history,
         start_auto, stop_auto, auto_status,
     )
@@ -366,7 +376,7 @@ def cmd_reshistory(args):
 
 
 def cmd_plugins(args):
-    from core.plugins import list_plugins, add_plugin, remove_plugin, run_plugin, import_plugin, export_plugin
+    from cloudmesh.core.plugins import list_plugins, add_plugin, remove_plugin, run_plugin, import_plugin, export_plugin
     if args.action == "list":
         plugins = list_plugins()
         if not plugins:
@@ -406,7 +416,7 @@ def cmd_plugins(args):
 
 
 def cmd_acl(args):
-    from core.acl import list_users, add_user, remove_user, set_role, enable_user, disable_user, list_roles, add_role, remove_role
+    from cloudmesh.core.acl import list_users, add_user, remove_user, set_role, enable_user, disable_user, list_roles, add_role, remove_role
     if args.action == "users":
         users = list_users()
         if not users:
@@ -456,7 +466,7 @@ def cmd_acl(args):
 
 
 def cmd_webhooks(args):
-    from core.webhooks import list_webhooks, add_webhook, remove_webhook, send_webhook, test_webhook, webhook_log, enable_webhook, disable_webhook
+    from cloudmesh.core.webhooks import list_webhooks, add_webhook, remove_webhook, send_webhook, test_webhook, webhook_log, enable_webhook, disable_webhook
     if args.action == "list":
         whs = list_webhooks()
         if not whs:
@@ -509,7 +519,7 @@ def cmd_webhooks(args):
 
 
 def cmd_watcher(args):
-    from core.watcher import add_watcher, remove_watcher, list_watchers, check_process, check_all_watchers, watcher_alerts
+    from cloudmesh.core.watcher import add_watcher, remove_watcher, list_watchers, check_process, check_all_watchers, watcher_alerts
     if args.action == "list":
         watchers = list_watchers()
         if not watchers:
@@ -557,7 +567,7 @@ def cmd_watcher(args):
 
 
 def cmd_tunnel(args):
-    from core.tunnels import list_tunnels, add_tunnel, remove_tunnel, start_tunnel, stop_tunnel, stop_all_tunnels, tunnel_status, quick_tunnel
+    from cloudmesh.core.tunnels import list_tunnels, add_tunnel, remove_tunnel, start_tunnel, stop_tunnel, stop_all_tunnels, tunnel_status, quick_tunnel
     if args.action == "list":
         tunnels = list_tunnels()
         if not tunnels:
@@ -600,7 +610,7 @@ def cmd_tunnel(args):
 
 
 def cmd_database(args):
-    from core.database import list_databases, db_status, db_query, db_backup, db_check_all
+    from cloudmesh.core.database import list_databases, db_status, db_query, db_backup, db_check_all
     kw = {"db_type": getattr(args, "type", "mysql"), "host": getattr(args, "host", "127.0.0.1"), "port": getattr(args, "port", None), "user": getattr(args, "user", "root"), "password": getattr(args, "password", "")}
     if args.action == "list":
         result = list_databases(args.server, **kw)
@@ -616,6 +626,56 @@ def cmd_database(args):
         console.print(f"[green]{result}[/]")
     else:
         console.print("[red]Usage: cm database <action>[/]")
+
+
+def cmd_migrate(args):
+    from cloudmesh.core.migrate import run_migration
+    from pathlib import Path as _Path
+    base = _Path(args.base_dir) if getattr(args, "base_dir", None) else None
+    dry = bool(getattr(args, "dry_run", False))
+    result = run_migration(base_dir=base, dry_run=dry)
+    if result.get("dry_run"):
+        console.print("[cyan]Dry-run: no data was written.[/]")
+    table = Table(title="Migration Results", box=box.ROUNDED)
+    table.add_column("Type", style="cyan")
+    table.add_column("Count")
+    for k, v in result["results"].items():
+        table.add_row(k, str(v))
+    console.print(table)
+    if result["errors"]:
+        console.print(f"[red]Errors: {len(result['errors'])}[/]")
+        for e in result["errors"][:10]:
+            console.print(f"  - {e}")
+    if result.get("backup_path"):
+        console.print(f"[green]Backup: {result['backup_path']}[/]")
+    console.print(f"[{'green' if result['success'] else 'red'}]Success: {result['success']}[/]")
+    if not result["success"]:
+        sys.exit(1)
+
+
+def cmd_storage(args):
+    from cloudmesh.core.storage import StorageManager
+    sm = StorageManager()
+    action = getattr(args, "action", None)
+    if action == "backup":
+        path = sm.backup_database()
+        console.print(f"[green]Backup created: {path}[/]")
+    elif action == "list":
+        backups = sm.list_backups()
+        if not backups:
+            console.print("[yellow]No backups found[/]")
+            return
+        for b in backups:
+            console.print(f"  - {b}")
+    elif action == "restore":
+        ok = sm.restore_backup(args.path)
+        if ok:
+            console.print(f"[green]Restored from {args.path}[/]")
+        else:
+            console.print(f"[red]Restore failed: {args.path}[/]")
+            sys.exit(1)
+    else:
+        console.print("[red]Usage: cm storage <backup|list|restore>[/]")
 
 
 def init_components():
@@ -1169,7 +1229,7 @@ def cmd_slice(args):
 
 def cmd_autosync(args):
     _, server_mgr, *_ = init_components()
-    from core.sync import DirectorySync
+    from cloudmesh.core.sync import DirectorySync
     sync = DirectorySync(server_mgr)
     if not args.local or not args.to_server:
         console.print("[red]Specify --local and --to-server[/]")
@@ -1187,7 +1247,7 @@ def cmd_autosync(args):
 
 def cmd_interactive(args):
     _, server_mgr, monitor, scheduler, _, _, _, _, _, groups_mgr, cmd_log = init_components()
-    from core.tui import InteractiveTUI
+    from cloudmesh.core.tui import InteractiveTUI
     tui = InteractiveTUI(server_mgr, monitor, scheduler, groups_mgr, cmd_log)
     tui.run()
 
@@ -3113,7 +3173,7 @@ def cmd_panic(args):
             return
         elif args.panic_action == "rotate":
             console.print(Panel("[bold red]PANIC ROTATE — Rotating keys on all remote nodes[/]", border_style="red"))
-            from core.node_client import NodeClient
+            from cloudmesh.core.node_client import NodeClient
             cfg = _load_config()
             nodes = cfg.get("nodes", {})
             if not nodes:
@@ -4096,6 +4156,17 @@ def main():
     dbb.add_argument("--user", "-u", default="root")
     dbb.add_argument("--password", "-P", default="")
 
+    mig_p = subparsers.add_parser("migrate", help="Migrate JSON data to SQLite backend")
+    mig_p.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    mig_p.add_argument("--base-dir", help="Base directory holding JSON data")
+
+    sto_p = subparsers.add_parser("storage", help="SQLite backend backups")
+    sto_sub = sto_p.add_subparsers(dest="action")
+    sto_sub.add_parser("backup", help="Create a SQLite backup")
+    sto_sub.add_parser("list", help="List SQLite backups")
+    sto_res = sto_sub.add_parser("restore", help="Restore SQLite backup")
+    sto_res.add_argument("path", help="Backup file or name inside backups/")
+
     mon = subparsers.add_parser("mon", help="[alias] Monitor resources")
     mon.add_argument("--name", "-n")
 
@@ -4372,6 +4443,8 @@ def main():
         "watcher": lambda: cmd_watcher(args),
         "tunnel": lambda: cmd_tunnel(args),
         "database": lambda: cmd_database(args),
+        "migrate": lambda: cmd_migrate(args),
+        "storage": lambda: cmd_storage(args),
         "ls": lambda: cmd_server_list(args),
         "add": lambda: cmd_server_add(args),
         "rm": lambda: cmd_server_remove(args),

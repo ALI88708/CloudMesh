@@ -276,7 +276,7 @@ class CloudMeshAPI:
         self.port = port
         self._running = False
         self.api_key = api_key or secrets.token_hex(32)
-        from core.ddos import DDoSProtection
+        from cloudmesh.core.ddos import DDoSProtection
         self._ddos = DDoSProtection(rate_max=60, rate_window=60, ban_threshold=10)
 
     def _handle(self, request):
@@ -334,10 +334,10 @@ class CloudMeshAPI:
                     return {"error": str(e)}
             return {"error": f"Server '{server}' not found"}
         elif path == "/api/acl/users":
-            from core.acl import list_users
+            from cloudmesh.core.acl import list_users
             return {"users": list_users()}
         elif path == "/api/acl/roles":
-            from core.acl import list_roles
+            from cloudmesh.core.acl import list_roles
             return {"roles": list_roles()}
         return {"error": "Not found"}
 

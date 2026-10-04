@@ -136,7 +136,7 @@ class GossipManager:
         return suspicious
 
     def scan_all(self, server_mgr, node_keys=None):
-        from core.node_client import NodeClient
+        from cloudmesh.core.node_client import NodeClient
 
         self._data["last_scan"] = datetime.now().isoformat()
 

@@ -61,7 +61,7 @@ class JobManager:
             last_checkpoint=datetime.now().isoformat(),
         )
 
-        from core.checkpoint import CheckpointManager
+        from cloudmesh.core.checkpoint import CheckpointManager
         cp = CheckpointManager()
         cp.save_checkpoint(
             job_id=job_id,
@@ -77,7 +77,7 @@ class JobManager:
     def recover_job(self, job_id, new_server=None):
         cp_import = None
         try:
-            from core.checkpoint import CheckpointManager
+            from cloudmesh.core.checkpoint import CheckpointManager
             cp_import = CheckpointManager()
         except ImportError:
             return None
@@ -101,7 +101,7 @@ class JobManager:
         return {"old_job_id": job_id, "new_job_id": new_id, "server": new_server}
 
     def get_recoverable_jobs(self, alive_nodes=None):
-        from core.checkpoint import CheckpointManager
+        from cloudmesh.core.checkpoint import CheckpointManager
         cp = CheckpointManager()
         alive = alive_nodes or set()
         return cp.needs_recovery(alive)

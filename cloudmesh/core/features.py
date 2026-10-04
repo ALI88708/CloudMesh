@@ -15,7 +15,7 @@ def ping_all(server_mgr, node_keys=None):
         except Exception as e:
             results[name] = {"type": "server", "online": False, "msg": str(e)}
     if node_keys:
-        from core.node_client import NodeClient
+        from cloudmesh.core.node_client import NodeClient
         for name, info in node_keys.items():
             try:
                 c = NodeClient.from_config(info)
@@ -200,7 +200,7 @@ def generate_report(server_mgr, monitor, node_keys=None):
         except Exception:
             report["servers"][name] = None
     if node_keys:
-        from core.node_client import NodeClient
+        from cloudmesh.core.node_client import NodeClient
         for name, info in node_keys.items():
             try:
                 c = NodeClient.from_config(info)

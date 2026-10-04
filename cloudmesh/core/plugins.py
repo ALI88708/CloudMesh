@@ -1,5 +1,5 @@
 import json, os, subprocess
-from core.ssh_util import run_ssh
+from cloudmesh.core.ssh_util import run_ssh
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
@@ -74,8 +74,9 @@ def run_plugin(name, server_name=None):
         except Exception as e:
             return str(e)
 
-    from core.server import load_servers
-    servers = load_servers()
+    from cloudmesh.core.security import SecurityManager
+    from cloudmesh.core.server import ServerManager
+    servers = ServerManager(SecurityManager()).config.get("servers", {})
     results = {}
 
     if server_name:

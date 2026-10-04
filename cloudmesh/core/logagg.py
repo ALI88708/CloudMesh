@@ -1,6 +1,6 @@
 import json, os, subprocess, re
 from datetime import datetime
-from core.ssh_util import run_ssh
+from cloudmesh.core.ssh_util import run_ssh
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
@@ -70,7 +70,7 @@ def follow_log(server_name, log_file="/var/log/syslog"):
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
     cmd = f"tail -f {log_file} 2>/dev/null"
     try:
-        from core.ssh_util import build_ssh_cmd
+        from cloudmesh.core.ssh_util import build_ssh_cmd
         ssh_cmd = build_ssh_cmd(host, user, key, cmd, extra_flags=[])
         proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         lines = []
