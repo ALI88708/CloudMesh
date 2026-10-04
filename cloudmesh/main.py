@@ -710,6 +710,13 @@ def cmd_storage(args):
 
 
 def cmd_drift(args):
+    """Run args.action (snapshot, check, list, or clear) and print its result.
+
+    snapshot replaces the baseline; clear attempts to remove it. check
+    raises SystemExit(1) when drift is reported, but returns normally for
+    no baseline or a collection error returned by DriftManager.check().
+    Component initialization and snapshot errors propagate.
+    """
     from cloudmesh.core.drift import DriftManager
     _, server_mgr, *_ = init_components()
     from cloudmesh.core.storage import StorageManager
@@ -757,6 +764,14 @@ def cmd_drift(args):
 
 
 def cmd_diagnose(args):
+    """Print diagnostic findings and raise SystemExit(2) if any are critical.
+
+    A nonempty args.name limits resource checks to that server and excludes
+    local metrics; otherwise check local metrics and all configured servers.
+    Other checks remain enabled. args.as_json emits findings in check order;
+    table output sorts by severity. Initialization and uncaught diagnostic
+    errors propagate.
+    """
     from cloudmesh.core.diagnose import DiagnoseEngine
     from cloudmesh.core.storage import StorageManager
     _, server_mgr, monitor, *_ = init_components()

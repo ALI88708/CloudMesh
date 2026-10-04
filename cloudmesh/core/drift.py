@@ -28,6 +28,13 @@ class DriftError(RuntimeError):
 
 class DriftManager:
     def __init__(self, server_mgr=None, storage=None, base_dir=None):
+        """Use supplied storage or initialize it under base_dir.
+
+        Without base_dir, use StorageManager's default directory. Creating
+        storage may create database, key, and backup paths; initialization
+        errors propagate. server_mgr, when supplied, provides server state
+        instead of storage.
+        """
         self.server_mgr = server_mgr
         if storage is None:
             base = Path(base_dir) if base_dir is not None else None
@@ -36,7 +43,12 @@ class DriftManager:
 
     # -- collection ----------------------------------------------------
     def collect(self) -> Dict[str, Any]:
-        """Capture current managed state (no secrets)."""
+        """Return tracked collections as mappings keyed by item name.
+
+        Server passwords, key paths, and node auth keys are excluded; command
+        text and descriptions are retained without redaction. Raise DriftError
+        if any collector fails, rather than returning partial state.
+        """
         state: Dict[str, Any] = {}
         errors: Dict[str, str] = {}
         collectors = (
@@ -59,6 +71,10 @@ class DriftManager:
         return state
 
     def _collect_servers(self) -> Dict[str, Any]:
+        """Return host, user, and port by name, preferring server_mgr.
+
+        Server lookup and storage errors propagate to collect().
+        """
         if self.server_mgr is not None:
             servers = {}
             for name in self.server_mgr.list_servers():
@@ -76,6 +92,10 @@ class DriftManager:
         }
 
     def _collect_nodes(self) -> Dict[str, Any]:
+        """Return host, port, and TLS state by node name, excluding auth keys.
+
+        Storage read errors propagate to collect().
+        """
         return {
             n["name"]: {"host": n.get("host"), "port": n.get("port", 9999),
                         "tls": bool(n.get("tls", False))}
@@ -83,9 +103,14 @@ class DriftManager:
         }
 
     def _collect_groups(self) -> Dict[str, Any]:
+        """Return device lists by group name; storage errors propagate."""
         return dict(self.storage.list_groups())
 
     def _collect_schedules(self) -> Dict[str, Any]:
+        """Return schedule definitions by name, with interval in seconds.
+
+        Include command, enabled state, and server; storage errors propagate.
+        """
         return {
             s["name"]: {"command": s.get("command"),
                         "interval": s.get("interval_seconds", 3600),
@@ -95,6 +120,7 @@ class DriftManager:
         }
 
     def _collect_templates(self) -> Dict[str, Any]:
+        """Return commands and descriptions by name; storage errors propagate."""
         return {
             t["name"]: {"command": t.get("command", ""),
                         "description": t.get("description", "")}
@@ -102,9 +128,14 @@ class DriftManager:
         }
 
     def _collect_aliases(self) -> Dict[str, Any]:
+        """Return alias commands by name; storage errors propagate."""
         return dict(self.storage.list_aliases())
 
     def _collect_alert_rules(self) -> Dict[str, Any]:
+        """Return rule definitions by name, excluding cooldown and history.
+
+        Storage errors propagate to collect().
+        """
         return {
             r["name"]: {"metric": r.get("metric"), "threshold": r.get("threshold"),
                         "operator": r.get("operator", "gt"),
@@ -115,7 +146,11 @@ class DriftManager:
 
     # -- baseline ------------------------------------------------------
     def snapshot(self) -> Dict[str, Any]:
-        """Record the current state as the drift baseline."""
+        """Replace the stored baseline with current state and return that state.
+
+        DriftError from collection prevents a write; storage write errors
+        propagate to the caller.
+        """
         state = self.collect()
         try:
             self.storage.set_setting(BASELINE_KEY, state)
@@ -125,7 +160,7 @@ class DriftManager:
         return state
 
     def get_baseline(self) -> Optional[Dict[str, Any]]:
-        """Return the recorded baseline, or None when absent."""
+        """Return the baseline, or None if absent, unreadable, or not a dict."""
         try:
             base = self.storage.get_setting(BASELINE_KEY, None)
         except Exception:
@@ -133,7 +168,10 @@ class DriftManager:
         return base if isinstance(base, dict) else None
 
     def clear(self) -> None:
-        """Remove the recorded baseline."""
+        """Remove the recorded baseline, suppressing storage errors.
+
+        An absent baseline is a no-op; None is returned even on failure.
+        """
         try:
             with self.storage._get_connection() as conn:
                 conn.execute("DELETE FROM settings WHERE key = ?", (BASELINE_KEY,))
@@ -144,7 +182,13 @@ class DriftManager:
     # -- diff ----------------------------------------------------------
     @staticmethod
     def diff_states(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
-        """Diff two state snapshots per collection."""
+        """Compare named entries in tracked collections of two snapshots.
+
+        Return sorted added/removed name lists and a modified mapping with
+        before/after values for each unequal entry. Missing or empty
+        collections are treated as empty; untracked collections are ignored.
+        Values are compared directly, so list order matters.
+        """
         result: Dict[str, Any] = {}
         for kind in TRACKED:
             old = before.get(kind, {}) or {}

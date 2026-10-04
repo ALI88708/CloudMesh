@@ -31,6 +31,7 @@ BACKUP_STALE_DAYS = 7
 
 
 def _finding(fid, severity, area, target, title, detail="", suggestion=""):
+    """Build a finding with the supplied values, without validating them."""
     return {
         "id": fid, "severity": severity, "area": area, "target": target,
         "title": title, "detail": detail, "suggestion": suggestion,
@@ -40,6 +41,13 @@ def _finding(fid, severity, area, target, title, detail="", suggestion=""):
 class DiagnoseEngine:
     def __init__(self, monitor=None, server_mgr=None, storage=None,
                  base_dir=None, drift=None):
+        """Configure optional metric, server, storage, and drift providers.
+
+        With no storage supplied, base_dir enables storage initialization,
+        which may create database, key, and backup paths. Initialization
+        errors disable storage checks. Import and invalid path errors may
+        still propagate. An explicit drift provider can run without storage.
+        """
         self.monitor = monitor
         self.server_mgr = server_mgr
         if storage is None and base_dir is not None:
@@ -58,6 +66,19 @@ class DiagnoseEngine:
 
     # -- entry point ---------------------------------------------------
     def diagnose(self, names=None, include_local: bool = True) -> List[Dict[str, Any]]:
+        """Return findings in check order, without sorting by severity.
+
+        names selects servers for resource checks; None uses all servers
+        from server_mgr, and an empty iterable selects none. include_local
+        adds local metrics. SSL, watcher, backup, and drift checks remain
+        independent of this selection.
+
+        Each finding contains id, severity, area, target, title, detail, and
+        suggestion. Return one healthy info finding if no check produces
+        findings, including when checks were skipped. Metric collection
+        failures become warnings; errors outside the checks' recovery
+        paths, such as malformed metric mappings, propagate.
+        """
         findings: List[Dict[str, Any]] = []
         targets = self._targets(names, include_local)
         for target, metrics in targets:
@@ -84,6 +105,12 @@ class DiagnoseEngine:
         return findings
 
     def _targets(self, names, include_local):
+        """Return (target, metrics) pairs, with local first when requested.
+
+        names=None uses server_mgr's server list; listing failures yield no
+        remote targets. Metric call failures yield None for that target.
+        Return an empty list when no monitor is configured.
+        """
         out = []
         if self.monitor is None:
             return out
@@ -108,6 +135,14 @@ class DiagnoseEngine:
 
     # -- checks ----------------------------------------------------------
     def _check_resources(self, target, metrics):
+        """Return disk, RAM, and CPU findings for a metric snapshot.
+
+        Disk and RAM warn at 75% and become critical at 90%; CPU warns at
+        80% and becomes critical at 95%, all inclusive. Missing percentages
+        and float conversions raising TypeError or ValueError are skipped.
+        metrics and nonempty ram/disk entries must support get(); malformed
+        mappings and other conversion errors propagate.
+        """
         out = []
         cpu = metrics.get("cpu_percent")
         ram = metrics.get("ram") or {}
@@ -172,6 +207,15 @@ class DiagnoseEngine:
         return out
 
     def _check_ssl(self):
+        """Probe tracked domains and return certificate findings.
+
+        Non-valid statuses yield warnings. Valid results with days_left
+        converted to an integer yield critical findings at seven days or
+        less (including expiry), and warnings at eight through 30 days.
+        Import/loading failures return no findings; raised probe errors and
+        non-dict results are skipped. Missing day counts and conversions
+        raising TypeError or ValueError are skipped; other errors propagate.
+        """
         out = []
         try:
             try:
@@ -234,6 +278,11 @@ class DiagnoseEngine:
         return out
 
     def _check_watchers(self):
+        """Return warnings for the last ten stored alerts without polling.
+
+        Import or alert-loading failures return no findings; malformed
+        alert entries can still raise during formatting.
+        """
         out = []
         try:
             try:
@@ -255,6 +304,13 @@ class DiagnoseEngine:
         return out
 
     def _check_backups(self):
+        """Return info for missing backups or warnings for stale backups.
+
+        Stale means older than seven days. Age uses the newest modification
+        time among cloudmesh_backup_*.db
+        files in storage.backups_dir. Return no findings without storage,
+        on listing errors, or on OSError while reading modification times.
+        """
         out = []
         if self.storage is None:
             return out
@@ -286,6 +342,12 @@ class DiagnoseEngine:
         return out
 
     def _check_drift(self):
+        """Return a warning per drifted collection or info for a returned error.
+
+        Skip when neither drift nor storage is supplied, when there is no
+        baseline or drift, or when creating/calling the drift provider
+        raises. Errors interpreting or summarizing its result propagate.
+        """
         out = []
         if self._drift is None and self.storage is None:
             # No backend available: never fabricate one here (constructing a
