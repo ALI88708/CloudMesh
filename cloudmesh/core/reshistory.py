@@ -133,11 +133,11 @@ def start_auto(interval=60):
         return f"Auto-recording already running (PID {auto_status().get('pid')})"
     import subprocess
     import sys
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pkg_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     code = (
         "import sys; sys.path.insert(0, '%s'); "
-        "from core.reshistory import _auto_loop; "
-        "_auto_loop(%d)" % (root, int(interval))
+        "from cloudmesh.core.reshistory import _auto_loop; "
+        "_auto_loop(%d)" % (pkg_root, int(interval))
     )
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.Popen(

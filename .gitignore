@@ -20,6 +20,12 @@ venv/
 .profiles/
 *.log
 *.encrypted
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+cloudmesh.db
+backups/
 
 # IDE
 .vscode/

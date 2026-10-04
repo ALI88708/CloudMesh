@@ -19,18 +19,25 @@ logger = logging.getLogger(__name__)
 
 class MigrationManager:
     """Handle migration from JSON to extended SQLite storage."""
-    
-    def __init__(self, base_dir: Path = None):
+
+    def __init__(self, base_dir: Path = None, init_storage: bool = True):
         if base_dir is None:
             base_dir = Path(__file__).parent.parent
-        
+
         self.base_dir = Path(base_dir)
         self.config_path = self.base_dir / "config.json"
         self.key_path = self.base_dir / ".secret.key"
-        self.storage = StorageManager(base_dir)
-        
+        self._storage = None
+        self._init_storage = init_storage
+
         self.migrated = False
         self.errors = []
+
+    @property
+    def storage(self) -> StorageManager:
+        if self._storage is None:
+            self._storage = StorageManager(self.base_dir)
+        return self._storage
     
     def _get_fernet(self) -> Fernet:
         """Get Fernet instance for decryption."""
@@ -44,28 +51,32 @@ class MigrationManager:
         if not self.config_path.exists():
             logger.info("No existing config.json found - fresh installation")
             return {}
-        
+
         fernet = self._get_fernet()
         if not fernet:
-            logger.error("Cannot decrypt config - missing encryption key")
+            msg = "Cannot decrypt config - missing encryption key"
+            logger.error(msg)
+            self.errors.append(msg)
             return {}
-        
+
         try:
             encrypted = self.config_path.read_bytes()
             decrypted = fernet.decrypt(encrypted)
             return json.loads(decrypted.decode())
         except Exception as e:
-            logger.error("Failed to decrypt config: %s", e)
+            msg = f"Failed to decrypt config: {e}"
+            logger.error(msg)
+            self.errors.append(msg)
             return {}
     
     def migrate_servers(self, config: Dict) -> int:
         """Migrate servers from config."""
         servers = config.get("servers", {})
         count = 0
-        
+
         for name, info in servers.items():
             try:
-                self.storage.add_server(
+                ok = self.storage.add_server(
                     name=name,
                     host=info.get("host"),
                     user=info.get("user"),
@@ -73,17 +84,19 @@ class MigrationManager:
                     key_path=info.get("key_path"),
                     password=info.get("password")
                 )
-                
+                if not ok:
+                    raise RuntimeError("storage rejected server (duplicate or constraint)")
+
                 # Update status if available
                 if info.get("status"):
                     self.storage.update_server_status(name, info["status"])
-                
+
                 count += 1
                 logger.info("Migrated server: %s", name)
             except Exception as e:
                 self.errors.append(f"Failed to migrate server {name}: {e}")
                 logger.error("Failed to migrate server %s: %s", name, e)
-        
+
         return count
     
     def migrate_nodes(self) -> int:
@@ -92,25 +105,35 @@ class MigrationManager:
         if not node_keys_file.exists():
             logger.info("No .node_keys.json found")
             return 0
-        
+
         try:
             data = json.loads(node_keys_file.read_text())
             count = 0
-            
+
             for name, info in data.items():
                 try:
-                    self.storage.add_node(
+                    if isinstance(info, dict):
+                        host = info.get("host")
+                        port = info.get("port", 9999)
+                        auth_key = info.get("key", "")
+                    else:
+                        host = str(info)
+                        port = 9999
+                        auth_key = ""
+                    ok = self.storage.add_node(
                         name=name,
-                        host=info.get("host"),
-                        port=info.get("port", 9999),
-                        auth_key=info.get("key", "")
+                        host=host,
+                        port=port,
+                        auth_key=auth_key,
                     )
+                    if not ok:
+                        raise RuntimeError("storage rejected node (duplicate or constraint)")
                     count += 1
                     logger.info("Migrated node: %s", name)
                 except Exception as e:
                     self.errors.append(f"Failed to migrate node {name}: {e}")
                     logger.error("Failed to migrate node %s: %s", name, e)
-            
+
             return count
         except Exception as e:
             self.errors.append(f"Failed to load .node_keys.json: {e}")
@@ -121,25 +144,33 @@ class MigrationManager:
         """Migrate groups from config."""
         groups = config.get("groups", {})
         count = 0
-        
+
         for group_name, devices in groups.items():
             try:
-                self.storage.create_group(group_name)
-                
+                if not isinstance(devices, list):
+                    raise ValueError(f"group {group_name} is not a list")
+                ok = self.storage.create_group(group_name)
+                if not ok:
+                    # Group may already exist from a previous partial run; continue adding members.
+                    logger.warning("Group '%s' already exists, merging members", group_name)
+
                 for device in devices:
                     # Try to determine if it's a server or node
                     device_type = "server"  # Default
-                    if self.storage.get_node(device):
-                        device_type = "node"
-                    
+                    try:
+                        if self.storage.get_node(device):
+                            device_type = "node"
+                    except Exception:
+                        pass
+
                     self.storage.add_to_group(group_name, device, device_type)
-                
+
                 count += 1
                 logger.info("Migrated group: %s with %d devices", group_name, len(devices))
             except Exception as e:
                 self.errors.append(f"Failed to migrate group {group_name}: {e}")
                 logger.error("Failed to migrate group %s: %s", group_name, e)
-        
+
         return count
     
     def migrate_settings(self, config: Dict) -> int:
@@ -163,15 +194,15 @@ class MigrationManager:
         if not alerts_file.exists():
             logger.info("No alerts.json found")
             return 0
-        
+
         try:
             data = json.loads(alerts_file.read_text())
             count = 0
-            
+
             # Migrate rules
             for rule in data.get("rules", []):
                 try:
-                    self.storage.add_alert_rule(
+                    ok = self.storage.add_alert_rule(
                         name=rule.get("name"),
                         metric=rule.get("metric"),
                         threshold=rule.get("threshold"),
@@ -180,12 +211,14 @@ class MigrationManager:
                         severity=rule.get("severity", "warning"),
                         cooldown=rule.get("cooldown", 300)
                     )
+                    if not ok:
+                        raise RuntimeError("storage rejected alert rule (duplicate or constraint)")
                     count += 1
                     logger.info("Migrated alert rule: %s", rule.get("name"))
                 except Exception as e:
                     self.errors.append(f"Failed to migrate alert rule {rule.get('name')}: {e}")
                     logger.error("Failed to migrate alert rule %s: %s", rule.get("name"), e)
-            
+
             # Migrate history
             for alert in data.get("history", []):
                 try:
@@ -199,16 +232,20 @@ class MigrationManager:
                         severity=alert.get("severity")
                     )
                 except Exception as e:
-                    logger.warning("Failed to migrate alert history entry: %s", e)
-            
+                    msg = f"Failed to migrate alert history entry: {e}"
+                    self.errors.append(msg)
+                    logger.warning(msg)
+
             # Migrate cooldowns
             for key, timestamp in data.get("last_notified", {}).items():
                 try:
                     rule_name, server = key.split("|")
                     self.storage.set_alert_cooldown(rule_name, server, timestamp)
                 except Exception as e:
-                    logger.warning("Failed to migrate alert cooldown: %s", e)
-            
+                    msg = f"Failed to migrate alert cooldown {key}: {e}"
+                    self.errors.append(msg)
+                    logger.warning(msg)
+
             return count
         except Exception as e:
             self.errors.append(f"Failed to load alerts.json: {e}")
@@ -282,13 +319,16 @@ class MigrationManager:
         if not aliases_file.exists():
             logger.info("No .aliases.json found")
             return 0
-        
+
         try:
             data = json.loads(aliases_file.read_text())
             count = 0
-            
+
             for name, command in data.items():
                 try:
+                    if isinstance(command, dict):
+                        command = command.get("command", "")
+                    command = str(command)
                     with self.storage._get_connection() as conn:
                         conn.execute("""
                             INSERT OR REPLACE INTO aliases (name, command)
@@ -300,7 +340,7 @@ class MigrationManager:
                 except Exception as e:
                     self.errors.append(f"Failed to migrate alias {name}: {e}")
                     logger.error("Failed to migrate alias %s: %s", name, e)
-            
+
             return count
         except Exception as e:
             self.errors.append(f"Failed to load .aliases.json: {e}")
@@ -381,36 +421,87 @@ class MigrationManager:
             logger.error("Failed to load .schedule.json: %s", e)
             return 0
     
+    def _preview_counts(self, config: Dict) -> Dict[str, int]:
+        """Count migratable items without touching SQLite (dry-run)."""
+        counts = {"servers": 0, "nodes": 0, "groups": 0, "settings": 0,
+                  "alerts": 0, "acl_users": 0, "aliases": 0, "templates": 0,
+                  "schedules": 0}
+        try:
+            servers = config.get("servers", {})
+            counts["servers"] = len(servers) if isinstance(servers, dict) else 0
+            groups = config.get("groups", {})
+            counts["groups"] = len(groups) if isinstance(groups, dict) else 0
+            settings = config.get("settings", {})
+            counts["settings"] = len(settings) if isinstance(settings, dict) else 0
+        except Exception:
+            pass
+        for filename, key in [(".node_keys.json", "nodes"), ("alerts.json", "alerts"),
+                              (".aliases.json", "aliases"), (".templates.json", "templates"),
+                              (".schedule.json", "schedules")]:
+            try:
+                p = self.base_dir / filename
+                if not p.exists():
+                    continue
+                data = json.loads(p.read_text())
+                if key == "alerts":
+                    rules = data.get("rules", []) if isinstance(data, dict) else []
+                    counts[key] = len(rules)
+                elif isinstance(data, dict):
+                    counts[key] = len(data)
+            except Exception as e:
+                self.errors.append(f"Failed to preview {filename}: {e}")
+        acl_file = self.base_dir / "data" / "acl.json"
+        try:
+            if acl_file.exists():
+                data = json.loads(acl_file.read_text())
+                users = data.get("users", {}) if isinstance(data, dict) else {}
+                counts["acl_users"] = len(users) if isinstance(users, dict) else 0
+        except Exception as e:
+            self.errors.append(f"Failed to preview acl.json: {e}")
+        return counts
+
     def migrate_all(self, dry_run: bool = False) -> Dict[str, int]:
-        """Run full migration."""
+        """Run full migration. dry_run=True writes nothing (no DB, no dirs)."""
         logger.info("Starting migration from JSON to extended SQLite storage...")
-        
+
         if dry_run:
             logger.info("DRY RUN MODE - No data will be written")
-        
+            config = self._load_encrypted_config()
+            # _load_encrypted_config may append errors for missing key; in dry-run
+            # a missing config simply means nothing to migrate, not a failure.
+            if not self.config_path.exists():
+                self.errors.clear()
+            results = self._preview_counts(config)
+            self.migrated = False
+            if self.errors:
+                logger.warning("Dry-run completed with %d errors", len(self.errors))
+            else:
+                logger.info("Dry-run completed successfully!")
+            return results
+
         config = self._load_encrypted_config()
-        
+
         results = {
-            "servers": self.migrate_servers(config) if not dry_run else 0,
-            "nodes": self.migrate_nodes() if not dry_run else 0,
-            "groups": self.migrate_groups(config) if not dry_run else 0,
-            "settings": self.migrate_settings(config) if not dry_run else 0,
-            "alerts": self.migrate_alerts() if not dry_run else 0,
-            "acl_users": self.migrate_acl() if not dry_run else 0,
-            "aliases": self.migrate_aliases() if not dry_run else 0,
-            "templates": self.migrate_templates() if not dry_run else 0,
-            "schedules": self.migrate_schedule() if not dry_run else 0,
+            "servers": self.migrate_servers(config),
+            "nodes": self.migrate_nodes(),
+            "groups": self.migrate_groups(config),
+            "settings": self.migrate_settings(config),
+            "alerts": self.migrate_alerts(),
+            "acl_users": self.migrate_acl(),
+            "aliases": self.migrate_aliases(),
+            "templates": self.migrate_templates(),
+            "schedules": self.migrate_schedule(),
         }
-        
+
         self.migrated = True
-        
+
         if self.errors:
             logger.warning("Migration completed with %d errors", len(self.errors))
             for error in self.errors:
                 logger.error("  - %s", error)
         else:
             logger.info("Migration completed successfully!")
-        
+
         return results
     
     def backup_old_files(self) -> str:
@@ -446,20 +537,22 @@ class MigrationManager:
 
 
 def run_migration(base_dir: Path = None, dry_run: bool = False) -> Dict:
-    """Run migration and return results."""
-    manager = MigrationManager(base_dir)
-    
+    """Run migration and return results. success=False whenever errors exist."""
+    manager = MigrationManager(base_dir, init_storage=not dry_run)
+
     if not dry_run:
         # Backup old files first
         backup_path = manager.backup_old_files()
         logger.info("Old JSON files backed up to: %s", backup_path)
     else:
         backup_path = None
-    
+
     results = manager.migrate_all(dry_run=dry_run)
-    
+    success = (len(manager.errors) == 0) and (manager.migrated if not dry_run else True)
+
     return {
-        "success": manager.migrated,
+        "success": success,
+        "dry_run": dry_run,
         "results": results,
         "errors": manager.errors,
         "backup_path": backup_path
@@ -467,22 +560,32 @@ def run_migration(base_dir: Path = None, dry_run: bool = False) -> Dict:
 
 
 if __name__ == "__main__":
+    import argparse
     import sys
     logging.basicConfig(level=logging.INFO)
-    
-    dry_run = "--dry-run" in sys.argv
-    results = run_migration(dry_run=dry_run)
-    
+
+    parser = argparse.ArgumentParser(description="Migrate CloudMesh JSON data to SQLite")
+    parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    parser.add_argument("--base-dir", default=None, help="Base directory holding JSON data")
+    args = parser.parse_args()
+
+    base = Path(args.base_dir) if args.base_dir else None
+    results = run_migration(base_dir=base, dry_run=args.dry_run)
+
     print("\n=== Migration Results ===")
     print(f"Success: {results['success']}")
+    if results.get("dry_run"):
+        print("(dry-run: no data was written)")
     print("\nMigrated items:")
     for item, count in results['results'].items():
         print(f"  {item}: {count}")
-    
+
     if results['errors']:
         print(f"\nErrors: {len(results['errors'])}")
         for error in results['errors'][:10]:  # Show first 10 errors
             print(f"  - {error}")
-    
+
     if results['backup_path']:
         print(f"\nBackup location: {results['backup_path']}")
+
+    sys.exit(0 if results["success"] else 1)

@@ -74,8 +74,9 @@ def run_plugin(name, server_name=None):
         except Exception as e:
             return str(e)
 
-    from core.server import load_servers
-    servers = load_servers()
+    from cloudmesh.core.security import SecurityManager
+    from cloudmesh.core.server import ServerManager
+    servers = ServerManager(SecurityManager()).config.get("servers", {})
     results = {}
 
     if server_name:

@@ -4,6 +4,16 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.2.1] - 2026-10-04
+
+### Fixed (v3.2.0 review hardening)
+- **Secrets encryption**: server passwords and node auth keys are always Fernet-encrypted in SQLite; keys auto-created with 0600 perms; legacy plaintext rows handled without data loss; misleading duplicate logs fixed.
+- **Private file perms**: `cloudmesh.db`, `.secret.key`, and backups created 0600 (dirs 0700) on POSIX, matching queue storage.
+- **Backup/restore**: backups use the SQLite backup API with unique names and validated `max_backups`; restore validates SQLite header, blocks path traversal, uses the backup API with safety backup and WAL checkpoint.
+- **Migration**: `python -m cloudmesh.core.migrate --dry-run` writes nothing; template dicts and alias dicts handled; storage `False` returns recorded as errors; decrypt failures recorded; `success` is False whenever errors exist; `--base-dir` supported with proper exit codes.
+- **CLI wiring**: new `cm migrate` and `cm storage <backup|list|restore>` commands connect the SQLite backend to operational commands; all `from core.` lazy imports fixed to `from cloudmesh.core.`; `plugins` missing `load_servers` fixed; reshistory auto-loop uses package import.
+- **Tests**: new `cloudmesh/tests/test_storage.py` (encryption, perms, backup/restore, dry-run, templates, error success flag) now runs in the official suite.
+
 ## [3.2.0] - 2026-10-03
 
 ### ⚠️ BREAKING CHANGES

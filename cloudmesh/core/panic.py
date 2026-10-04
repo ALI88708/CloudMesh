@@ -44,7 +44,7 @@ class PanicManager:
         return {}
 
     def _save_pending(self, pending):
-        from core.node_client import save_private_json
+        from cloudmesh.core.node_client import save_private_json
         save_private_json(self.pending_file, pending)
 
     def dry_run(self):
@@ -83,7 +83,7 @@ class PanicManager:
 
         if self.node_keys_file.exists():
             try:
-                from core.node_client import NodeClient, save_private_json
+                from cloudmesh.core.node_client import NodeClient, save_private_json
                 nodes = json.loads(self.node_keys_file.read_text())
                 shutil.copy2(self.node_keys_file, self.node_keys_file.with_suffix(".json.bak"))
                 pending = self._load_pending()
@@ -135,7 +135,7 @@ class PanicManager:
         if not pending:
             return ["No pending rotations"]
 
-        from core.node_client import NodeClient, save_private_json
+        from cloudmesh.core.node_client import NodeClient, save_private_json
         actions = []
         remaining = {}
 

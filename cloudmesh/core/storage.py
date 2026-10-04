@@ -6,16 +6,41 @@ servers, nodes, groups, settings, alerts, ACL, aliases, templates, schedules.
 
 import json
 import logging
+import os
 import sqlite3
+import tempfile
 import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 logger = logging.getLogger(__name__)
+
+FERNET_PREFIX = "gAAAAA"
+
+
+def _is_posix() -> bool:
+    return os.name != "nt"
+
+
+def _ensure_private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    if _is_posix():
+        try:
+            os.chmod(path, 0o700)
+        except OSError as e:
+            logger.warning("Failed to set directory permissions on %s: %s", path, e)
+
+
+def _ensure_private_file(path: Path) -> None:
+    if _is_posix():
+        try:
+            os.chmod(path, 0o600)
+        except OSError as e:
+            logger.warning("Failed to set file permissions on %s: %s", path, e)
 
 
 class StorageManager:
@@ -24,35 +49,125 @@ class StorageManager:
     def __init__(self, base_dir: Optional[Path] = None):
         if base_dir is None:
             base_dir = Path(__file__).parent.parent
-        
+
         self.base_dir = Path(base_dir)
         self.db_path = self.base_dir / "cloudmesh.db"
         self.key_path = self.base_dir / ".secret.key"
         self.backups_dir = self.base_dir / "backups"
-        self.backups_dir.mkdir(exist_ok=True)
-        
+        _ensure_private_dir(self.backups_dir)
+
         self._fernet = None
         self._local_lock = threading.Lock()
-        
+
+        self._ensure_db_file()
         # Initialize additional tables
         self._init_extended_tables()
-    
+        _ensure_private_file(self.db_path)
+
+    def _ensure_db_file(self) -> None:
+        """Create the DB file with private permissions if missing."""
+        try:
+            fd = os.open(str(self.db_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+            os.close(fd)
+        except FileExistsError:
+            pass
+        except OSError as e:
+            logger.warning("Failed to pre-create database file: %s", e)
+        _ensure_private_file(self.db_path)
+
+    def _get_or_create_key(self) -> bytes:
+        """Load or atomically create the Fernet key with 0600 perms."""
+        if self.key_path.exists():
+            try:
+                key = self.key_path.read_bytes().strip()
+                Fernet(key)  # validate
+                _ensure_private_file(self.key_path)
+                return key
+            except Exception as e:
+                logger.error("Existing secret key is invalid: %s", e)
+                raise
+        key = Fernet.generate_key()
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=str(self.key_path.parent),
+                prefix=f".{self.key_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp:
+                temp_path = Path(tmp.name)
+                tmp.write(key)
+                if _is_posix():
+                    os.chmod(temp_path, 0o600)
+            try:
+                if _is_posix():
+                    os.link(temp_path, self.key_path)
+                else:
+                    if not self.key_path.exists():
+                        os.replace(temp_path, self.key_path)
+                    else:
+                        return self.key_path.read_bytes().strip()
+            except FileExistsError:
+                return self.key_path.read_bytes().strip()
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
+        _ensure_private_file(self.key_path)
+        return key
+
     @property
     def fernet(self) -> Fernet:
-        """Get Fernet encryption instance."""
+        """Get Fernet encryption instance (always available)."""
         if self._fernet is None:
-            if self.key_path.exists():
-                key = self.key_path.read_bytes()
-                self._fernet = Fernet(key)
+            self._fernet = Fernet(self._get_or_create_key())
         return self._fernet
+
+    def _encrypt_secret(self, value: Optional[str]) -> Optional[str]:
+        """Encrypt a secret; None/empty stays NULL/empty without loss."""
+        if value is None:
+            return None
+        if value == "":
+            return ""
+        return self.fernet.encrypt(value.encode()).decode()
+
+    def _decrypt_secret(self, value: Optional[str], context: str = "") -> Optional[str]:
+        """Decrypt a stored secret.
+
+        Returns plaintext. Legacy plaintext rows (from pre-encryption DBs)
+        are returned as-is with a warning so migration does not lose data.
+        Undecryptable Fernet tokens return None (never the ciphertext).
+        """
+        if value is None or value == "":
+            return value
+        try:
+            return self.fernet.decrypt(value.encode()).decode()
+        except InvalidToken as e:
+            if not value.startswith(FERNET_PREFIX):
+                logger.warning(
+                    "Legacy plaintext secret for %s; re-encrypt on next write", context
+                )
+                return value
+            logger.warning("Failed to decrypt secret for %s: %s", context, e)
+            return None
+        except Exception as e:
+            logger.warning("Failed to decrypt secret for %s: %s", context, e)
+            return None
     
     @contextmanager
     def _get_connection(self):
         """Get database connection with context manager."""
-        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
+        try:
+            conn.execute("PRAGMA busy_timeout = 30000")
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+        except sqlite3.Error as e:
+            logger.warning("Failed to set PRAGMAs: %s", e)
         try:
             yield conn
         finally:
@@ -240,22 +355,22 @@ class StorageManager:
     # Server operations
     def add_server(self, name: str, host: str, user: str, port: int = 22,
                    key_path: Optional[str] = None, password: Optional[str] = None) -> bool:
-        """Add a server."""
+        """Add a server. Secrets are always encrypted, never plaintext."""
         with self._get_connection() as conn:
             try:
-                # Encrypt sensitive data
-                encrypted_password = None
-                if password and self.fernet:
-                    encrypted_password = self.fernet.encrypt(password.encode()).decode()
-                
+                encrypted_password = self._encrypt_secret(password)
+
                 conn.execute("""
                     INSERT INTO servers (name, host, user, port, key_path, password)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (name, host, user, port, key_path, encrypted_password))
                 conn.commit()
                 return True
-            except sqlite3.IntegrityError:
-                logger.error("Server '%s' already exists", name)
+            except sqlite3.IntegrityError as e:
+                if "UNIQUE" in str(e).upper():
+                    logger.error("Server '%s' already exists", name)
+                else:
+                    logger.error("Failed to add server '%s': %s", name, e)
                 return False
     
     def remove_server(self, name: str) -> bool:
@@ -271,15 +386,14 @@ class StorageManager:
             row = conn.execute("SELECT * FROM servers WHERE name = ?", (name,)).fetchone()
             if row:
                 server = dict(row)
-                # Decrypt password
-                if server.get("password") and self.fernet:
-                    try:
-                        server["password"] = self.fernet.decrypt(server["password"].encode()).decode()
-                    except Exception as e:
-                        logger.warning("Failed to decrypt password for server %s: %s", name, e)
+                # Decrypt password (never return ciphertext as plaintext)
+                if server.get("password"):
+                    server["password"] = self._decrypt_secret(
+                        server["password"], context=f"server {name}"
+                    )
                 return server
             return None
-    
+
     def list_servers(self) -> List[Dict]:
         """List all servers."""
         with self._get_connection() as conn:
@@ -288,11 +402,10 @@ class StorageManager:
             for row in rows:
                 server = dict(row)
                 # Decrypt password
-                if server.get("password") and self.fernet:
-                    try:
-                        server["password"] = self.fernet.decrypt(server["password"].encode()).decode()
-                    except Exception as e:
-                        logger.warning("Failed to decrypt password for server %s: %s", server["name"], e)
+                if server.get("password"):
+                    server["password"] = self._decrypt_secret(
+                        server["password"], context=f"server {server.get('name')}"
+                    )
                 servers.append(server)
             return servers
     
@@ -308,22 +421,24 @@ class StorageManager:
     
     # Node operations
     def add_node(self, name: str, host: str, port: int = 9999, auth_key: str = "") -> bool:
-        """Add a node."""
+        """Add a node. Auth keys are always encrypted, never plaintext."""
         with self._get_connection() as conn:
             try:
-                # Encrypt sensitive data
-                encrypted_key = None
-                if auth_key and self.fernet:
-                    encrypted_key = self.fernet.encrypt(auth_key.encode()).decode()
-                
+                encrypted_key = self._encrypt_secret(auth_key)
+                if encrypted_key is None:
+                    encrypted_key = ""
+
                 conn.execute("""
                     INSERT INTO nodes (name, host, port, auth_key)
                     VALUES (?, ?, ?, ?)
                 """, (name, host, port, encrypted_key))
                 conn.commit()
                 return True
-            except sqlite3.IntegrityError:
-                logger.error("Node '%s' already exists", name)
+            except sqlite3.IntegrityError as e:
+                if "UNIQUE" in str(e).upper():
+                    logger.error("Node '%s' already exists", name)
+                else:
+                    logger.error("Failed to add node '%s': %s", name, e)
                 return False
     
     def remove_node(self, name: str) -> bool:
@@ -340,14 +455,13 @@ class StorageManager:
             if row:
                 node = dict(row)
                 # Decrypt auth_key
-                if node.get("auth_key") and self.fernet:
-                    try:
-                        node["auth_key"] = self.fernet.decrypt(node["auth_key"].encode()).decode()
-                    except Exception as e:
-                        logger.warning("Failed to decrypt auth_key for node %s: %s", name, e)
+                if node.get("auth_key"):
+                    node["auth_key"] = self._decrypt_secret(
+                        node["auth_key"], context=f"node {name}"
+                    )
                 return node
             return None
-    
+
     def list_nodes(self) -> List[Dict]:
         """List all nodes."""
         with self._get_connection() as conn:
@@ -356,22 +470,20 @@ class StorageManager:
             for row in rows:
                 node = dict(row)
                 # Decrypt auth_key
-                if node.get("auth_key") and self.fernet:
-                    try:
-                        node["auth_key"] = self.fernet.decrypt(node["auth_key"].encode()).decode()
-                    except Exception as e:
-                        logger.warning("Failed to decrypt auth_key for node %s: %s", node["name"], e)
+                if node.get("auth_key"):
+                    node["auth_key"] = self._decrypt_secret(
+                        node["auth_key"], context=f"node {node.get('name')}"
+                    )
                 nodes.append(node)
             return nodes
-    
+
     def update_node_auth_key(self, name: str, auth_key: str) -> bool:
         """Update node auth key."""
         with self._get_connection() as conn:
-            # Encrypt sensitive data
-            encrypted_key = None
-            if auth_key and self.fernet:
-                encrypted_key = self.fernet.encrypt(auth_key.encode()).decode()
-            
+            encrypted_key = self._encrypt_secret(auth_key)
+            if encrypted_key is None:
+                encrypted_key = ""
+
             cursor = conn.execute("""
                 UPDATE nodes SET auth_key = ?, updated_at = CURRENT_TIMESTAMP 
                 WHERE name = ?
@@ -550,12 +662,33 @@ class StorageManager:
             return result
     
     # Backup operations
+    def _validated_max_backups(self, default: int = 10) -> int:
+        try:
+            raw = self.get_setting("max_backups", default)
+            value = int(raw)
+            if value < 1:
+                return default
+            return min(value, 100)
+        except (TypeError, ValueError):
+            return default
+
     def backup_database(self) -> str:
         """Create a backup of the database using SQLite backup API."""
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        backup_path = self.backups_dir / f"cloudmesh_backup_{timestamp}.db"
-        
-        # Use SQLite backup API for proper WAL handling
+        _ensure_private_dir(self.backups_dir)
+        suffix = 0
+        while True:
+            suffix_part = f"_{suffix}" if suffix else ""
+            backup_path = self.backups_dir / f"cloudmesh_backup_{timestamp}{suffix_part}.db"
+            try:
+                fd = os.open(str(backup_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                os.close(fd)
+                break
+            except FileExistsError:
+                suffix += 1
+                continue
+
+        # Use SQLite backup API for proper WAL handling (consistent even with open readers)
         with self._get_connection() as source:
             dest = sqlite3.connect(str(backup_path))
             try:
@@ -563,32 +696,89 @@ class StorageManager:
                 dest.commit()
             finally:
                 dest.close()
-        
+
+        _ensure_private_file(backup_path)
+
         # Cleanup old backups
-        max_backups = self.get_setting("max_backups", 10)
+        max_backups = self._validated_max_backups(10)
         backups = sorted(self.backups_dir.glob("cloudmesh_backup_*.db"))
         while len(backups) > max_backups:
             oldest = backups.pop(0)
-            oldest.unlink()
-        
+            try:
+                oldest.unlink()
+            except OSError as e:
+                logger.warning("Failed to remove old backup %s: %s", oldest, e)
+                break
+
         return str(backup_path)
-    
-    def restore_backup(self, backup_path: str) -> bool:
-        """Restore database from backup."""
+
+    def _resolve_backup_path(self, backup_path: str) -> Path:
         backup_file = Path(backup_path)
         if not backup_file.is_absolute():
             backup_file = self.backups_dir / backup_path
-        
+        backups_dir = self.backups_dir.resolve()
+        try:
+            resolved = backup_file.resolve()
+        except OSError as e:
+            logger.error("Invalid backup path: %s", e)
+            raise ValueError("Invalid backup path")
+        if backups_dir not in resolved.parents and resolved != backups_dir:
+            logger.error("Path traversal blocked: %s", backup_path)
+            raise ValueError("Restore path must be inside the backups directory")
+        return resolved
+
+    @staticmethod
+    def _is_sqlite_db(path: Path) -> bool:
+        try:
+            with open(path, "rb") as f:
+                return f.read(16) == b"SQLite format 3\x00"
+        except OSError:
+            return False
+
+    def restore_backup(self, backup_path: str) -> bool:
+        """Restore database from backup using the SQLite backup API."""
+        try:
+            backup_file = self._resolve_backup_path(backup_path)
+        except ValueError:
+            return False
+
         if not backup_file.exists():
             logger.error("Backup not found: %s", backup_path)
             return False
-        
-        # Create backup of current state
-        self.backup_database()
-        
-        # Restore
-        import shutil
-        shutil.copy2(backup_file, self.db_path)
+
+        if not self._is_sqlite_db(backup_file):
+            logger.error("Backup is not a valid SQLite database: %s", backup_path)
+            return False
+
+        # Create safety backup of current state before overwriting.
+        try:
+            self.backup_database()
+        except Exception as e:
+            logger.error("Failed to create safety backup before restore: %s", e)
+            return False
+
+        # Restore via backup API so WAL/-shm state stays consistent even
+        # if another connection briefly exists; checkpoint first.
+        try:
+            with self._get_connection() as conn:
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.Error:
+                    pass
+            source = sqlite3.connect(str(backup_file), timeout=30)
+            try:
+                dest = sqlite3.connect(str(self.db_path), timeout=30)
+                try:
+                    source.backup(dest)
+                    dest.commit()
+                finally:
+                    dest.close()
+            finally:
+                source.close()
+        except Exception as e:
+            logger.error("Restore failed: %s", e)
+            return False
+        _ensure_private_file(self.db_path)
         return True
     
     def list_backups(self) -> List[str]:
