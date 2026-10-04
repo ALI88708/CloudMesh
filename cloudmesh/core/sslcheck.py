@@ -87,3 +87,63 @@ def remove_domain(domain):
 
 def check_all_tracked():
     return check_all_certs(load_domains())
+
+
+class SSLChecker:
+    """Adapter exposing the CLI-facing SSL API over the functions above."""
+
+    def check_domain(self, domain, port=443):
+        return check_cert(domain, port)
+
+    def check_all(self):
+        rows = []
+        for r in check_all_tracked():
+            if not isinstance(r, dict):
+                continue
+            rows.append({
+                "domain": r.get("domain"),
+                "valid": r.get("status") == "valid",
+                "issuer": r.get("issuer", "?"),
+                "expiry": r.get("not_after", "?"),
+                "days_left": r.get("days_left", "?"),
+            })
+        return rows
+
+    def list_domains(self):
+        return [d.get("domain") for d in load_domains() if isinstance(d, dict) and d.get("domain")]
+
+    def add_domain(self, domain, port=443):
+        return add_domain(domain, port)
+
+    def remove_domain(self, domain):
+        return remove_domain(domain)
+
+    def history(self):
+        from datetime import datetime as _dt
+        now = _dt.now().isoformat(timespec="seconds")
+        rows = []
+        for r in check_all_tracked():
+            if not isinstance(r, dict):
+                continue
+            rows.append({
+                "domain": r.get("domain"),
+                "time": now,
+                "valid": r.get("status") == "valid",
+                "days_left": r.get("days_left"),
+            })
+        return rows
+
+    def renew_check(self, days=30):
+        try:
+            days = int(days)
+        except (TypeError, ValueError):
+            days = 30
+        rows = [r for r in check_all_tracked() if isinstance(r, dict)]
+        if not rows:
+            return "No domains tracked. Add one: cm ssl add DOMAIN"
+        urgent = [r for r in rows
+                  if isinstance(r.get("days_left"), int) and r["days_left"] <= days]
+        if not urgent:
+            return f"All {len(rows)} domain(s) valid for more than {days} days"
+        lines = [f"{r.get('domain')}: {r.get('days_left')} day(s) left" for r in urgent]
+        return "Renewal needed:\n" + "\n".join(lines)

@@ -6,6 +6,20 @@ The format follows the [SemVer](https://semver.org/) versioning scheme implement
 
 ## [Unreleased]
 
+### Fixed
+- **Broken command groups repaired**: `cm docker`, `cm firewall`, `cm ssl`,
+  and `cm logagg` called Manager classes that did not exist in their modules
+  (every invocation died with `ImportError`). Thin adapter classes
+  (`DockerManager`, `FirewallManager`, `SSLChecker`, `LogAggregator`) now map
+  the CLI onto the existing function APIs, including UFW rule parsing,
+  SSL history/renewal summaries, and a log-source registry.
+- **Standalone node agent boots without `core/`**: `NodeAgent` fell back to
+  nothing when `core.ddos` was absent on deployed nodes and crashed on
+  startup; it now uses an embedded rate-limit/ban fallback with the same
+  interface.
+- **Import sweep test**: `test_main_absolute_imports_resolve` fails the suite
+  if any `from cloudmesh.* import` in `main.py` stops resolving.
+
 ### Added
 - **Smart diagnostics**: `cm diagnose` inspects resources, SSL expiries,
   watcher alerts, backup freshness, and drift, then prints severity-ranked
