@@ -576,6 +576,8 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 | `cm migrate --dry-run` | Preview migration without writing |
 | `cm migrate --verify` | Verify JSON vs SQLite consistency |
 | `cm storage backup/list/restore` | SQLite backend backups |
+| `cm drift snapshot/check/list/clear` | Configuration drift baseline & detection |
+| `cm diagnose` | Smart health diagnostics with fix suggestions |
 
 ### Resource History
 | Command | Description |
