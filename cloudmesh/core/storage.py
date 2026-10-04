@@ -60,9 +60,14 @@ class StorageManager:
         self._local_lock = threading.Lock()
 
         self._ensure_db_file()
+        # The backend owns its Fernet key: create eagerly so secrets can
+        # never be written without encryption and `.secret.key` always
+        # exists with private permissions right after init.
+        self._get_or_create_key()
         # Initialize additional tables
         self._init_extended_tables()
         _ensure_private_file(self.db_path)
+        _ensure_private_file(self.key_path)
 
     def _ensure_db_file(self) -> None:
         """Create the DB file with private permissions if missing."""
