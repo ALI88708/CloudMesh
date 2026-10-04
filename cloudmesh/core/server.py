@@ -1,5 +1,6 @@
 import paramiko
 import os
+import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -7,6 +8,8 @@ try:
     from cloudmesh.core.storage import StorageManager
 except ImportError:  # `cd cloudmesh && pytest tests` without installed package
     from core.storage import StorageManager
+
+logger = logging.getLogger(__name__)
 
 
 class ServerManager:
@@ -18,7 +21,6 @@ class ServerManager:
     """
 
     _LEGACY_FIELDS = ("host", "user", "port", "key_path", "password", "status", "os_type")
-    _IMPORT_MARKER = "legacy_servers_imported"
 
     def __init__(self, security_manager, storage=None):
         self.security = security_manager
@@ -38,31 +40,37 @@ class ServerManager:
         backup with no servers), so the persistent marker — not table
         emptiness — decides whether the legacy import runs. When the marker
         is present, SQLite is authoritative and the JSON mirror is repaired
-        from it instead.
+        from it instead. On any incomplete import the marker is left unset
+        and the mirror untouched so the JSON source stays intact.
         """
         try:
-            # NOTE: get_setting JSON-decodes "1" to int 1; normalize before compare.
-            if str(self.storage.get_setting(self._IMPORT_MARKER, None)) == "1":
+            if self.storage.legacy_imported("servers"):
                 self._push_mirror_from_storage()
                 return
         except Exception:
             return
+        ok = True
         for name, info in list(self.config.get("servers", {}).items()):
             if not isinstance(info, dict):
                 continue
             try:
-                self.storage.add_server(
+                if not self.storage.add_server(
                     name=name,
                     host=info.get("host"),
                     user=info.get("user"),
                     port=info.get("port", 22),
                     key_path=info.get("key_path"),
                     password=info.get("password"),
-                )
+                ):
+                    raise RuntimeError("storage rejected server")
             except Exception:
+                ok = False
                 continue
+        if not ok:
+            logger.warning("Servers import incomplete; marker left unset")
+            return
         try:
-            self.storage.set_setting(self._IMPORT_MARKER, "1")
+            self.storage.mark_legacy_imported("servers")
         except Exception:
             pass
         self._push_mirror_from_storage()

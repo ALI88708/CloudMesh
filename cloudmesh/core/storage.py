@@ -354,7 +354,16 @@ class StorageManager:
                 INSERT OR IGNORE INTO acl_roles (name, permissions) 
                 VALUES ('admin', '*'), ('viewer', '["monitor", "ping", "list", "info"]')
             """)
-            
+
+            # Schema evolution for pre-existing databases.
+            self._ensure_column(conn, "nodes", "tls", "INTEGER DEFAULT 0")
+            self._ensure_column(conn, "nodes", "ca_file", "TEXT")
+            self._ensure_column(conn, "schedules", "server", "TEXT")
+            self._ensure_column(conn, "schedules", "created", "TEXT")
+            self._ensure_column(conn, "schedules", "run_count", "INTEGER DEFAULT 0")
+            self._ensure_column(conn, "templates", "description", "TEXT DEFAULT ''")
+            self._ensure_column(conn, "templates", "created", "TEXT")
+
             conn.commit()
     
     # Server operations
@@ -435,8 +444,15 @@ class StorageManager:
             return cursor.rowcount > 0
     
     # Node operations
-    def add_node(self, name: str, host: str, port: int = 9999, auth_key: str = "") -> bool:
-        """Add a node. Auth keys are always encrypted, never plaintext."""
+    def add_node(self, name: str, host: str, port: int = 9999, auth_key: str = "",
+                 tls: bool = False, ca_file: Optional[str] = None) -> bool:
+        """Add a node, encrypting nonempty auth keys; None is stored as empty.
+
+        tls and ca_file store connection preferences without validating the
+        certificate path. Return True after insertion or False on a constraint
+        violation, including duplicate names. Other database errors and key
+        loading or encryption errors propagate.
+        """
         with self._get_connection() as conn:
             try:
                 encrypted_key = self._encrypt_secret(auth_key)
@@ -444,9 +460,9 @@ class StorageManager:
                     encrypted_key = ""
 
                 conn.execute("""
-                    INSERT INTO nodes (name, host, port, auth_key)
-                    VALUES (?, ?, ?, ?)
-                """, (name, host, port, encrypted_key))
+                    INSERT INTO nodes (name, host, port, auth_key, tls, ca_file)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (name, host, port, encrypted_key, int(bool(tls)), ca_file))
                 conn.commit()
                 return True
             except sqlite3.IntegrityError as e:
@@ -456,6 +472,35 @@ class StorageManager:
                     logger.error("Failed to add node '%s': %s", name, e)
                 return False
     
+    def upsert_node(self, name: str, host: str, port: int = 9999, auth_key: str = "",
+                    tls: bool = False, ca_file: Optional[str] = None) -> bool:
+        """Insert or update a node atomically.
+
+        Unlike remove+re-add, a failed upsert leaves the existing row
+        (and its encrypted auth key) intact.
+        """
+        with self._get_connection() as conn:
+            try:
+                encrypted_key = self._encrypt_secret(auth_key)
+                if encrypted_key is None:
+                    encrypted_key = ""
+                conn.execute("""
+                    INSERT INTO nodes (name, host, port, auth_key, tls, ca_file)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(name) DO UPDATE SET
+                        host = excluded.host,
+                        port = excluded.port,
+                        auth_key = excluded.auth_key,
+                        tls = excluded.tls,
+                        ca_file = excluded.ca_file,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (name, host, port, encrypted_key, int(bool(tls)), ca_file))
+                conn.commit()
+                return True
+            except sqlite3.Error as e:
+                logger.error("Failed to upsert node '%s': %s", name, e)
+                return False
+
     def remove_node(self, name: str) -> bool:
         """Remove a node."""
         with self._get_connection() as conn:
@@ -560,13 +605,20 @@ class StorageManager:
             return [dict(row) for row in rows]
     
     def add_alert_history(self, rule_name: str, server: str, metric: str, value: float,
-                         threshold: float, operator: str, severity: str) -> None:
-        """Add alert to history."""
+                          threshold: float, operator: str, severity: str,
+                          timestamp=None) -> None:
+        """Add alert to history. An explicit timestamp preserves original event times on import."""
         with self._get_connection() as conn:
-            conn.execute("""
-                INSERT INTO alert_history (rule_name, server, metric, value, threshold, operator, severity)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (rule_name, server, metric, value, threshold, operator, severity))
+            if timestamp is None:
+                conn.execute("""
+                    INSERT INTO alert_history (rule_name, server, metric, value, threshold, operator, severity)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (rule_name, server, metric, value, threshold, operator, severity))
+            else:
+                conn.execute("""
+                    INSERT INTO alert_history (rule_name, server, metric, value, threshold, operator, severity, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (rule_name, server, metric, value, threshold, operator, severity, timestamp))
             conn.commit()
     
     def get_alert_history(self, limit: int = 50) -> List[Dict]:
@@ -605,6 +657,17 @@ class StorageManager:
                 ON CONFLICT(rule_name, server) DO UPDATE SET last_notified = ?
             """, (rule_name, server, timestamp, timestamp))
             conn.commit()
+
+    def list_alert_cooldowns(self) -> Dict[str, float]:
+        """Return {rule|server: timestamp}, with times in seconds since the epoch.
+
+        Database errors propagate.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT rule_name, server, last_notified FROM alert_cooldowns"
+            ).fetchall()
+            return {f"{r['rule_name']}|{r['server']}": r["last_notified"] for r in rows}
     
     # Group operations
     def create_group(self, name: str) -> bool:
@@ -676,7 +739,149 @@ class StorageManager:
                 result[group["name"]] = [d["device_name"] for d in devices]
             return result
     
+    # Schedule operations
+    def upsert_schedule(self, name: str, command: str, interval_seconds: int,
+                        enabled: bool = True, last_run=None, server=None,
+                        created=None, run_count: int = 0) -> None:
+        """Insert or update a scheduled task by name.
+
+        Preserve an existing created value when created is None; other supplied
+        fields are overwritten. interval_seconds is stored without range validation.
+        Database errors propagate.
+        """
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO schedules
+                    (name, command, interval_seconds, enabled, last_run, server, created, run_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    command = excluded.command,
+                    interval_seconds = excluded.interval_seconds,
+                    enabled = excluded.enabled,
+                    last_run = excluded.last_run,
+                    server = excluded.server,
+                    created = COALESCE(excluded.created, schedules.created),
+                    run_count = excluded.run_count
+            """, (name, command, interval_seconds, int(bool(enabled)), last_run,
+                  server, created, run_count or 0))
+            conn.commit()
+
+    def remove_schedule(self, name: str) -> bool:
+        """Delete a scheduled task and return whether a row existed.
+
+        Database errors propagate.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM schedules WHERE name = ?", (name,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def list_schedules(self) -> List[Dict]:
+        """List all scheduled tasks."""
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT * FROM schedules").fetchall()
+            return [dict(row) for row in rows]
+
+    # Template operations
+    def upsert_template(self, name: str, command: str, description: str = "",
+                        created=None) -> None:
+        """Insert or update a command template by name.
+
+        Preserve an existing created value when created is None, and store an
+        empty description for a false value. Database errors propagate.
+        """
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO templates (name, command, description, created)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    command = excluded.command,
+                    description = excluded.description,
+                    created = COALESCE(excluded.created, templates.created)
+            """, (name, command, description or "", created))
+            conn.commit()
+
+    def remove_template(self, name: str) -> bool:
+        """Delete a command template and return whether a row existed.
+
+        Database errors propagate.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM templates WHERE name = ?", (name,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def list_templates(self) -> List[Dict]:
+        """List all command templates."""
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT * FROM templates").fetchall()
+            return [dict(row) for row in rows]
+
+    # Alias operations
+    def upsert_alias(self, name: str, command: str) -> None:
+        """Insert or replace a command alias."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO aliases (name, command)
+                VALUES (?, ?)
+                ON CONFLICT(name) DO UPDATE SET command = excluded.command
+            """, (name, command))
+            conn.commit()
+
+    def remove_alias(self, name: str) -> bool:
+        """Delete a command alias and return whether a row existed.
+
+        Database errors propagate.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM aliases WHERE name = ?", (name,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def list_aliases(self) -> Dict[str, str]:
+        """Return {name: command} alias map."""
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT name, command FROM aliases").fetchall()
+            return {row["name"]: row["command"] for row in rows}
+
     # Backup operations
+    def _ensure_column(self, conn, table: str, column: str, ddl: str) -> None:
+        """Attempt to add a missing column, suppressing SQLite errors.
+
+        table, column, and ddl must be trusted SQL fragments. The caller owns
+        the connection and commits the schema change.
+        """
+        try:
+            existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        except sqlite3.Error:
+            return
+        if column not in existing:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            except sqlite3.Error as e:
+                logger.warning("Failed to add column %s.%s: %s", table, column, e)
+
+    def legacy_imported(self, kind: str) -> bool:
+        """Return whether the legacy JSON import marker for kind is set.
+
+        Return False if the marker cannot be read. A set marker records an
+        import attempt, not that every item was imported successfully.
+
+        NOTE: get_setting JSON-decodes, so a stored "1" reads back as int 1;
+        normalize before comparing.
+        """
+        try:
+            return str(self.get_setting(f"legacy_{kind}_imported", None)) == "1"
+        except Exception:
+            return False
+
+    def mark_legacy_imported(self, kind: str) -> None:
+        """Attempt to record the legacy import marker for kind, suppressing errors."""
+        try:
+            self.set_setting(f"legacy_{kind}_imported", "1")
+        except Exception as e:
+            logger.warning("Failed to record legacy import marker for %s: %s", kind, e)
+
     def _validated_max_backups(self, default: int = 10) -> int:
         try:
             raw = self.get_setting("max_backups", default)

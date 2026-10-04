@@ -100,7 +100,12 @@ class MigrationManager:
         return count
     
     def migrate_nodes(self) -> int:
-        """Migrate nodes from .node_keys.json."""
+        """Import .node_keys.json and return the number of nodes added.
+
+        Accept node dictionaries or bare host values. Missing input returns
+        zero; read and per-node failures, including duplicates, are collected
+        in self.errors instead of raised.
+        """
         node_keys_file = self.base_dir / ".node_keys.json"
         if not node_keys_file.exists():
             logger.info("No .node_keys.json found")
@@ -116,15 +121,21 @@ class MigrationManager:
                         host = info.get("host")
                         port = info.get("port", 9999)
                         auth_key = info.get("key", "")
+                        tls = bool(info.get("tls", False))
+                        ca_file = info.get("ca_file")
                     else:
                         host = str(info)
                         port = 9999
                         auth_key = ""
+                        tls = False
+                        ca_file = None
                     ok = self.storage.add_node(
                         name=name,
                         host=host,
                         port=port,
                         auth_key=auth_key,
+                        tls=tls,
+                        ca_file=ca_file,
                     )
                     if not ok:
                         raise RuntimeError("storage rejected node (duplicate or constraint)")
@@ -348,7 +359,13 @@ class MigrationManager:
             return 0
     
     def migrate_templates(self) -> int:
-        """Migrate templates from .templates.json."""
+        """Import .templates.json and return the number of templates written.
+
+        Accept command values or dictionaries with command, description, and
+        created fields. Update existing names, retaining their creation value
+        when incoming created is None. Missing input returns zero; read and
+        per-template failures are collected in self.errors.
+        """
         templates_file = self.base_dir / ".templates.json"
         if not templates_file.exists():
             logger.info("No .templates.json found")
@@ -363,14 +380,22 @@ class MigrationManager:
                     # TemplateManager stores templates as dict with 'command', 'description', 'created'
                     if isinstance(template_data, dict):
                         command = template_data.get("command", "")
+                        description = template_data.get("description", "")
+                        created = template_data.get("created")
                     else:
                         command = str(template_data)
-                    
+                        description = ""
+                        created = None
+
                     with self.storage._get_connection() as conn:
                         conn.execute("""
-                            INSERT OR REPLACE INTO templates (name, command)
-                            VALUES (?, ?)
-                        """, (name, command))
+                            INSERT INTO templates (name, command, description, created)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(name) DO UPDATE SET
+                                command = excluded.command,
+                                description = excluded.description,
+                                created = COALESCE(excluded.created, templates.created)
+                        """, (name, command, description, created))
                         conn.commit()
                     count += 1
                     logger.info("Migrated template: %s", name)
@@ -385,7 +410,12 @@ class MigrationManager:
             return 0
     
     def migrate_schedule(self) -> int:
-        """Migrate schedule from .schedule.json."""
+        """Import .schedule.json and return the number of schedules written.
+
+        Update existing names, preserving created when the incoming value is
+        None. Legacy interval values are seconds, defaulting to 3600. Missing
+        input returns zero; read and per-schedule failures go to self.errors.
+        """
         schedule_file = self.base_dir / ".schedule.json"
         if not schedule_file.exists():
             logger.info("No .schedule.json found")
@@ -399,14 +429,27 @@ class MigrationManager:
                 try:
                     with self.storage._get_connection() as conn:
                         conn.execute("""
-                            INSERT OR REPLACE INTO schedules (name, command, interval_seconds, enabled, last_run)
-                            VALUES (?, ?, ?, ?, ?)
+                            INSERT INTO schedules
+                                (name, command, interval_seconds, enabled, last_run,
+                                 server, created, run_count)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(name) DO UPDATE SET
+                                command = excluded.command,
+                                interval_seconds = excluded.interval_seconds,
+                                enabled = excluded.enabled,
+                                last_run = excluded.last_run,
+                                server = excluded.server,
+                                created = COALESCE(excluded.created, schedules.created),
+                                run_count = excluded.run_count
                         """, (
                             name,
                             info.get("command"),
-                            info.get("interval"),
+                            info.get("interval", 3600),
                             info.get("enabled", True),
-                            info.get("last_run")
+                            info.get("last_run"),
+                            info.get("server"),
+                            info.get("created"),
+                            info.get("run_count", 0),
                         ))
                         conn.commit()
                     count += 1
@@ -460,8 +503,108 @@ class MigrationManager:
             self.errors.append(f"Failed to preview acl.json: {e}")
         return counts
 
+    def verify(self) -> Dict:
+        """Compare JSON and SQLite names or counts without importing records.
+
+        Compare name sets for servers, nodes, and groups, and counts for alert
+        rules, ACL users, aliases, templates, and schedules. Field values and
+        settings are not compared. Accessing storage may initialize its files,
+        schema, and defaults.
+
+        Return ok, checks (type, json, sqlite, match, detail), and accumulated
+        errors, including earlier errors on this manager. ok requires all
+        checks to match and no errors. Storage query failures are collected;
+        key read/validation errors and malformed config shapes can propagate.
+        """
+        config = self._load_encrypted_config()
+        expected = self._preview_counts(config)
+        checks = []
+
+        def _names(rows, key="name"):
+            """Collect the selected field into a set, or return an empty set on error."""
+            try:
+                return {r[key] for r in rows}
+            except Exception:
+                return set()
+
+        # servers / nodes / groups: compare name sets (strong check).
+        try:
+            db_servers = _names(self.storage.list_servers())
+        except Exception as e:
+            db_servers = set()
+            self.errors.append(f"verify: cannot list servers: {e}")
+        json_servers = set((config.get("servers", {}) or {}).keys())
+        checks.append({"type": "servers", "json": sorted(json_servers),
+                       "sqlite": sorted(db_servers),
+                       "match": json_servers == db_servers})
+
+        try:
+            node_file = self.base_dir / ".node_keys.json"
+            json_nodes = set(json.loads(node_file.read_text()).keys()) if node_file.exists() else set()
+        except Exception:
+            json_nodes = set()
+        try:
+            db_nodes = _names(self.storage.list_nodes())
+        except Exception as e:
+            db_nodes = set()
+            self.errors.append(f"verify: cannot list nodes: {e}")
+        checks.append({"type": "nodes", "json": sorted(json_nodes),
+                       "sqlite": sorted(db_nodes), "match": json_nodes == db_nodes})
+
+        json_groups = set((config.get("groups", {}) or {}).keys())
+        try:
+            db_groups = set(self.storage.list_groups().keys())
+        except Exception as e:
+            db_groups = set()
+            self.errors.append(f"verify: cannot list groups: {e}")
+        checks.append({"type": "groups", "json": sorted(json_groups),
+                       "sqlite": sorted(db_groups), "match": json_groups == db_groups})
+
+        # Other types: compare counts (settings may include SQLite defaults).
+        comparators = {
+            "alerts": (expected.get("alerts", 0),
+                       lambda: len(self.storage.list_alert_rules())),
+            "acl_users": (expected.get("acl_users", 0),
+                          lambda: self._count_table("acl_users")),
+            "aliases": (expected.get("aliases", 0),
+                        lambda: len(self.storage.list_aliases())),
+            "templates": (expected.get("templates", 0),
+                          lambda: len(self.storage.list_templates())),
+            "schedules": (expected.get("schedules", 0),
+                          lambda: len(self.storage.list_schedules())),
+        }
+        for kind, (json_count, counter) in comparators.items():
+            try:
+                db_count = counter()
+            except Exception as e:
+                db_count = -1
+                self.errors.append(f"verify: cannot count {kind}: {e}")
+            checks.append({"type": kind, "json": json_count, "sqlite": db_count,
+                           "match": json_count == db_count})
+
+        for c in checks:
+            c["detail"] = "match" if c["match"] else "MISMATCH"
+        ok = all(c["match"] for c in checks) and not self.errors
+        return {"ok": ok, "checks": checks, "errors": list(self.errors)}
+
+    def _count_table(self, table: str) -> int:
+        """Count rows in an internal table; propagate storage errors.
+
+        table must be a trusted SQL identifier, not user input.
+        """
+        with self.storage._get_connection() as conn:
+            row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+            return int(row["n"])
+
     def migrate_all(self, dry_run: bool = False) -> Dict[str, int]:
-        """Run full migration. dry_run=True writes nothing (no DB, no dirs)."""
+        """Run full migration and return counts by data type.
+
+        dry_run=True only previews counts and writes nothing (no DB, no dirs).
+        Otherwise, attempt imports and record legacy markers even when some
+        items fail. self.migrated indicates that the import pass finished;
+        consult self.errors for collected failures. Config key read/validation
+        errors and malformed config shapes can propagate.
+        """
         logger.info("Starting migration from JSON to extended SQLite storage...")
 
         if dry_run:
@@ -481,30 +624,45 @@ class MigrationManager:
 
         config = self._load_encrypted_config()
 
-        results = {
-            "servers": self.migrate_servers(config),
-            "nodes": self.migrate_nodes(),
-            "groups": self.migrate_groups(config),
-            "settings": self.migrate_settings(config),
-            "alerts": self.migrate_alerts(),
-            "acl_users": self.migrate_acl(),
-            "aliases": self.migrate_aliases(),
-            "templates": self.migrate_templates(),
-            "schedules": self.migrate_schedule(),
-        }
+        # Track per-kind success: a kind is marked imported only when its
+        # section added no new errors, so later manager inits retry (rather
+        # than skip) incomplete kinds and never treat partial data as final.
+        tracked = (
+            ("servers", lambda: self.migrate_servers(config)),
+            ("nodes", self.migrate_nodes),
+            ("groups", lambda: self.migrate_groups(config)),
+            ("settings", lambda: self.migrate_settings(config)),
+            ("alerts", self.migrate_alerts),
+            ("acl_users", self.migrate_acl),
+            ("aliases", self.migrate_aliases),
+            ("templates", self.migrate_templates),
+            ("schedules", self.migrate_schedule),
+        )
+        results = {}
+        clean_kinds = []
+        for kind, fn in tracked:
+            before = len(self.errors)
+            try:
+                results[kind] = fn()
+            except Exception as e:
+                self.errors.append(f"Migration section {kind} crashed: {e}")
+                results[kind] = 0
+            if len(self.errors) == before:
+                clean_kinds.append(kind)
 
         self.migrated = True
 
-        if not dry_run:
-            # The bulk migration is the canonical importer: record the markers
-            # so later manager inits treat SQLite as authoritative instead of
-            # re-importing (an empty table is a valid state, e.g. after a
-            # restore, and must not trigger a legacy re-import).
-            try:
-                self.storage.set_setting("legacy_servers_imported", "1")
-                self.storage.set_setting("legacy_groups_imported", "1")
-            except Exception as e:
-                self.errors.append(f"Failed to record migration markers: {e}")
+        # The bulk migration is the canonical importer: record the markers
+        # for clean kinds so later manager inits treat SQLite as authoritative
+        # instead of re-importing (an empty table is a valid state, e.g. after
+        # a restore, and must not trigger a legacy re-import).
+        for kind in clean_kinds:
+            if kind in ("servers", "groups", "nodes", "alerts", "schedules",
+                        "templates", "aliases"):
+                try:
+                    self.storage.mark_legacy_imported(kind)
+                except Exception as e:
+                    self.errors.append(f"Failed to record migration marker for {kind}: {e}")
 
         if self.errors:
             logger.warning("Migration completed with %d errors", len(self.errors))

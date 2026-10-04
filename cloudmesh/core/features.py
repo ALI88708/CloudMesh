@@ -211,31 +211,127 @@ def generate_report(server_mgr, monitor, node_keys=None):
     return report
 
 
-def create_alias(name, command, aliases_file=None):
-    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+def _read_alias_mirror(f):
+    """Read a name-to-command map, accepting strings or command dictionaries.
+
+    Missing, unreadable, invalid, or non-object JSON yields an empty map.
+    """
     aliases = {}
     if f.exists():
         try:
-            aliases = json.loads(f.read_text())
+            data = json.loads(f.read_text())
+            if isinstance(data, dict):
+                for name, command in data.items():
+                    if isinstance(command, dict):
+                        command = command.get("command", "")
+                    aliases[name] = str(command)
         except Exception:
             pass
+    return aliases
+
+
+def create_alias(name, command, aliases_file=None, storage=None):
+    """Create or replace an alias and return True on completion.
+
+    command may be a value converted to text or a dictionary containing
+    command. With storage, attempt a marker-guarded JSON import and mirror
+    the updated database; storage failures fall back to writing JSON alone.
+    Mirror write errors are suppressed on the storage path, but file write
+    errors from the JSON-only path propagate.
+    """
+    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    if isinstance(command, dict):
+        command = command.get("command", "")
+    command = str(command)
+    if storage is not None:
+        try:
+            imported_clean = storage.legacy_imported("aliases")
+            if not imported_clean:
+                ok = True
+                for aname, acmd in _read_alias_mirror(f).items():
+                    try:
+                        storage.upsert_alias(aname, acmd)
+                    except Exception:
+                        ok = False
+                        continue
+                if ok:
+                    storage.mark_legacy_imported("aliases")
+                    imported_clean = True
+            storage.upsert_alias(name, command)
+            if imported_clean:
+                _push_alias_mirror(storage, f)
+            else:
+                # Import incomplete: merge only the new key so unimported
+                # legacy rows in the JSON source are never clobbered.
+                mirror = _read_alias_mirror(f)
+                mirror[name] = command
+                f.write_text(json.dumps(mirror, indent=2))
+            return True
+        except Exception:
+            pass
+    aliases = _read_alias_mirror(f)
     aliases[name] = command
     f.write_text(json.dumps(aliases, indent=2))
     return True
 
 
-def get_aliases(aliases_file=None):
-    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
-    if f.exists():
+def _push_alias_mirror(storage, f):
+    """Rewrite changed alias JSON from storage, suppressing read/write errors."""
+    try:
+        rows = storage.list_aliases()
+    except Exception:
+        return
+    if rows != _read_alias_mirror(f):
         try:
-            return json.loads(f.read_text())
+            f.write_text(json.dumps(rows, indent=2))
         except Exception:
             pass
-    return {}
 
 
-def remove_alias(name, aliases_file=None):
+def get_aliases(aliases_file=None, storage=None):
+    """Return aliases from storage, falling back to JSON when empty or failing.
+
+    Supplying storage also attempts a marker-guarded legacy import.
+    Missing or unreadable JSON yields an empty dictionary.
+    """
     f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    if storage is not None:
+        try:
+            if not storage.legacy_imported("aliases"):
+                ok = True
+                for aname, acmd in _read_alias_mirror(f).items():
+                    try:
+                        storage.upsert_alias(aname, acmd)
+                    except Exception:
+                        ok = False
+                        continue
+                if ok:
+                    storage.mark_legacy_imported("aliases")
+            rows = storage.list_aliases()
+            return rows
+        except Exception:
+            pass
+    return _read_alias_mirror(f)
+
+
+def remove_alias(name, aliases_file=None, storage=None):
+    """Remove an alias and return whether it was found before deletion.
+
+    With storage, suppress database and mirror errors; True does not confirm
+    a successful deletion. Without storage, JSON file write errors propagate.
+    """
+    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    if storage is not None:
+        try:
+            existed = name in storage.list_aliases()
+        except Exception:
+            existed = False
+        try:
+            storage.remove_alias(name)
+        except Exception:
+            pass
+        _push_alias_mirror(storage, f)
+        return existed
     aliases = get_aliases(aliases_file)
     if name in aliases:
         del aliases[name]
@@ -245,8 +341,20 @@ def remove_alias(name, aliases_file=None):
 
 
 def get_version():
+    """Return package version, Python version, and platform information.
+
+    Use 3.3.0 when installed package metadata cannot be read.
+    """
+    try:
+        from importlib.metadata import version as _pkg_version
+        try:
+            ver = _pkg_version("cloudmesh")
+        except Exception:
+            ver = "3.3.0"
+    except Exception:
+        ver = "3.3.0"
     return {
-        "version": "3.1.0",
+        "version": ver,
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",
         "platform": __import__('sys').platform,
     }

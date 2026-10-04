@@ -140,6 +140,8 @@ COMPLETION_OPTIONS = {
     "keys remove-managed": ("--name", "-n"),
     "config export": ("--output", "-o"),
     "completions": ("--shell", "-s", "--output", "-o"),
+    "migrate": ("--dry-run", "--verify", "--base-dir", "--help", "-h"),
+    "storage restore": ("--help", "-h"),
     "service start": ("--interval", "-i"),
     "service logs": ("--limit", "-l"),
     "reshistory auto start": ("--interval", "-i"),
@@ -629,9 +631,34 @@ def cmd_database(args):
 
 
 def cmd_migrate(args):
-    from cloudmesh.core.migrate import run_migration
+    """Print migration, preview, or verification results for args.base_dir.
+
+    verify takes precedence over dry_run and may initialize storage.
+    Raise SystemExit(1) for a reported failure; uncaught migration,
+    verification, and backup errors propagate.
+    """
+    from cloudmesh.core.migrate import MigrationManager, run_migration
     from pathlib import Path as _Path
     base = _Path(args.base_dir) if getattr(args, "base_dir", None) else None
+    if getattr(args, "verify", False):
+        result = MigrationManager(base).verify()
+        table = Table(title="Migration Verify (JSON vs SQLite)", box=box.ROUNDED)
+        table.add_column("Type", style="cyan")
+        table.add_column("JSON")
+        table.add_column("SQLite")
+        table.add_column("Status")
+        for c in result["checks"]:
+            ok = c["match"]
+            table.add_row(c["type"], str(c["json"]), str(c["sqlite"]),
+                          "[green]match[/]" if ok else "[red]MISMATCH[/]")
+        console.print(table)
+        if result["errors"]:
+            for e in result["errors"][:10]:
+                console.print(f"  [red]-[/] {e}")
+        console.print(f"[{'green' if result['ok'] else 'red'}]Verify: {'OK' if result['ok'] else 'FAILED'}[/]")
+        if not result["ok"]:
+            sys.exit(1)
+        return
     dry = bool(getattr(args, "dry_run", False))
     result = run_migration(base_dir=base, dry_run=dry)
     if result.get("dry_run"):
@@ -1528,17 +1555,47 @@ def cmd_node_info(args):
         console.print(f"[red]Error: {e}[/]")
 
 
+def _get_node_keyring():
+    """Open the node keyring using storage beside NODE_KEYS_FILE.
+
+    Construction may import legacy nodes and refresh the JSON mirror;
+    initialization errors propagate.
+    """
+    try:
+        from cloudmesh.core.nodekeyring import NodeKeyring
+    except ImportError:
+        from core.nodekeyring import NodeKeyring
+    # Derive the storage base from the JSON location so tests that redirect
+    # NODE_KEYS_FILE stay isolated from the real package database.
+    return NodeKeyring(json_path=NODE_KEYS_FILE, base_dir=NODE_KEYS_FILE.parent)
+
+
 def _load_node_keys():
-    if NODE_KEYS_FILE.exists():
-        try:
-            return json.loads(NODE_KEYS_FILE.read_text())
-        except Exception:
-            return {}
-    return {}
+    """Load the node keyring, falling back to JSON if keyring access raises.
+
+    Return {} if the fallback file is missing or cannot be decoded.
+    """
+    try:
+        return _get_node_keyring().load()
+    except Exception:
+        if NODE_KEYS_FILE.exists():
+            try:
+                return json.loads(NODE_KEYS_FILE.read_text())
+            except Exception:
+                return {}
+        return {}
 
 
 def _save_node_keys(keys):
-    save_private_json(NODE_KEYS_FILE, keys)
+    """Save through the keyring, using private JSON if keyring access raises.
+
+    Errors from the fallback JSON serialization or file write propagate.
+    Storage failures suppressed by the keyring do not trigger the fallback.
+    """
+    try:
+        _get_node_keyring().save(keys)
+    except Exception:
+        save_private_json(NODE_KEYS_FILE, keys)
 
 
 def cmd_node_add_cloud(args):
@@ -1868,14 +1925,21 @@ def cmd_report(args):
 
 
 def cmd_alias(args):
+    """Remove, list, or create aliases, in that precedence order, and print results.
+
+    Initialize storage in the package directory. Storage initialization and
+    JSON fallback write errors propagate.
+    """
+    from cloudmesh.core.storage import StorageManager
+    storage = StorageManager(Path(__file__).parent)
     if args.remove:
-        if remove_alias(args.remove):
+        if remove_alias(args.remove, storage=storage):
             console.print(f"[green]Alias '{args.remove}' removed[/]")
         else:
             console.print(f"[red]Alias '{args.remove}' not found[/]")
         return
     if args.list:
-        aliases = get_aliases()
+        aliases = get_aliases(storage=storage)
         if not aliases:
             console.print("[dim]No aliases[/]")
             return
@@ -1887,7 +1951,7 @@ def cmd_alias(args):
         console.print(table)
         return
     if args.name and args.cmd:
-        create_alias(args.name, args.cmd)
+        create_alias(args.name, args.cmd, storage=storage)
         console.print(f"[green]Alias '{args.name}' -> '{args.cmd}'[/]")
 
 
@@ -1900,10 +1964,18 @@ def cmd_version(args):
 
 
 def cmd_doctor(args):
+    """Print local source, configuration, and storage health checks.
+
+    Storage checks may initialize database/key files, import nodes, and
+    refresh their mirror. Report storage failures in the table; source read
+    and file stat errors outside those checks propagate. Failed checks do
+    not set an exit status.
+    """
     console.print(Panel("[bold bright_blue]CloudMesh Doctor — Security & Health Check[/]", border_style="bright_blue"))
     checks = []
+    base = Path(getattr(args, "base_dir", None) or Path(__file__).parent)
 
-    api_src = Path(__file__).parent / "core" / "advanced.py"
+    api_src = base / "core" / "advanced.py"
     if api_src.exists():
         content = api_src.read_text()
         api_ok = "compare_digest" in content
@@ -1915,7 +1987,7 @@ def cmd_doctor(args):
     else:
         checks.append(("API source", False, "advanced.py not found"))
 
-    node_src = Path(__file__).parent / "node" / "cloudmesh_node.py"
+    node_src = base / "node" / "cloudmesh_node.py"
     if node_src.exists():
         ncontent = node_src.read_text()
         auth_ok = "compare_digest" in ncontent
@@ -1929,42 +2001,42 @@ def cmd_doctor(args):
     else:
         checks.append(("Node source", False, "cloudmesh_node.py not found"))
 
-    ddos_src = Path(__file__).parent / "core" / "ddos.py"
+    ddos_src = base / "core" / "ddos.py"
     checks.append(("DDoS module", ddos_src.exists(), "core/ddos.py present"))
 
-    ssh_src = Path(__file__).parent / "core" / "ssh_util.py"
+    ssh_src = base / "core" / "ssh_util.py"
     if ssh_src.exists():
         sc = ssh_src.read_text()
         checks.append(("SSH: centralized", "MITMWarning" in sc, "MITM warnings enabled"))
     else:
         checks.append(("SSH: centralized", False, "ssh_util.py not found"))
 
-    fw_src = Path(__file__).parent / "core" / "firewall.py"
+    fw_src = base / "core" / "firewall.py"
     if fw_src.exists():
         fc = fw_src.read_text()
         checks.append(("Firewall: allowlist", "ALLOWED_RULES" in fc, "Rule validation enabled"))
     else:
         checks.append(("Firewall", False, "firewall.py not found"))
 
-    db_src = Path(__file__).parent / "core" / "database.py"
+    db_src = base / "core" / "database.py"
     if db_src.exists():
         dc = db_src.read_text()
         checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))
     else:
         checks.append(("Database", False, "database.py not found"))
 
-    tests_dir = Path(__file__).parent / "tests"
+    tests_dir = base / "tests"
     has_tests = (tests_dir / "test_security.py").exists()
     checks.append(("Test suite", has_tests, "tests/test_security.py exists"))
 
-    secret_key = Path(__file__).parent / ".secret.key"
+    secret_key = base / ".secret.key"
     if secret_key.exists():
         key_size = secret_key.stat().st_size
         checks.append(("Encryption key", key_size > 10, f"Key file present ({key_size} bytes)"))
     else:
         checks.append(("Encryption key", False, ".secret.key missing"))
 
-    node_keys = Path(__file__).parent / ".node_keys.json"
+    node_keys = base / ".node_keys.json"
     if node_keys.exists():
         try:
             nk = json.loads(node_keys.read_text())
@@ -1974,7 +2046,7 @@ def cmd_doctor(args):
     else:
         checks.append(("Cloud nodes", False, "No nodes configured"))
 
-    sched = Path(__file__).parent / ".schedule.json"
+    sched = base / ".schedule.json"
     if sched.exists():
         try:
             s = json.loads(sched.read_text())
@@ -1984,6 +2056,52 @@ def cmd_doctor(args):
             checks.append(("Schedules", False, "Corrupt schedule file"))
     else:
         checks.append(("Schedules", True, "No schedules"))
+
+    # === Storage backend health (SQLite source of truth) ===
+    try:
+        from cloudmesh.core.storage import StorageManager
+        _sm = StorageManager(base)
+        _db = base / "cloudmesh.db"
+        if _db.exists():
+            if os.name == "nt":
+                checks.append(("Storage: database", True, "cloudmesh.db present"))
+            else:
+                _mode = oct(_db.stat().st_mode & 0o777)
+                checks.append(("Storage: database perms", _mode == "0o600", f"cloudmesh.db mode {_mode}"))
+        else:
+            checks.append(("Storage: database", False, "cloudmesh.db missing (run cm migrate)"))
+        _key = base / ".secret.key"
+        if _key.exists() and os.name != "nt":
+            _kmode = oct(_key.stat().st_mode & 0o777)
+            checks.append(("Storage: key perms", _kmode == "0o600", f".secret.key mode {_kmode}"))
+        _marker_kinds = ("servers", "groups", "nodes", "alerts", "schedules", "templates", "aliases")
+        _markers = [k for k in _marker_kinds if _sm.legacy_imported(k)]
+        checks.append(("Storage: legacy import", len(_markers) == len(_marker_kinds),
+                       f"{len(_markers)}/{len(_marker_kinds)} types imported"))
+        try:
+            from cloudmesh.core.security import SecurityManager as _SecurityManager
+            _cfg = _SecurityManager().load_config()
+            _json_servers = set((_cfg.get("servers", {}) or {}).keys())
+            _db_servers = {s["name"] for s in _sm.list_servers()}
+            checks.append(("Storage: servers mirror", _json_servers == _db_servers,
+                           f"json={len(_json_servers)} sqlite={len(_db_servers)}"))
+            # Read the JSON mirror file directly: _load_node_keys() may
+            # return SQLite data, which would compare SQLite with itself.
+            _mirror_file = base / ".node_keys.json"
+            try:
+                _json_nodes = set(json.loads(_mirror_file.read_text()).keys()) \
+                    if _mirror_file.exists() else set()
+            except Exception:
+                _json_nodes = set()
+            _db_nodes = {n["name"] for n in _sm.list_nodes()}
+            checks.append(("Storage: nodes mirror", _json_nodes == _db_nodes,
+                           f"json={len(_json_nodes)} sqlite={len(_db_nodes)}"))
+        except Exception as e:
+            checks.append(("Storage: mirrors", False, f"check failed: {e}"))
+        _backups = sorted(_sm.backups_dir.glob("cloudmesh_backup_*.db"))
+        checks.append(("Storage: backups", True, f"{len(_backups)} sqlite backup(s)"))
+    except Exception as e:
+        checks.append(("Storage backend", False, f"check failed: {e}"))
 
     table = Table(box=box.ROUNDED)
     table.add_column("Check", style="bold")
@@ -2060,12 +2178,20 @@ def cmd_update(args):
                 console.print(f"[yellow]pip install warning: {pip.stderr.strip()[:200]}[/]")
 
         new_ver = "unknown"
-        vf = repo_dir / "cloudmesh" / "core" / "features.py"
-        if vf.exists():
-            for line in vf.read_text().splitlines():
-                if '"version"' in line and ':' in line:
-                    new_ver = line.split('"version"')[1].split('"')[1]
-                    break
+        try:
+            new_ver = get_version().get("version", "unknown")
+        except Exception:
+            pass
+        if new_ver == "unknown":
+            try:
+                import re
+                pyproject = repo_dir / "pyproject.toml"
+                if pyproject.exists():
+                    m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.M)
+                    if m:
+                        new_ver = m.group(1)
+            except Exception:
+                pass
 
         console.print(f"[green bold]Updated to CloudMesh v{new_ver}[/]")
     except subprocess.TimeoutExpired:
@@ -2075,8 +2201,7 @@ def cmd_update(args):
 
 
 def cmd_status(args):
-    mgr = ServerManager()
-    servers = mgr.list_servers()
+    servers = _load_node_keys()
     if not servers:
         if getattr(args, "as_json", False):
             console.print("{}")
@@ -3461,8 +3586,13 @@ def cmd_job_checkpoints(args):
 
 
 def main():
+    """Parse process arguments and dispatch the selected CloudMesh command.
+
+    Print help and return when no command is given. Argument parsing may
+    raise SystemExit; command handler exceptions propagate.
+    """
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
-    parser.add_argument("--version", "-V", action="version", version="CloudMesh 3.1.0")
+    parser.add_argument("--version", "-V", action="version", version=f"CloudMesh {get_version()['version']}")
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
@@ -4161,6 +4291,7 @@ def main():
 
     mig_p = subparsers.add_parser("migrate", help="Migrate JSON data to SQLite backend")
     mig_p.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    mig_p.add_argument("--verify", action="store_true", help="Compare JSON vs SQLite without writing")
     mig_p.add_argument("--base-dir", help="Base directory holding JSON data")
 
     sto_p = subparsers.add_parser("storage", help="SQLite backend backups")

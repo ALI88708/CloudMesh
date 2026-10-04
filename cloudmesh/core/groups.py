@@ -14,8 +14,6 @@ class GroupsManager:
     legacy JSON groups are imported once into SQLite on init.
     """
 
-    _IMPORT_MARKER = "legacy_groups_imported"
-
     def __init__(self, security_manager, storage=None):
         self.security = security_manager
         self.config = self.security.load_config()
@@ -34,28 +32,32 @@ class GroupsManager:
         authoritative and the JSON mirror is repaired from it.
         """
         try:
-            # NOTE: get_setting JSON-decodes "1" to int 1; normalize before compare.
-            if str(self.storage.get_setting(self._IMPORT_MARKER, None)) == "1":
+            if self.storage.legacy_imported("groups"):
                 self._push_mirror_from_storage()
                 return
         except Exception:
             return
+        ok = True
         for group_name, devices in list(self.config.get("groups", {}).items()):
             if not isinstance(devices, list):
                 continue
             try:
-                self.storage.create_group(group_name)
+                created = self.storage.create_group(group_name)
             except Exception:
+                ok = False
+                continue
+            if not created:
+                # Group may already exist from a previous partial run; merge members.
                 pass
             for device in devices:
                 try:
                     self.storage.add_to_group(group_name, device, "server")
                 except Exception:
+                    ok = False
                     continue
-        try:
-            self.storage.set_setting(self._IMPORT_MARKER, "1")
-        except Exception:
-            pass
+        if not ok:
+            return
+        self.storage.mark_legacy_imported("groups")
         self._push_mirror_from_storage()
 
     def _push_mirror_from_storage(self):
