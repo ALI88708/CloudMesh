@@ -680,7 +680,9 @@ def cmd_storage(args):
 
 def init_components():
     security = SecurityManager()
-    server_mgr = ServerManager(security)
+    from cloudmesh.core.storage import StorageManager
+    storage = StorageManager(security.base_dir)
+    server_mgr = ServerManager(security, storage)
     monitor = ResourceMonitor(server_mgr)
     scheduler = TaskScheduler(server_mgr, monitor)
     dashboard = Dashboard(scheduler)
@@ -689,7 +691,7 @@ def init_components():
     deployer = PackageDeployer(server_mgr)
     notifier = NotifyManager()
     alert_mgr = AlertManager(monitor, notifier=notifier)
-    groups_mgr = GroupsManager(security)
+    groups_mgr = GroupsManager(security, storage)
     cmd_log = CommandLog()
     return security, server_mgr, monitor, scheduler, dashboard, transfer, history, deployer, alert_mgr, groups_mgr, cmd_log
 

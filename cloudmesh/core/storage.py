@@ -423,6 +423,16 @@ class StorageManager:
             """, (status, name))
             conn.commit()
             return cursor.rowcount > 0
+
+    def update_server_os_type(self, name: str, os_type: str) -> bool:
+        """Update server OS type."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                UPDATE servers SET os_type = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE name = ?
+            """, (os_type, name))
+            conn.commit()
+            return cursor.rowcount > 0
     
     # Node operations
     def add_node(self, name: str, host: str, port: int = 9999, auth_key: str = "") -> bool:
@@ -677,8 +687,12 @@ class StorageManager:
         except (TypeError, ValueError):
             return default
 
-    def backup_database(self) -> str:
-        """Create a backup of the database using SQLite backup API."""
+    def backup_database(self, exclude: Optional[str] = None) -> str:
+        """Create a backup of the database using SQLite backup API.
+
+        `exclude` is a backup filename that cleanup must never delete
+        (used by restore to protect its source file).
+        """
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         _ensure_private_dir(self.backups_dir)
         suffix = 0
@@ -704,11 +718,17 @@ class StorageManager:
 
         _ensure_private_file(backup_path)
 
-        # Cleanup old backups
+        # Cleanup old backups (never delete the excluded restore source).
         max_backups = self._validated_max_backups(10)
+        excluded = Path(exclude).name if exclude else None
         backups = sorted(self.backups_dir.glob("cloudmesh_backup_*.db"))
         while len(backups) > max_backups:
             oldest = backups.pop(0)
+            if excluded is not None and oldest.name == excluded:
+                logger.warning(
+                    "Retention limit reached but keeping restore source %s", oldest.name
+                )
+                break
             try:
                 oldest.unlink()
             except OSError as e:
@@ -740,6 +760,35 @@ class StorageManager:
         except OSError:
             return False
 
+    @staticmethod
+    def _source_table_names_ro(path: Path) -> Optional[List[str]]:
+        """List tables in a backup opened strictly read-only.
+
+        Returns None if the file cannot be opened as a database. Opening
+        with mode=ro guarantees a missing file can never be silently
+        recreated as an empty database.
+        """
+        try:
+            uri = path.as_uri() + "?mode=ro"
+        except (OSError, ValueError) as e:
+            logger.error("Cannot build read-only URI for backup: %s", e)
+            return None
+        try:
+            conn = sqlite3.connect(uri, uri=True, timeout=30)
+        except sqlite3.Error as e:
+            logger.error("Cannot open backup read-only: %s", e)
+            return None
+        try:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+            return [r[0] for r in rows]
+        except sqlite3.Error as e:
+            logger.error("Cannot read backup schema: %s", e)
+            return None
+        finally:
+            conn.close()
+
     def restore_backup(self, backup_path: str) -> bool:
         """Restore database from backup using the SQLite backup API."""
         try:
@@ -747,19 +796,36 @@ class StorageManager:
         except ValueError:
             return False
 
-        if not backup_file.exists():
-            logger.error("Backup not found: %s", backup_path)
+        def _valid_source() -> Optional[List[str]]:
+            if not backup_file.exists():
+                logger.error("Backup not found: %s", backup_path)
+                return None
+            if not self._is_sqlite_db(backup_file):
+                logger.error("Backup is not a valid SQLite database: %s", backup_path)
+                return None
+            tables = self._source_table_names_ro(backup_file)
+            if not tables or "servers" not in tables:
+                logger.error(
+                    "Backup %s has no CloudMesh schema; refusing to overwrite live database",
+                    backup_path,
+                )
+                return None
+            return tables
+
+        if _valid_source() is None:
             return False
 
-        if not self._is_sqlite_db(backup_file):
-            logger.error("Backup is not a valid SQLite database: %s", backup_path)
-            return False
-
-        # Create safety backup of current state before overwriting.
+        # Create safety backup of current state before overwriting, protecting
+        # the restore source from retention cleanup (max_backups=1 would
+        # otherwise delete it, then sqlite would recreate an empty DB).
         try:
-            self.backup_database()
+            self.backup_database(exclude=backup_file.name)
         except Exception as e:
             logger.error("Failed to create safety backup before restore: %s", e)
+            return False
+
+        # Re-verify: the source must still exist after cleanup ran.
+        if _valid_source() is None:
             return False
 
         # Restore via backup API so WAL/-shm state stays consistent even
@@ -770,7 +836,7 @@ class StorageManager:
                     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 except sqlite3.Error:
                     pass
-            source = sqlite3.connect(str(backup_file), timeout=30)
+            source = sqlite3.connect(backup_file.as_uri() + "?mode=ro", uri=True, timeout=30)
             try:
                 dest = sqlite3.connect(str(self.db_path), timeout=30)
                 try:
