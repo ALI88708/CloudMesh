@@ -287,6 +287,10 @@ class DiagnoseEngine:
 
     def _check_drift(self):
         out = []
+        if self._drift is None and self.storage is None:
+            # No backend available: never fabricate one here (constructing a
+            # default manager could create files and read unrelated state).
+            return out
         try:
             drift = self._drift
             if drift is None:
@@ -298,6 +302,14 @@ class DiagnoseEngine:
             result = drift.check()
         except Exception as e:
             logger.warning("Drift check skipped: %s", e)
+            return out
+        if result.get("error"):
+            out.append(_finding(
+                "drift-unavailable", "info", "drift", "fleet",
+                "Drift check unavailable",
+                detail=str(result["error"])[:200],
+                suggestion="Retry later: cm drift check.",
+            ))
             return out
         if not result.get("has_baseline"):
             return out

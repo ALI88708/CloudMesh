@@ -768,21 +768,22 @@ def cmd_diagnose(args):
         names = [args.name]
     findings = engine.diagnose(names=names, include_local=not bool(getattr(args, "name", None)))
     if getattr(args, "as_json", False):
-        console.print(json.dumps(findings, indent=2))
-        return
-    colors = {"info": "cyan", "warning": "yellow", "critical": "red"}
-    table = Table(title="CloudMesh Diagnose", box=box.ROUNDED)
-    table.add_column("Severity", style="bold")
-    table.add_column("Target", style="cyan")
-    table.add_column("Finding")
-    table.add_column("Suggestion", style="dim")
-    order = {"critical": 0, "warning": 1, "info": 2}
-    for f in sorted(findings, key=lambda f: order.get(f["severity"], 3)):
-        color = colors.get(f["severity"], "white")
-        table.add_row(f"[{color}]{f['severity'].upper()}[/]", f["target"],
-                      f"{f['title']}\n[dim]{f['detail']}[/]" if f["detail"] else f["title"],
-                      f["suggestion"])
-    console.print(table)
+        # Plain print: Rich console may wrap or interpret markup inside JSON.
+        print(json.dumps(findings, indent=2))
+    else:
+        colors = {"info": "cyan", "warning": "yellow", "critical": "red"}
+        table = Table(title="CloudMesh Diagnose", box=box.ROUNDED)
+        table.add_column("Severity", style="bold")
+        table.add_column("Target", style="cyan")
+        table.add_column("Finding")
+        table.add_column("Suggestion", style="dim")
+        order = {"critical": 0, "warning": 1, "info": 2}
+        for f in sorted(findings, key=lambda f: order.get(f["severity"], 3)):
+            color = colors.get(f["severity"], "white")
+            table.add_row(f"[{color}]{f['severity'].upper()}[/]", f["target"],
+                          f"{f['title']}\n[dim]{f['detail']}[/]" if f["detail"] else f["title"],
+                          f["suggestion"])
+        console.print(table)
     if any(f["severity"] == "critical" for f in findings):
         sys.exit(2)
 

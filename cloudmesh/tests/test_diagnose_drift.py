@@ -83,6 +83,39 @@ def test_drift_no_baseline(tmp_path):
     assert result == {"has_baseline": False, "drifted": False, "diff": {}}
 
 
+def test_drift_collection_failure_never_reports_removals(tmp_path):
+    from cloudmesh.core.drift import DriftError
+    real = StorageManager(tmp_path)
+    dm = DriftManager(storage=real)
+    dm.storage.add_server("web1", "10.0.0.1", "root")
+    dm.snapshot()
+
+    class _FlakyLists:
+        """Settings work, but every collection read fails."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            if name.startswith("list_"):
+                raise RuntimeError("db unreadable")
+            return getattr(self._inner, name)
+
+    broken = DriftManager(server_mgr=None, storage=_FlakyLists(real))
+    with pytest.raises(DriftError):
+        broken.collect()
+    with pytest.raises(DriftError):
+        broken.snapshot()
+    result = broken.check()
+    assert result["has_baseline"] is True
+    assert result["drifted"] is False
+    assert result.get("error")
+    assert result["diff"] == {}
+    # baseline untouched by the refused snapshot
+    assert dm.get_baseline()["servers"] == {
+        "web1": {"host": "10.0.0.1", "user": "root", "port": 22}}
+
+
 def test_drift_excludes_secrets(tmp_path):
     dm = DriftManager(storage=StorageManager(tmp_path))
     dm.storage.add_node("n1", "10.0.0.5", 9999, "supersecret-auth-key")
@@ -153,3 +186,15 @@ def test_diagnose_without_components_never_raises(tmp_path):
     engine = DiagnoseEngine()
     findings = engine.diagnose()
     assert isinstance(findings, list)
+
+
+def test_diagnose_without_storage_skips_drift_silently(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    engine = DiagnoseEngine(monitor=_Monitor({"local": {
+        "cpu_percent": 5.0,
+        "ram": {"used_gb": 1.0, "total_gb": 8.0, "percent": 12.0},
+        "disk": {"used_gb": 10.0, "total_gb": 100.0, "percent": 10.0},
+    }}))
+    findings = engine.diagnose()
+    assert not [f for f in findings if f["area"] == "drift"]
+    assert list(tmp_path.iterdir()) == []

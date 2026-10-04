@@ -22,6 +22,10 @@ BASELINE_KEY = "drift_baseline"
 TRACKED = ("servers", "nodes", "groups", "schedules", "templates", "aliases", "alert_rules")
 
 
+class DriftError(RuntimeError):
+    """Raised when live state cannot be fully collected."""
+
+
 class DriftManager:
     def __init__(self, server_mgr=None, storage=None, base_dir=None):
         self.server_mgr = server_mgr
@@ -34,75 +38,80 @@ class DriftManager:
     def collect(self) -> Dict[str, Any]:
         """Capture current managed state (no secrets)."""
         state: Dict[str, Any] = {}
-        try:
-            if self.server_mgr is not None:
-                servers = {}
-                for name in self.server_mgr.list_servers():
-                    try:
-                        info = self.server_mgr.get_server_info(name)
-                    except Exception:
-                        continue
-                    servers[name] = {
-                        "host": info.get("host"),
-                        "user": info.get("user"),
-                        "port": info.get("port", 22),
-                    }
-                state["servers"] = servers
-            else:
-                state["servers"] = {
-                    s["name"]: {"host": s.get("host"), "user": s.get("user"),
-                                "port": s.get("port", 22)}
-                    for s in self.storage.list_servers()
-                }
-        except Exception as e:
-            logger.warning("Drift collect servers failed: %s", e)
-            state["servers"] = {}
-        try:
-            state["nodes"] = {
-                n["name"]: {"host": n.get("host"), "port": n.get("port", 9999),
-                            "tls": bool(n.get("tls", False))}
-                for n in self.storage.list_nodes()
-            }
-        except Exception as e:
-            logger.warning("Drift collect nodes failed: %s", e)
-            state["nodes"] = {}
-        try:
-            state["groups"] = dict(self.storage.list_groups())
-        except Exception:
-            state["groups"] = {}
-        try:
-            state["schedules"] = {
-                s["name"]: {"command": s.get("command"),
-                            "interval": s.get("interval_seconds", 3600),
-                            "enabled": bool(s.get("enabled", True)),
-                            "server": s.get("server")}
-                for s in self.storage.list_schedules()
-            }
-        except Exception:
-            state["schedules"] = {}
-        try:
-            state["templates"] = {
-                t["name"]: {"command": t.get("command", ""),
-                            "description": t.get("description", "")}
-                for t in self.storage.list_templates()
-            }
-        except Exception:
-            state["templates"] = {}
-        try:
-            state["aliases"] = dict(self.storage.list_aliases())
-        except Exception:
-            state["aliases"] = {}
-        try:
-            state["alert_rules"] = {
-                r["name"]: {"metric": r.get("metric"), "threshold": r.get("threshold"),
-                            "operator": r.get("operator", "gt"),
-                            "server": r.get("server"),
-                            "severity": r.get("severity", "warning")}
-                for r in self.storage.list_alert_rules()
-            }
-        except Exception:
-            state["alert_rules"] = {}
+        errors: Dict[str, str] = {}
+        collectors = (
+            ("servers", self._collect_servers),
+            ("nodes", self._collect_nodes),
+            ("groups", self._collect_groups),
+            ("schedules", self._collect_schedules),
+            ("templates", self._collect_templates),
+            ("aliases", self._collect_aliases),
+            ("alert_rules", self._collect_alert_rules),
+        )
+        for kind, fn in collectors:
+            try:
+                state[kind] = fn()
+            except Exception as e:
+                errors[kind] = str(e)
+                state[kind] = {}
+        if errors:
+            raise DriftError(f"collection failed for: {sorted(errors)}")
         return state
+
+    def _collect_servers(self) -> Dict[str, Any]:
+        if self.server_mgr is not None:
+            servers = {}
+            for name in self.server_mgr.list_servers():
+                info = self.server_mgr.get_server_info(name)
+                servers[name] = {
+                    "host": info.get("host"),
+                    "user": info.get("user"),
+                    "port": info.get("port", 22),
+                }
+            return servers
+        return {
+            s["name"]: {"host": s.get("host"), "user": s.get("user"),
+                        "port": s.get("port", 22)}
+            for s in self.storage.list_servers()
+        }
+
+    def _collect_nodes(self) -> Dict[str, Any]:
+        return {
+            n["name"]: {"host": n.get("host"), "port": n.get("port", 9999),
+                        "tls": bool(n.get("tls", False))}
+            for n in self.storage.list_nodes()
+        }
+
+    def _collect_groups(self) -> Dict[str, Any]:
+        return dict(self.storage.list_groups())
+
+    def _collect_schedules(self) -> Dict[str, Any]:
+        return {
+            s["name"]: {"command": s.get("command"),
+                        "interval": s.get("interval_seconds", 3600),
+                        "enabled": bool(s.get("enabled", True)),
+                        "server": s.get("server")}
+            for s in self.storage.list_schedules()
+        }
+
+    def _collect_templates(self) -> Dict[str, Any]:
+        return {
+            t["name"]: {"command": t.get("command", ""),
+                        "description": t.get("description", "")}
+            for t in self.storage.list_templates()
+        }
+
+    def _collect_aliases(self) -> Dict[str, Any]:
+        return dict(self.storage.list_aliases())
+
+    def _collect_alert_rules(self) -> Dict[str, Any]:
+        return {
+            r["name"]: {"metric": r.get("metric"), "threshold": r.get("threshold"),
+                        "operator": r.get("operator", "gt"),
+                        "server": r.get("server"),
+                        "severity": r.get("severity", "warning")}
+            for r in self.storage.list_alert_rules()
+        }
 
     # -- baseline ------------------------------------------------------
     def snapshot(self) -> Dict[str, Any]:
@@ -155,12 +164,19 @@ class DriftManager:
     def check(self) -> Dict[str, Any]:
         """Diff live state against the baseline.
 
-        Returns {"has_baseline": bool, "drifted": bool, "diff": {...}}.
+        Returns {"has_baseline": bool, "drifted": bool, "diff": {...}}
+        plus "error" when live state cannot be fully collected (never
+        reported as removals).
         """
         baseline = self.get_baseline()
         if baseline is None:
             return {"has_baseline": False, "drifted": False, "diff": {}}
-        current = self.collect()
+        try:
+            current = self.collect()
+        except DriftError as e:
+            logger.error("Drift check refused on partial state: %s", e)
+            return {"has_baseline": True, "drifted": False, "diff": {},
+                    "error": str(e)}
         diff = self.diff_states(baseline, current)
         drifted = any(
             d["added"] or d["removed"] or d["modified"] for d in diff.values()
