@@ -195,3 +195,138 @@ def test_templates_dict_migrates_and_errors_fail_success(tmp_path):
     r2 = run_migration(base_dir=tmp_path, dry_run=False)
     assert r2["success"] is False
     assert any("aliases" in e.lower() for e in r2["errors"])
+
+
+@pytest.mark.parametrize("created", [None, "2026-10-04T12:00:00"])
+def test_schedule_upsert_preserves_identity_and_creation_time(tmp_path, created):
+    store = StorageManager(tmp_path)
+    original_created = "2026-01-01T00:00:00"
+    store.upsert_schedule("nightly", "echo old", 60, created=original_created)
+    original = store.list_schedules()[0]
+
+    store.upsert_schedule(
+        "nightly", "echo 'new'; -- literal SQL", 0, enabled=False,
+        last_run="2026-10-03T12:00:00", server="db-1", created=created,
+        run_count=42,
+    )
+
+    rows = StorageManager(tmp_path).list_schedules()
+    assert len(rows) == 1
+    assert rows[0] == {
+        **original, "command": "echo 'new'; -- literal SQL", "interval_seconds": 0,
+        "enabled": 0, "last_run": "2026-10-03T12:00:00", "server": "db-1",
+        "created": created or original_created, "run_count": 42,
+    }
+    assert store.remove_schedule("missing") is False
+    assert store.remove_schedule("nightly") is True
+    assert StorageManager(tmp_path).list_schedules() == []
+
+
+@pytest.mark.parametrize("created", [None, "2026-10-04T12:00:00"])
+def test_template_upsert_preserves_identity_and_creation_time(tmp_path, created):
+    store = StorageManager(tmp_path)
+    store.upsert_template("deploy", "echo old", "old", "2026-01-01")
+    original = store.list_templates()[0]
+
+    store.upsert_template("deploy", "echo '{app}'", None, created)
+
+    assert StorageManager(tmp_path).list_templates() == [{
+        **original, "command": "echo '{app}'", "description": "",
+        "created": created or "2026-01-01",
+    }]
+    assert store.remove_template("missing") is False
+    assert store.remove_template("deploy") is True
+    assert StorageManager(tmp_path).list_templates() == []
+
+
+def test_alias_upsert_and_delete_treat_names_as_literal_data(tmp_path):
+    store = StorageManager(tmp_path)
+    name = "quote'; DROP TABLE aliases; --"
+    store.upsert_alias(name, "echo old")
+    store.upsert_alias("other", "echo untouched")
+    store.upsert_alias(name, "echo 新しい")
+
+    assert StorageManager(tmp_path).list_aliases() == {
+        name: "echo 新しい", "other": "echo untouched",
+    }
+    assert store.remove_alias("missing") is False
+    assert store.remove_alias(name) is True
+    assert store.remove_alias(name) is False
+    assert StorageManager(tmp_path).list_aliases() == {"other": "echo untouched"}
+
+
+def test_alert_cooldowns_keep_rule_and_server_pairs_separate(tmp_path):
+    store = StorageManager(tmp_path)
+    assert store.list_alert_cooldowns() == {}
+    store.set_alert_cooldown("cpu", "web", 100.25)
+    store.set_alert_cooldown("cpu", "db", 200.5)
+    store.set_alert_cooldown("ram", "web", 300.75)
+    store.set_alert_cooldown("cpu", "web", 400.0)
+
+    assert StorageManager(tmp_path).list_alert_cooldowns() == {
+        "cpu|web": 400.0, "cpu|db": 200.5, "ram|web": 300.75,
+    }
+
+
+@pytest.mark.parametrize("value, expected", [("1", True), (1, True), (0, False),
+                                            ("0", False), ("yes", False)])
+def test_legacy_marker_normalizes_json_decoded_settings(tmp_path, value, expected):
+    store = StorageManager(tmp_path)
+    assert store.legacy_imported("nodes") is False
+    store.set_setting("legacy_nodes_imported", value)
+    assert StorageManager(tmp_path).legacy_imported("nodes") is expected
+    assert store.legacy_imported("alerts") is False
+    store.mark_legacy_imported("nodes")
+    assert StorageManager(tmp_path).legacy_imported("nodes") is True
+
+
+def test_schema_upgrade_preserves_legacy_rows_and_is_repeatable(tmp_path):
+    # Build the three pre-3.3 tables independently of the current initializer.
+    with sqlite3.connect(tmp_path / "cloudmesh.db") as conn:
+        conn.executescript("""
+            CREATE TABLE nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
+                host TEXT NOT NULL, port INTEGER DEFAULT 9999,
+                auth_key TEXT NOT NULL, status TEXT DEFAULT 'unknown',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
+                command TEXT NOT NULL, interval_seconds INTEGER,
+                enabled BOOLEAN DEFAULT 1, last_run TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
+                command TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO nodes (name, host, auth_key) VALUES ('old', 'host', '');
+            INSERT INTO schedules (name, command, interval_seconds)
+                VALUES ('old', 'echo scheduled', 60);
+            INSERT INTO templates (name, command) VALUES ('old', 'echo template');
+        """)
+
+    store = StorageManager(tmp_path)
+    assert store.get_node("old")["tls"] == 0
+    assert store.get_node("old")["ca_file"] is None
+    schedule = store.list_schedules()[0]
+    assert {key: schedule[key] for key in ("command", "server", "created", "run_count")} == {
+        "command": "echo scheduled", "server": None, "created": None, "run_count": 0,
+    }
+    template = store.list_templates()[0]
+    assert template["command"] == "echo template"
+    assert template["description"] == ""
+    assert template["created"] is None
+
+    assert store.add_node("secure", "host", auth_key="test-secret", tls=True,
+                          ca_file="/certs/ca.pem")
+    store.upsert_schedule("old", "echo updated", 120, server="web", run_count=7)
+    store.upsert_template("old", "echo updated", description="upgraded")
+    reopened = StorageManager(tmp_path)
+    assert reopened.get_node("secure")["tls"] == 1
+    assert reopened.get_node("secure")["ca_file"] == "/certs/ca.pem"
+    assert reopened.get_node("secure")["auth_key"] == "test-secret"
+    assert reopened.list_schedules()[0]["run_count"] == 7
+    assert reopened.list_templates()[0]["description"] == "upgraded"
+    assert len(reopened.list_nodes()) == 2
