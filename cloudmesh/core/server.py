@@ -3,18 +3,65 @@ import os
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+try:
+    from cloudmesh.core.storage import StorageManager
+except ImportError:  # `cd cloudmesh && pytest tests` without installed package
+    from core.storage import StorageManager
+
 
 class ServerManager:
-    def __init__(self, security_manager):
+    """Manage servers with SQLite as the source of truth.
+
+    Server records live in StorageManager (encrypted secrets). The legacy
+    JSON config is kept as a compatible mirror so older readers keep working,
+    and any legacy JSON servers are imported once into SQLite on init.
+    """
+
+    _LEGACY_FIELDS = ("host", "user", "port", "key_path", "password", "status", "os_type")
+
+    def __init__(self, security_manager, storage=None):
         self.security = security_manager
         self.config = self.security.load_config()
+        if "servers" not in self.config:
+            self.config["servers"] = {}
+        if storage is None:
+            storage = StorageManager(self.security.base_dir)
+        self.storage = storage
         self._connections = {}
+        self._import_legacy_servers()
+
+    def _import_legacy_servers(self):
+        """One-time best-effort import of JSON-config servers into SQLite."""
+        try:
+            if self.storage.list_servers():
+                return
+        except Exception:
+            return
+        for name, info in list(self.config.get("servers", {}).items()):
+            if not isinstance(info, dict):
+                continue
+            try:
+                self.storage.add_server(
+                    name=name,
+                    host=info.get("host"),
+                    user=info.get("user"),
+                    port=info.get("port", 22),
+                    key_path=info.get("key_path"),
+                    password=info.get("password"),
+                )
+            except Exception:
+                continue
 
     def _save(self):
         self.security.save_config(self.config)
 
+    def _mirror_to_config(self, name, info):
+        self.config.setdefault("servers", {})[name] = {
+            k: info.get(k) for k in self._LEGACY_FIELDS
+        }
+
     def add_server(self, name, host, user, port=22, key_path=None, password=None):
-        if name in self.config["servers"]:
+        if self.storage.get_server(name) is not None or name in self.config["servers"]:
             raise ValueError(f"Server '{name}' already exists")
         server_info = {
             "host": host,
@@ -25,23 +72,64 @@ class ServerManager:
             "status": "unknown",
             "os_type": "linux",
         }
-        self.config["servers"][name] = server_info
+        if not self.storage.add_server(
+            name=name, host=host, user=user, port=port,
+            key_path=server_info["key_path"], password=password,
+        ):
+            raise ValueError(f"Server '{name}' already exists")
+        self._mirror_to_config(name, server_info)
         self._save()
 
     def remove_server(self, name):
-        if name not in self.config["servers"]:
+        if self.storage.get_server(name) is None and name not in self.config["servers"]:
             raise ValueError(f"Server '{name}' not found")
         self.disconnect(name)
-        del self.config["servers"][name]
+        self.storage.remove_server(name)
+        self.config["servers"].pop(name, None)
         self._save()
 
     def list_servers(self):
+        try:
+            names = [s["name"] for s in self.storage.list_servers()]
+            if names:
+                return names
+        except Exception:
+            pass
         return list(self.config["servers"].keys())
 
     def get_server_info(self, name):
+        try:
+            info = self.storage.get_server(name)
+        except Exception:
+            info = None
+        if info is not None:
+            legacy = {k: info.get(k) for k in self._LEGACY_FIELDS}
+            if legacy.get("port") is None:
+                legacy["port"] = 22
+            return legacy
         if name not in self.config["servers"]:
             raise ValueError(f"Server '{name}' not found")
         return self.config["servers"][name]
+
+    def _set_status(self, name, status):
+        try:
+            self.storage.update_server_status(name, status)
+        except Exception:
+            pass
+        self._ensure_mirror(name)
+        if name in self.config["servers"]:
+            self.config["servers"][name]["status"] = status
+
+    def _ensure_mirror(self, name):
+        """Create the JSON mirror entry from SQLite if missing."""
+        if name in self.config["servers"]:
+            return
+        try:
+            info = self.storage.get_server(name)
+        except Exception:
+            info = None
+        if info is not None:
+            self._mirror_to_config(name, {k: info.get(k) for k in self._LEGACY_FIELDS})
 
     def connect(self, name):
         if name in self._connections:
@@ -80,7 +168,7 @@ class ServerManager:
 
         client.connect(**connect_kwargs)
         self._connections[name] = client
-        self.config["servers"][name]["status"] = "connected"
+        self._set_status(name, "connected")
         self._save()
         return client
 
@@ -91,8 +179,7 @@ class ServerManager:
             except Exception:
                 pass
             del self._connections[name]
-            if name in self.config["servers"]:
-                self.config["servers"][name]["status"] = "disconnected"
+            self._set_status(name, "disconnected")
 
     def disconnect_all(self):
         for name in list(self._connections.keys()):
@@ -113,19 +200,19 @@ class ServerManager:
         try:
             result = self.execute(name, "echo connected")
             if result["exit_code"] == 0 and result["stdout"] == "connected":
-                self.config["servers"][name]["status"] = "connected"
+                self._set_status(name, "connected")
                 self._save()
                 return True, "Connection successful"
         except paramiko.AuthenticationException:
-            self.config["servers"][name]["status"] = "auth_failed"
+            self._set_status(name, "auth_failed")
             self._save()
             return False, "Authentication failed"
         except paramiko.SSHException as e:
-            self.config["servers"][name]["status"] = "error"
+            self._set_status(name, "error")
             self._save()
             return False, f"SSH error: {e}"
         except Exception as e:
-            self.config["servers"][name]["status"] = "error"
+            self._set_status(name, "error")
             self._save()
             return False, f"Error: {e}"
         return False, "Unknown error"
@@ -137,7 +224,13 @@ class ServerManager:
                 os_type = "linux"
             else:
                 os_type = "windows"
-            self.config["servers"][name]["os_type"] = os_type
+            try:
+                self.storage.update_server_os_type(name, os_type)
+            except Exception:
+                pass
+            self._ensure_mirror(name)
+            if name in self.config["servers"]:
+                self.config["servers"][name]["os_type"] = os_type
             self._save()
             return os_type
         except Exception:

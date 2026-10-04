@@ -977,4 +977,8 @@ class TestRestoreBackup:
         assert errors == []
         assert len(backups) == 2
         expected_backup = json.dumps(config, indent=2).encode()
-        assert all(backup.read_bytes() == expected_backup for backup in backups)
+        # Backups store encrypted config bytes; both must decrypt to the same content.
+        assert all(
+            mgr.fernet.decrypt(backup.read_bytes()) == expected_backup
+            for backup in backups
+        )

@@ -89,6 +89,77 @@ def test_restore_rejects_path_traversal_and_non_db(tmp_path):
     assert s.restore_backup(str(evil)) is False
 
 
+def test_restore_with_max_backups_one_keeps_source(tmp_path):
+    s = StorageManager(tmp_path)
+    s.set_setting("max_backups", 1)
+    s.add_server("srv1", "h", "u", 22, None, "pw1")
+    src = Path(s.backup_database())
+    assert src.exists()
+    # mutate, then restore the only backup in a later "second"
+    s.add_server("srv2", "h2", "u2")
+    assert s.restore_backup(str(src)) is True
+    assert src.exists(), "restore source must survive retention cleanup"
+    assert s.get_server("srv2") is None
+    assert s.get_server("srv1")["password"] == "pw1"
+    # live DB still has the full schema
+    con = sqlite3.connect(tmp_path / "cloudmesh.db")
+    try:
+        tables = [r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    finally:
+        con.close()
+    assert "servers" in tables
+
+
+def test_restore_refuses_empty_sqlite(tmp_path):
+    s = StorageManager(tmp_path)
+    s.add_server("srv1", "h", "u")
+    empty = tmp_path / "backups" / "cloudmesh_backup_empty.db"
+    c = sqlite3.connect(empty)
+    c.execute("CREATE TABLE junk (id INTEGER)")
+    c.commit()
+    c.close()
+    assert s.restore_backup(str(empty)) is False
+    assert s.get_server("srv1") is not None
+
+
+def _security_manager(tmp_path):
+    try:
+        from cloudmesh.core.security import SecurityManager
+    except ImportError:
+        from core.security import SecurityManager
+    base = tmp_path / "sec"
+    base.mkdir(exist_ok=True)
+    return SecurityManager(base_dir=str(base))
+
+
+def test_config_backups_are_encrypted(tmp_path):
+    mgr = _security_manager(tmp_path)
+    mgr.save_config({"servers": {"s": {"password": "topsecret"}}})
+    mgr.save_config({"servers": {"s": {"password": "topsecret2"}}})
+    backups = list(mgr.backups_dir.glob("config_backup_*"))
+    assert backups, "expected at least one config backup"
+    for b in backups:
+        raw = b.read_bytes()
+        assert b"topsecret" not in raw
+        # new format: raw encrypted config bytes, decryptable
+        assert json.loads(mgr.fernet.decrypt(raw).decode())["servers"]["s"]["password"].startswith("topsecret")
+
+
+def test_config_restore_accepts_encrypted_and_legacy(tmp_path):
+    mgr = _security_manager(tmp_path)
+    mgr.save_config({"servers": {"a": {}}})
+    # new format round-trip
+    mgr.save_config({"servers": {"b": {}}})
+    (mgr.backups_dir / "newfmt.json").write_bytes(mgr.config_path.read_bytes())
+    mgr.restore_backup("newfmt.json")
+    assert mgr.load_config() == {"servers": {"b": {}}}
+    # legacy plaintext format still restores
+    (mgr.backups_dir / "legacy.json").write_text(json.dumps({"servers": {"c": {}}}))
+    mgr.restore_backup("legacy.json")
+    assert mgr.load_config() == {"servers": {"c": {}}}
+
+
 def test_dry_run_writes_nothing(tmp_path):
     (tmp_path / ".aliases.json").write_text(json.dumps({"a": "echo hi"}))
     (tmp_path / ".templates.json").write_text(

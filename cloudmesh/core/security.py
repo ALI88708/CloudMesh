@@ -103,15 +103,18 @@ class SecurityManager:
             return
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         try:
-            original = self.config_path.read_bytes()
+            # Back up the raw ENCRYPTED bytes so secrets are never stored
+            # as plaintext in the backups directory.
+            backup_data = self.config_path.read_bytes()
         except OSError as e:
             logger.error("Backup read failed: %s", e)
             return
         try:
-            backup_data = self.fernet.decrypt(original)
+            # Validate the current config is decryptable before backing up;
+            # fall back to the raw bytes with a warning if it is legacy data.
+            self.fernet.decrypt(backup_data)
         except Exception as e:
-            logger.warning("Backup decrypt failed, copying raw: %s", e)
-            backup_data = original
+            logger.warning("Backing up config that fails to decrypt: %s", e)
 
         suffix = 0
         while True:
@@ -121,7 +124,7 @@ class SecurityManager:
                 backup_fd = os.open(
                     backup_path,
                     os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                    0o666,
+                    0o600,
                 )
                 break
             except FileExistsError:
@@ -167,11 +170,20 @@ class SecurityManager:
         self._backup_config()
         data = backup_path.read_bytes()
         try:
+            # Legacy format: plaintext JSON backup.
             json.loads(data.decode())
             encrypted = self.fernet.encrypt(data)
             self._write_encrypted_config(encrypted)
-        except json.JSONDecodeError:
-            raise ValueError("Backup file is not valid JSON")
+            return
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        try:
+            # Current format: raw encrypted config bytes. Validate before use.
+            decrypted = self.fernet.decrypt(data)
+            json.loads(decrypted.decode())
+            self._write_encrypted_config(data)
+        except Exception:
+            raise ValueError("Backup file is neither valid JSON nor valid encrypted config")
 
     def list_backups(self):
         return sorted(self.backups_dir.glob("config_backup_*"), reverse=True)

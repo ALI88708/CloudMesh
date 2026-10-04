@@ -4,6 +4,14 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.2.2] - 2026-10-04
+
+### Fixed (follow-up review 2026-10-04)
+- **Restore can no longer wipe the live DB**: safety-backup retention skips the restore source (`exclude`), the source is opened strictly read-only (`mode=ro`, never recreated if deleted), its CloudMesh schema is validated before and after the safety backup, and schema-less sources are refused without touching the live database.
+- **Operational wiring to SQLite**: `ServerManager` and `GroupsManager` now use `StorageManager` as the source of truth (encrypted secrets), keep the legacy JSON config as a compatible mirror, and import legacy JSON entries once on init. `init_components` wires a shared `StorageManager`, so `cm add` and later `cm storage backup` cover the same data in both directions.
+- **Old config backups encrypted**: `SecurityManager` backups now store raw encrypted config bytes with 0600 permissions (was decrypted plaintext with 0666); `restore_backup` accepts both new encrypted and legacy plaintext formats.
+- **Tests**: new `test_server_storage.py` (manager↔storage visibility, legacy import, duplicates), restore `max_backups=1` source-protection and empty-DB refusal tests, config-backup encryption tests; updated the concurrent-backup test to the encrypted format. Suite: 174 passed.
+
 ## [3.2.1] - 2026-10-04
 
 ### Fixed (v3.2.0 review hardening)
