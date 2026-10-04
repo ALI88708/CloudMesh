@@ -211,31 +211,92 @@ def generate_report(server_mgr, monitor, node_keys=None):
     return report
 
 
-def create_alias(name, command, aliases_file=None):
-    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+def _read_alias_mirror(f):
     aliases = {}
     if f.exists():
         try:
-            aliases = json.loads(f.read_text())
+            data = json.loads(f.read_text())
+            if isinstance(data, dict):
+                for name, command in data.items():
+                    if isinstance(command, dict):
+                        command = command.get("command", "")
+                    aliases[name] = str(command)
         except Exception:
             pass
+    return aliases
+
+
+def create_alias(name, command, aliases_file=None, storage=None):
+    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    if isinstance(command, dict):
+        command = command.get("command", "")
+    command = str(command)
+    if storage is not None:
+        try:
+            if storage.legacy_imported("aliases"):
+                _push_alias_mirror(storage, f)
+            else:
+                for aname, acmd in _read_alias_mirror(f).items():
+                    try:
+                        storage.upsert_alias(aname, acmd)
+                    except Exception:
+                        continue
+                storage.mark_legacy_imported("aliases")
+            storage.upsert_alias(name, command)
+            _push_alias_mirror(storage, f)
+            return True
+        except Exception:
+            pass
+    aliases = _read_alias_mirror(f)
     aliases[name] = command
     f.write_text(json.dumps(aliases, indent=2))
     return True
 
 
-def get_aliases(aliases_file=None):
-    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
-    if f.exists():
+def _push_alias_mirror(storage, f):
+    try:
+        rows = storage.list_aliases()
+    except Exception:
+        return
+    if rows != _read_alias_mirror(f):
         try:
-            return json.loads(f.read_text())
+            f.write_text(json.dumps(rows, indent=2))
         except Exception:
             pass
-    return {}
 
 
-def remove_alias(name, aliases_file=None):
+def get_aliases(aliases_file=None, storage=None):
     f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    if storage is not None:
+        try:
+            if not storage.legacy_imported("aliases"):
+                for aname, acmd in _read_alias_mirror(f).items():
+                    try:
+                        storage.upsert_alias(aname, acmd)
+                    except Exception:
+                        continue
+                storage.mark_legacy_imported("aliases")
+            rows = storage.list_aliases()
+            if rows:
+                return rows
+        except Exception:
+            pass
+    return _read_alias_mirror(f)
+
+
+def remove_alias(name, aliases_file=None, storage=None):
+    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    if storage is not None:
+        try:
+            existed = name in storage.list_aliases()
+        except Exception:
+            existed = False
+        try:
+            storage.remove_alias(name)
+        except Exception:
+            pass
+        _push_alias_mirror(storage, f)
+        return existed
     aliases = get_aliases(aliases_file)
     if name in aliases:
         del aliases[name]
@@ -245,8 +306,16 @@ def remove_alias(name, aliases_file=None):
 
 
 def get_version():
+    try:
+        from importlib.metadata import version as _pkg_version
+        try:
+            ver = _pkg_version("cloudmesh")
+        except Exception:
+            ver = "3.3.0"
+    except Exception:
+        ver = "3.3.0"
     return {
-        "version": "3.1.0",
+        "version": ver,
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",
         "platform": __import__('sys').platform,
     }

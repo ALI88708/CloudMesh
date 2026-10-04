@@ -131,9 +131,21 @@ print(json.dumps({'cpu_score':cpu_score,'write_mb_s':round(10/wt,1),'read_mb_s':
 # === 3. SCHEDULE ===
 
 class ScheduleManager:
-    def __init__(self, schedule_file=None):
+    """Scheduled tasks with SQLite as the source of truth.
+
+    The legacy ``.schedule.json`` file is kept as a compatible mirror, and
+    any legacy data is imported once (persistent marker).
+    """
+
+    def __init__(self, schedule_file=None, storage=None, base_dir=None):
         self.file = Path(schedule_file or Path(__file__).parent.parent / ".schedule.json")
         self._schedules = self._load()
+        if storage is None:
+            from .storage import StorageManager
+            base = Path(base_dir) if base_dir is not None else self.file.parent
+            storage = StorageManager(base)
+        self.storage = storage
+        self._ensure_imported()
 
     def _load(self):
         if self.file.exists():
@@ -146,8 +158,81 @@ class ScheduleManager:
     def _save(self):
         self.file.write_text(json.dumps(self._schedules, indent=2))
 
+    def _ensure_imported(self):
+        try:
+            if self.storage.legacy_imported("schedules"):
+                self._push_mirror()
+                return
+        except Exception:
+            return
+        for name, info in list(self._schedules.items()):
+            if not isinstance(info, dict):
+                continue
+            try:
+                self.storage.upsert_schedule(
+                    name=name,
+                    command=info.get("command"),
+                    interval_seconds=info.get("interval", 3600),
+                    enabled=info.get("enabled", True),
+                    last_run=info.get("last_run"),
+                    server=info.get("server"),
+                    created=info.get("created"),
+                    run_count=info.get("run_count", 0),
+                )
+            except Exception:
+                continue
+        try:
+            self.storage.mark_legacy_imported("schedules")
+        except Exception:
+            pass
+        self._push_mirror()
+
+    def _push_mirror(self):
+        try:
+            rows = {
+                s["name"]: {
+                    "command": s.get("command"),
+                    "interval": s.get("interval_seconds", 3600),
+                    "server": s.get("server"),
+                    "created": s.get("created"),
+                    "last_run": s.get("last_run"),
+                    "run_count": s.get("run_count", 0),
+                    "enabled": bool(s.get("enabled", True)),
+                }
+                for s in self.storage.list_schedules()
+            }
+        except Exception:
+            return
+        if rows != self._schedules:
+            self._schedules = rows
+            try:
+                self._save()
+            except Exception:
+                pass
+
+    def _sync_one(self, name):
+        try:
+            for s in self.storage.list_schedules():
+                if s["name"] == name:
+                    self._schedules[name] = {
+                        "command": s.get("command"),
+                        "interval": s.get("interval_seconds", 3600),
+                        "server": s.get("server"),
+                        "created": s.get("created"),
+                        "last_run": s.get("last_run"),
+                        "run_count": s.get("run_count", 0),
+                        "enabled": bool(s.get("enabled", True)),
+                    }
+                    break
+        except Exception:
+            pass
+        try:
+            self._save()
+        except Exception:
+            pass
+
     def add(self, name, command, interval_seconds=3600, server=None):
-        self._schedules[name] = {
+        entry = {
             "command": command,
             "interval": interval_seconds,
             "server": server,
@@ -156,10 +241,23 @@ class ScheduleManager:
             "run_count": 0,
             "enabled": True,
         }
-        self._save()
+        try:
+            self.storage.upsert_schedule(
+                name=name, command=command, interval_seconds=interval_seconds,
+                enabled=True, last_run=None, server=server,
+                created=entry["created"], run_count=0,
+            )
+        except Exception:
+            pass
+        self._schedules[name] = entry
+        self._sync_one(name)
         return True
 
     def remove(self, name):
+        try:
+            self.storage.remove_schedule(name)
+        except Exception:
+            pass
         if name in self._schedules:
             del self._schedules[name]
             self._save()
@@ -191,6 +289,17 @@ class ScheduleManager:
             if enabled is None:
                 enabled = not self._schedules[name]["enabled"]
             self._schedules[name]["enabled"] = enabled
+            entry = self._schedules[name]
+            try:
+                self.storage.upsert_schedule(
+                    name=name, command=entry.get("command"),
+                    interval_seconds=entry.get("interval", 3600),
+                    enabled=enabled, last_run=entry.get("last_run"),
+                    server=entry.get("server"), created=entry.get("created"),
+                    run_count=entry.get("run_count", 0),
+                )
+            except Exception:
+                pass
             self._save()
             return True
         return False
@@ -461,9 +570,21 @@ def quick_ssh(host, user="root", port=22, key=None):
 # === 9. COMMAND TEMPLATES ===
 
 class TemplateManager:
-    def __init__(self, templates_file=None):
+    """Command templates with SQLite as the source of truth.
+
+    The legacy ``.templates.json`` file is kept as a compatible mirror, and
+    any legacy data is imported once (persistent marker).
+    """
+
+    def __init__(self, templates_file=None, storage=None, base_dir=None):
         self.file = Path(templates_file or Path(__file__).parent.parent / ".templates.json")
         self._templates = self._load()
+        if storage is None:
+            from .storage import StorageManager
+            base = Path(base_dir) if base_dir is not None else self.file.parent
+            storage = StorageManager(base)
+        self.storage = storage
+        self._ensure_imported()
 
     def _load(self):
         if self.file.exists():
@@ -476,8 +597,60 @@ class TemplateManager:
     def _save(self):
         self.file.write_text(json.dumps(self._templates, indent=2))
 
+    def _ensure_imported(self):
+        try:
+            if self.storage.legacy_imported("templates"):
+                self._push_mirror()
+                return
+        except Exception:
+            return
+        for name, data in list(self._templates.items()):
+            try:
+                if isinstance(data, dict):
+                    command = data.get("command", "")
+                    description = data.get("description", "")
+                    created = data.get("created")
+                else:
+                    command, description, created = str(data), "", None
+                self.storage.upsert_template(
+                    name=name, command=command, description=description, created=created
+                )
+            except Exception:
+                continue
+        try:
+            self.storage.mark_legacy_imported("templates")
+        except Exception:
+            pass
+        self._push_mirror()
+
+    def _push_mirror(self):
+        try:
+            rows = {
+                t["name"]: {
+                    "command": t.get("command", ""),
+                    "description": t.get("description", ""),
+                    "created": t.get("created"),
+                }
+                for t in self.storage.list_templates()
+            }
+        except Exception:
+            return
+        if rows != self._templates:
+            self._templates = rows
+            try:
+                self._save()
+            except Exception:
+                pass
+
     def add(self, name, command, description=""):
-        self._templates[name] = {"command": command, "description": description, "created": datetime.now().isoformat()}
+        entry = {"command": command, "description": description, "created": datetime.now().isoformat()}
+        try:
+            self.storage.upsert_template(
+                name=name, command=command, description=description, created=entry["created"]
+            )
+        except Exception:
+            pass
+        self._templates[name] = entry
         self._save()
 
     def get(self, name):
@@ -487,6 +660,10 @@ class TemplateManager:
         return self._templates
 
     def remove(self, name):
+        try:
+            self.storage.remove_template(name)
+        except Exception:
+            pass
         if name in self._templates:
             del self._templates[name]
             self._save()

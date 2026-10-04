@@ -4,6 +4,35 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.3.0] - 2026-10-04
+
+### Stable SQLite backend release
+
+SQLite is now the source of truth for all operational data types, each with
+an encrypted/private store, a compatible JSON mirror, a one-time legacy
+import (persistent marker — an empty table is valid data), and tests.
+
+- **Wired managers**: servers, groups, nodes keyring, alerts, schedules,
+  templates, aliases. `init_components` shares one `StorageManager`; `cm node`,
+  `cm schedule`, `cm template`, `cm alias`, alerts, and `cm storage backup`
+  all observe the same post-migration state in both directions.
+- **Schema evolution**: `nodes` gains `tls`/`ca_file`; `schedules` gains
+  `server`/`created`/`run_count`; `templates` gains `description`/`created`
+  (added via `ALTER TABLE` on pre-existing databases).
+- **Verify & health**: `cm migrate --verify` compares JSON vs SQLite
+  (name sets for servers/nodes/groups, counts otherwise, exit 1 on drift);
+  `cm doctor` adds storage checks (DB/key permissions, import markers,
+  mirror consistency, backup count).
+- **Release**: version single-sourced from package metadata (`get_version`
+  falls back to 3.3.0); README documents migrate/storage commands.
+- **Tests**: 185 passed, 1 skipped; coverage gate (25%) holds at ~37%.
+
+### Upgrade notes
+1. Upgrade, then run `cm migrate` (or `python -m cloudmesh.core.migrate`).
+2. Confirm with `cm migrate --verify` and `cm doctor`.
+3. Old JSON files remain as mirrors/backups; ACL data (`data/acl.json`)
+   is still JSON-backed (scheduled follow-up).
+
 ## [3.2.3] - 2026-10-04
 
 ### Fixed (re-review dca74bc)

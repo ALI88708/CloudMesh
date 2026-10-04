@@ -22,38 +22,104 @@ def _effective_severity(severity, value, threshold, operator):
 
 
 class AlertManager:
-    def __init__(self, resource_monitor, base_dir=None, notifier=None):
+    """Alert rules and history with SQLite as the source of truth.
+
+    The legacy ``alerts.json`` file is kept as a compatible mirror, and any
+    legacy data is imported once (persistent marker: an empty rule set is a
+    valid state and must not trigger a re-import).
+    """
+
+    def __init__(self, resource_monitor, base_dir=None, notifier=None, storage=None):
         self.monitor = resource_monitor
         if base_dir is None:
             base_dir = Path(__file__).parent.parent
         self.base_dir = Path(base_dir)
         self.alerts_file = self.base_dir / "alerts.json"
-        self._rules = []
-        self._history = []
-        self._last_notified = {}
         self.notifier = notifier
-        self._load()
+        if storage is None:
+            try:
+                from cloudmesh.core.storage import StorageManager
+            except ImportError:
+                from core.storage import StorageManager
+            storage = StorageManager(self.base_dir)
+        self.storage = storage
+        self._ensure_imported()
 
-    def _load(self):
+    def _ensure_imported(self):
+        try:
+            if self.storage.legacy_imported("alerts"):
+                self._push_mirror()
+                return
+        except Exception:
+            return
         if self.alerts_file.exists():
             try:
                 data = json.loads(self.alerts_file.read_text())
-                self._rules = data.get("rules", [])
-                self._history = data.get("history", [])
-                self._last_notified = data.get("last_notified", {})
             except Exception as e:
                 logger.error("Failed to load alerts: %s", e)
-                self._rules = []
-                self._history = []
-                self._last_notified = {}
+                data = {}
+            for rule in data.get("rules", []) if isinstance(data, dict) else []:
+                try:
+                    self.storage.add_alert_rule(
+                        name=rule.get("name"),
+                        metric=rule.get("metric"),
+                        threshold=rule.get("threshold"),
+                        operator=rule.get("operator", "gt"),
+                        server=rule.get("server"),
+                        severity=rule.get("severity", "warning"),
+                        cooldown=rule.get("cooldown", DEFAULT_COOLDOWN),
+                    )
+                except Exception:
+                    continue
+            for alert in data.get("history", []) if isinstance(data, dict) else []:
+                try:
+                    self.storage.add_alert_history(
+                        rule_name=alert.get("rule"),
+                        server=alert.get("server"),
+                        metric=alert.get("metric"),
+                        value=alert.get("value"),
+                        threshold=alert.get("threshold"),
+                        operator=alert.get("operator"),
+                        severity=alert.get("severity"),
+                    )
+                except Exception:
+                    continue
+            for key, timestamp in (data.get("last_notified", {}) if isinstance(data, dict) else {}).items():
+                try:
+                    rule_name, server = key.split("|")
+                    self.storage.set_alert_cooldown(rule_name, server, timestamp)
+                except Exception:
+                    continue
+        try:
+            self.storage.mark_legacy_imported("alerts")
+        except Exception:
+            pass
+        self._push_mirror()
 
-    def _save(self):
-        data = {
-            "rules": self._rules,
-            "history": self._history[-500:],
-            "last_notified": self._last_notified,
-        }
-        self.alerts_file.write_text(json.dumps(data, indent=2))
+    def _push_mirror(self):
+        try:
+            rules = self.storage.list_alert_rules()
+            history = [
+                {
+                    "rule": h.get("rule_name"),
+                    "server": h.get("server"),
+                    "metric": h.get("metric"),
+                    "value": h.get("value"),
+                    "threshold": h.get("threshold"),
+                    "operator": h.get("operator"),
+                    "severity": h.get("severity"),
+                    "timestamp": h.get("timestamp"),
+                }
+                for h in self.storage.get_alert_history(limit=500)
+            ]
+            data = {
+                "rules": rules,
+                "history": history,
+                "last_notified": self.storage.list_alert_cooldowns(),
+            }
+            self.alerts_file.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            logger.warning("Failed to write alerts mirror: %s", e)
 
     def add_rule(self, name, metric, threshold, operator="gt", server=None,
                  severity="warning", cooldown=DEFAULT_COOLDOWN):
@@ -69,16 +135,29 @@ class AlertManager:
             "cooldown": max(int(cooldown), 0),
             "enabled": True,
         }
-        self._rules.append(rule)
-        self._save()
+        try:
+            self.storage.add_alert_rule(
+                name=name, metric=metric, threshold=threshold, operator=operator,
+                server=server, severity=rule["severity"], cooldown=rule["cooldown"],
+            )
+        except Exception as e:
+            logger.warning("Failed to persist alert rule %s: %s", name, e)
+        self._push_mirror()
         return rule
 
     def remove_rule(self, name):
-        self._rules = [r for r in self._rules if r["name"] != name]
-        self._save()
+        try:
+            self.storage.remove_alert_rule(name)
+        except Exception as e:
+            logger.warning("Failed to remove alert rule %s: %s", name, e)
+        self._push_mirror()
 
     def list_rules(self):
-        return self._rules
+        try:
+            return self.storage.list_alert_rules()
+        except Exception as e:
+            logger.warning("Failed to list alert rules: %s", e)
+            return []
 
     def _check_condition(self, value, threshold, operator):
         if value is None:
@@ -99,7 +178,11 @@ class AlertManager:
         return f"{rule_name}|{server}"
 
     def _cooldown_passed(self, key, rule):
-        last = self._last_notified.get(key)
+        try:
+            rule_name, server = key.split("|")
+            last = self.storage.get_alert_cooldown(rule_name, server)
+        except Exception:
+            return True
         if not last:
             return True
         cooldown = max(int(rule.get("cooldown", DEFAULT_COOLDOWN)), 0)
@@ -112,8 +195,9 @@ class AlertManager:
         return line
 
     def check_alerts(self, server_names=None, send_notifications=True):
+        rules = self.list_rules()
         if server_names is None:
-            server_names = list(dict.fromkeys(r.get("server") for r in self._rules if r.get("server")))
+            server_names = list(dict.fromkeys(r.get("server") for r in rules if r.get("server")))
             if not server_names:
                 return []
 
@@ -124,7 +208,7 @@ class AlertManager:
                 if metrics is None:
                     continue
 
-                for rule in self._rules:
+                for rule in rules:
                     if not rule.get("enabled", True):
                         continue
                     if rule.get("server") and rule["server"] != name:
@@ -161,17 +245,28 @@ class AlertManager:
                             "timestamp": datetime.now().isoformat(),
                         }
                         triggered.append(alert)
-                        self._history.append(alert)
+                        try:
+                            self.storage.add_alert_history(
+                                rule_name=rule["name"], server=name, metric=metric_name,
+                                value=value, threshold=rule["threshold"],
+                                operator=rule["operator"],
+                                severity=severity,
+                            )
+                        except Exception as e:
+                            logger.warning("Failed to record alert history: %s", e)
 
                         key = self._cooldown_key(rule["name"], name)
                         if self._cooldown_passed(key, rule):
-                            self._last_notified[key] = time.time()
+                            try:
+                                self.storage.set_alert_cooldown(rule["name"], name, time.time())
+                            except Exception:
+                                pass
                             if send_notifications:
                                 self._send_notification(alert)
             except Exception as e:
                 logger.warning("Alert check failed for %s: %s", name, e)
 
-        self._save()
+        self._push_mirror()
         return triggered
 
     def _send_notification(self, alert):
@@ -189,8 +284,27 @@ class AlertManager:
             logger.error("Notification error: %s", e)
 
     def get_history(self, limit=50):
-        return self._history[-limit:]
+        try:
+            return [
+                {
+                    "rule": h.get("rule_name"),
+                    "server": h.get("server"),
+                    "metric": h.get("metric"),
+                    "value": h.get("value"),
+                    "threshold": h.get("threshold"),
+                    "operator": h.get("operator"),
+                    "severity": h.get("severity"),
+                    "timestamp": h.get("timestamp"),
+                }
+                for h in self.storage.get_alert_history(limit=limit)
+            ]
+        except Exception as e:
+            logger.warning("Failed to read alert history: %s", e)
+            return []
 
     def clear_history(self):
-        self._history = []
-        self._save()
+        try:
+            self.storage.clear_alert_history()
+        except Exception as e:
+            logger.warning("Failed to clear alert history: %s", e)
+        self._push_mirror()

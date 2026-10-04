@@ -140,6 +140,8 @@ COMPLETION_OPTIONS = {
     "keys remove-managed": ("--name", "-n"),
     "config export": ("--output", "-o"),
     "completions": ("--shell", "-s", "--output", "-o"),
+    "migrate": ("--dry-run", "--verify", "--base-dir", "--help", "-h"),
+    "storage restore": ("--help", "-h"),
     "service start": ("--interval", "-i"),
     "service logs": ("--limit", "-l"),
     "reshistory auto start": ("--interval", "-i"),
@@ -629,9 +631,28 @@ def cmd_database(args):
 
 
 def cmd_migrate(args):
-    from cloudmesh.core.migrate import run_migration
+    from cloudmesh.core.migrate import MigrationManager, run_migration
     from pathlib import Path as _Path
     base = _Path(args.base_dir) if getattr(args, "base_dir", None) else None
+    if getattr(args, "verify", False):
+        result = MigrationManager(base).verify()
+        table = Table(title="Migration Verify (JSON vs SQLite)", box=box.ROUNDED)
+        table.add_column("Type", style="cyan")
+        table.add_column("JSON")
+        table.add_column("SQLite")
+        table.add_column("Status")
+        for c in result["checks"]:
+            ok = c["match"]
+            table.add_row(c["type"], str(c["json"]), str(c["sqlite"]),
+                          "[green]match[/]" if ok else "[red]MISMATCH[/]")
+        console.print(table)
+        if result["errors"]:
+            for e in result["errors"][:10]:
+                console.print(f"  [red]-[/] {e}")
+        console.print(f"[{'green' if result['ok'] else 'red'}]Verify: {'OK' if result['ok'] else 'FAILED'}[/]")
+        if not result["ok"]:
+            sys.exit(1)
+        return
     dry = bool(getattr(args, "dry_run", False))
     result = run_migration(base_dir=base, dry_run=dry)
     if result.get("dry_run"):
@@ -1528,17 +1549,33 @@ def cmd_node_info(args):
         console.print(f"[red]Error: {e}[/]")
 
 
+def _get_node_keyring():
+    try:
+        from cloudmesh.core.nodekeyring import NodeKeyring
+    except ImportError:
+        from core.nodekeyring import NodeKeyring
+    # Derive the storage base from the JSON location so tests that redirect
+    # NODE_KEYS_FILE stay isolated from the real package database.
+    return NodeKeyring(json_path=NODE_KEYS_FILE, base_dir=NODE_KEYS_FILE.parent)
+
+
 def _load_node_keys():
-    if NODE_KEYS_FILE.exists():
-        try:
-            return json.loads(NODE_KEYS_FILE.read_text())
-        except Exception:
-            return {}
-    return {}
+    try:
+        return _get_node_keyring().load()
+    except Exception:
+        if NODE_KEYS_FILE.exists():
+            try:
+                return json.loads(NODE_KEYS_FILE.read_text())
+            except Exception:
+                return {}
+        return {}
 
 
 def _save_node_keys(keys):
-    save_private_json(NODE_KEYS_FILE, keys)
+    try:
+        _get_node_keyring().save(keys)
+    except Exception:
+        save_private_json(NODE_KEYS_FILE, keys)
 
 
 def cmd_node_add_cloud(args):
@@ -1868,14 +1905,16 @@ def cmd_report(args):
 
 
 def cmd_alias(args):
+    from cloudmesh.core.storage import StorageManager
+    storage = StorageManager(Path(__file__).parent)
     if args.remove:
-        if remove_alias(args.remove):
+        if remove_alias(args.remove, storage=storage):
             console.print(f"[green]Alias '{args.remove}' removed[/]")
         else:
             console.print(f"[red]Alias '{args.remove}' not found[/]")
         return
     if args.list:
-        aliases = get_aliases()
+        aliases = get_aliases(storage=storage)
         if not aliases:
             console.print("[dim]No aliases[/]")
             return
@@ -1887,7 +1926,7 @@ def cmd_alias(args):
         console.print(table)
         return
     if args.name and args.cmd:
-        create_alias(args.name, args.cmd)
+        create_alias(args.name, args.cmd, storage=storage)
         console.print(f"[green]Alias '{args.name}' -> '{args.cmd}'[/]")
 
 
@@ -1984,6 +2023,45 @@ def cmd_doctor(args):
             checks.append(("Schedules", False, "Corrupt schedule file"))
     else:
         checks.append(("Schedules", True, "No schedules"))
+
+    # === Storage backend health (SQLite source of truth) ===
+    try:
+        from cloudmesh.core.storage import StorageManager
+        _sm = StorageManager(Path(__file__).parent)
+        _db = Path(__file__).parent / "cloudmesh.db"
+        if _db.exists():
+            if os.name == "nt":
+                checks.append(("Storage: database", True, "cloudmesh.db present"))
+            else:
+                _mode = oct(_db.stat().st_mode & 0o777)
+                checks.append(("Storage: database perms", _mode == "0o600", f"cloudmesh.db mode {_mode}"))
+        else:
+            checks.append(("Storage: database", False, "cloudmesh.db missing (run cm migrate)"))
+        _key = Path(__file__).parent / ".secret.key"
+        if _key.exists() and os.name != "nt":
+            _kmode = oct(_key.stat().st_mode & 0o777)
+            checks.append(("Storage: key perms", _kmode == "0o600", f".secret.key mode {_kmode}"))
+        _marker_kinds = ("servers", "groups", "nodes", "alerts", "schedules", "templates", "aliases")
+        _markers = [k for k in _marker_kinds if _sm.legacy_imported(k)]
+        checks.append(("Storage: legacy import", len(_markers) == len(_marker_kinds),
+                       f"{len(_markers)}/{len(_marker_kinds)} types imported"))
+        try:
+            from cloudmesh.core.security import SecurityManager as _SecurityManager
+            _cfg = _SecurityManager().load_config()
+            _json_servers = set((_cfg.get("servers", {}) or {}).keys())
+            _db_servers = {s["name"] for s in _sm.list_servers()}
+            checks.append(("Storage: servers mirror", _json_servers == _db_servers,
+                           f"json={len(_json_servers)} sqlite={len(_db_servers)}"))
+            _json_nodes = set(_load_node_keys().keys())
+            _db_nodes = {n["name"] for n in _sm.list_nodes()}
+            checks.append(("Storage: nodes mirror", _json_nodes == _db_nodes,
+                           f"json={len(_json_nodes)} sqlite={len(_db_nodes)}"))
+        except Exception as e:
+            checks.append(("Storage: mirrors", False, f"check failed: {e}"))
+        _backups = sorted(_sm.backups_dir.glob("cloudmesh_backup_*.db"))
+        checks.append(("Storage: backups", True, f"{len(_backups)} sqlite backup(s)"))
+    except Exception as e:
+        checks.append(("Storage backend", False, f"check failed: {e}"))
 
     table = Table(box=box.ROUNDED)
     table.add_column("Check", style="bold")
@@ -4161,6 +4239,7 @@ def main():
 
     mig_p = subparsers.add_parser("migrate", help="Migrate JSON data to SQLite backend")
     mig_p.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    mig_p.add_argument("--verify", action="store_true", help="Compare JSON vs SQLite without writing")
     mig_p.add_argument("--base-dir", help="Base directory holding JSON data")
 
     sto_p = subparsers.add_parser("storage", help="SQLite backend backups")

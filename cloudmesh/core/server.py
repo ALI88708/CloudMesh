@@ -18,7 +18,6 @@ class ServerManager:
     """
 
     _LEGACY_FIELDS = ("host", "user", "port", "key_path", "password", "status", "os_type")
-    _IMPORT_MARKER = "legacy_servers_imported"
 
     def __init__(self, security_manager, storage=None):
         self.security = security_manager
@@ -41,8 +40,7 @@ class ServerManager:
         from it instead.
         """
         try:
-            # NOTE: get_setting JSON-decodes "1" to int 1; normalize before compare.
-            if str(self.storage.get_setting(self._IMPORT_MARKER, None)) == "1":
+            if self.storage.legacy_imported("servers"):
                 self._push_mirror_from_storage()
                 return
         except Exception:
@@ -62,7 +60,7 @@ class ServerManager:
             except Exception:
                 continue
         try:
-            self.storage.set_setting(self._IMPORT_MARKER, "1")
+            self.storage.mark_legacy_imported("servers")
         except Exception:
             pass
         self._push_mirror_from_storage()
