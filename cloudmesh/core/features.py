@@ -343,7 +343,7 @@ def remove_alias(name, aliases_file=None, storage=None):
 def get_version():
     """Return package version, Python version, and platform information.
 
-    Use 3.3.0 when installed package metadata cannot be read.
+    Use 3.4.0 when installed package metadata cannot be read.
     """
     try:
         from importlib.metadata import version as _pkg_version
