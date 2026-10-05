@@ -4,6 +4,17 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.4.0] - 2026-10-05 — Enterprise (stable)
+
+This is the Enterprise stable release: SQLite is the source of truth for all
+operational data, every CLI command is smoke-tested, and the suite holds
+206 passed / 1 skipped with the 25% coverage gate at ~40%.
+
+### Added (since 3.3.0)
+- Smart diagnostics (`cm diagnose`) and drift detection (`cm drift`).
+- Repaired command groups: `cm docker`, `cm firewall`, `cm ssl`, `cm logagg`.
+- Standalone node agent boots without `core/` via embedded DDoS fallback.
+
 ## [Unreleased]
 
 ### Fixed
