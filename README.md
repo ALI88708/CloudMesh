@@ -18,8 +18,8 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-3.3.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-185%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Version](https://img.shields.io/badge/Version-3.4.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-206%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
@@ -31,7 +31,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 <br>
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
-[![Tests](https://img.shields.io/badge/tests-185_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
+[![Tests](https://img.shields.io/badge/tests-206_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/website-GitHub%20Pages-20d7e8?style=flat-square)](https://ALI88708.github.io/CloudMesh/)
 [![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
