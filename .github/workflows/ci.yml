@@ -84,13 +84,20 @@ jobs:
 
       - name: Shellcheck the Linux installer
         if: runner.os == 'Linux'
+        timeout-minutes: 3
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          # shellcheck ships on the GitHub ubuntu images. Installing it with apt
+          # hung for five minutes on a mirror lock and stalled this whole job.
+          if ! command -v shellcheck > /dev/null; then
+            echo "::error::shellcheck is missing from this runner image"
+            exit 1
+          fi
+          shellcheck --version
           # SC1091: the generated node scripts are heredocs, not sources.
           shellcheck --severity=warning --exclude=SC1091 cm_for-linux.sh
+          echo "[OK] shellcheck clean"
 
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})

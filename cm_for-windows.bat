@@ -80,6 +80,7 @@ echo [%date% %time%] CLOUDMESH_DIR=!CLOUDMESH_DIR! >> "!LOG!"
 echo [%date% %time%] CM_BAT=!CM_BAT! >> "!LOG!"
 
 set IS_INSTALLED=0
+set "GIT_AVAILABLE=0"
 if exist "!CLOUDMESH_DIR!\main.py" (
     set IS_INSTALLED=1
     echo [%date% %time%] Detected: main.py exists >> "!LOG!"
@@ -93,10 +94,76 @@ if exist "!CM_BAT!" (
     echo [%date% %time%] Detected: cm.bat exists >> "!LOG!"
 )
 echo [%date% %time%] IS_INSTALLED=!IS_INSTALLED! >> "!LOG!"
+where git >nul 2>&1 && set "GIT_AVAILABLE=1"
 
 REM Jump over the subroutine definitions below; without this the setup block
 REM fell straight into :verify_install and nothing was ever installed.
 goto :menu
+
+REM ============================================
+REM GIT
+REM ============================================
+REM `cm update` is git-based (fetch + pull), and pushing your own work needs git
+REM too. Nothing used to check for it, so a user could install CloudMesh, read
+REM "cm update (recommended)" in the README, and only find out at the worst moment.
+:check_git
+set "GIT_AVAILABLE=0"
+where git >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :git_missing
+
+set "GIT_AVAILABLE=1"
+for /f "tokens=3" %%v in ('git --version 2^>nul') do set "GIT_VERSION=%%v"
+echo   [OK] Git found !GIT_VERSION!
+echo [%date% %time%] Git already present >> "!LOG!"
+exit /b 0
+
+:git_missing
+set "GIT_AVAILABLE=0"
+echo   [!] Git not found. Without it 'cm update' cannot pull, and git push will not work.
+echo [%date% %time%] Git MISSING >> "!LOG!"
+
+REM A prompt would hang CI, so --default n and no read under non-interactive.
+if not "%NONINTERACTIVE%"=="0" (
+    echo   [OK] Skipping Git ^(non-interactive^). cm update will need pip instead.
+    exit /b 0
+)
+
+set "CHOICE="
+set /p "CHOICE=   Install Git now? (y/n): "
+if /i not "!CHOICE!"=="y" (
+    echo   [OK] Skipping Git. CloudMesh still works; cm update needs pip instead.
+    exit /b 0
+)
+
+set "INSTALLER="
+where winget >nul 2>&1 && set "INSTALLER=winget"
+if not defined INSTALLER (
+    where choco >nul 2>&1 && set "INSTALLER=choco"
+)
+if not defined INSTALLER (
+    echo   [!] Neither winget nor Chocolatey found. Install Git from https://git-scm.com/download/win
+    exit /b 0
+)
+
+echo   Installing Git via !INSTALLER! ...
+if /i "!INSTALLER!"=="winget" (
+    winget install --id Git.Git -e --source winget --accept-source-agreements --accept-package-agreements --silent
+) else (
+    choco install git -y --no-progress
+)
+
+where git >nul 2>&1
+if !ERRORLEVEL! NEQ 0 (
+    echo   [!] Git install did not complete. cm update will need pip instead.
+    echo [%date% %time%] Git install FAILED >> "!LOG!"
+    exit /b 0
+)
+
+set "GIT_AVAILABLE=1"
+for /f "tokens=3" %%v in ('git --version 2^>nul') do set "GIT_VERSION=%%v"
+echo   [OK] Git installed !GIT_VERSION!
+echo [%date% %time%] Git installed >> "!LOG!"
+exit /b 0
 
 REM ============================================
 REM VERIFY THE INSTALL ACTUALLY WORKS
@@ -117,6 +184,12 @@ if exist "%VENV_DIR%\Scripts\cm.exe" (
 ) else (
     echo   [FAIL] cm console script missing 1>&2
     set "VFAILED=1"
+)
+
+if "%GIT_AVAILABLE%"=="1" (
+    echo   [OK] git available
+) else (
+    echo   [WARN] git not available; cm update will need pip
 )
 
 "%VENV_PYTHON%" -c "import cloudmesh, rich, paramiko, psutil, cryptography, Crypto, bcrypt" >nul 2>&1
@@ -181,6 +254,10 @@ REM ============================================
 REM Runs the install with no prompts and then asserts the result works.
 :run_scripted
 if not "%VERIFY_ONLY%"=="0" goto :do_verify_only
+
+REM Git first: `cm update` and `git push` both need it, and a user who will
+REM push their own work wants to know before the install finishes.
+call :check_git
 
 if "!IS_INSTALLED!"=="1" (
     echo   Reinstalling over the existing install...

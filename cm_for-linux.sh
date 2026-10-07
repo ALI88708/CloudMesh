@@ -128,14 +128,67 @@ stage_payload() {
 }
 
 # ============================================
+# GIT
+# ============================================
+# `cm update` is git-based (fetch + pull), and pushing your own work needs git
+# too. Nothing used to check for it, so a user could install CloudMesh, read
+# "cm update (recommended)" in the README, and only find out at the worst moment.
+check_git() {
+    if command -v git > /dev/null 2>&1; then
+        log "Git found: $(git --version 2>/dev/null || echo present)"
+        GIT_AVAILABLE=1
+        return 0
+    fi
+
+    GIT_AVAILABLE=0
+    warn "Git not found. Without it, 'cm update' cannot pull, and git push will not work."
+
+    ask "   Install Git now? (y/n): " "n" INSTALL_GIT
+    if [ "$INSTALL_GIT" != "y" ] && [ "$INSTALL_GIT" != "Y" ]; then
+        warn "Skipping Git. CloudMesh still works; 'cm update' will need 'pip install --upgrade cloudmesh' instead."
+        return 0
+    fi
+
+    if command -v apt-get > /dev/null 2>&1; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq git
+    elif command -v yum > /dev/null 2>&1; then
+        sudo yum install -y git
+    elif command -v dnf > /dev/null 2>&1; then
+        sudo dnf install -y git
+    elif command -v pacman > /dev/null 2>&1; then
+        sudo pacman -Sy --noconfirm git
+    elif command -v zypper > /dev/null 2>&1; then
+        sudo zypper install -y git
+    elif command -v apk > /dev/null 2>&1; then
+        sudo apk add --no-cache git
+    elif command -v brew > /dev/null 2>&1; then
+        brew install git
+    else
+        warn "Cannot detect a package manager. Install Git manually: https://git-scm.com/downloads"
+        return 0
+    fi
+
+    if command -v git > /dev/null 2>&1; then
+        log "Git installed: $(git --version 2>/dev/null || echo present)"
+        GIT_AVAILABLE=1
+    else
+        warn "Git install did not complete. 'cm update' will need pip instead."
+    fi
+}
+
+# ============================================
 # CHECK INSTALL STATUS
 # ============================================
 IS_INSTALLED=0
+GIT_AVAILABLE=0
 if [ -f "$CLOUDMESH_DIR/main.py" ] || [ -f "$LEGACY_CLOUDMESH_DIR/main.py" ]; then
     IS_INSTALLED=1
 fi
 if [ -d "$VENV_DIR" ]; then
     IS_INSTALLED=1
+fi
+if command -v git > /dev/null 2>&1; then
+    GIT_AVAILABLE=1
 fi
 
 # ============================================
@@ -226,6 +279,12 @@ verify_install() {
         log "cm shortcut present"
     fi
 
+    if [ "$GIT_AVAILABLE" = "1" ]; then
+        log "git available"
+    else
+        warn "git not available; cm update will need pip"
+    fi
+
     if ! "$VENV_DIR/bin/cm" --version >/dev/null 2>&1; then
         fail "'cm --version' failed"
         failed=1
@@ -306,6 +365,10 @@ do_setup() {
     echo -e "${BLUE}============================================${NC}"
     echo -e "${BLUE}   Setting up CloudMesh...${NC}"
     echo -e "${BLUE}============================================${NC}"
+    echo ""
+
+    echo "[0/6] Checking for Git..."
+    check_git
     echo ""
 
     # Check Python

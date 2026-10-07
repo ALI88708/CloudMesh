@@ -426,3 +426,149 @@ def test_linux_uninstall_removes_both_program_layouts(tmp_path, layouts):
     assert not (install / "project").exists()
     assert not (install / "cloudmesh").exists()
     assert config.read_text() == "keep config"
+
+
+def _run_git_check(tmp_path, *, available=False, managers=(), answer="n",
+                   noninteractive=False, install_succeeds=True):
+    """Run the real function with a closed stdin and no access to host commands."""
+    helpers = r'''
+PATH=/nonexistent
+log() { echo "$*"; }
+warn() { echo "$*"; }
+command() {
+    [ "$1" = "-v" ] || return 1
+    if [ "$2" = "git" ]; then
+        [ "$TEST_GIT_PRESENT" = "1" ]
+    else
+        case " $TEST_MANAGERS " in
+            *" $2 "*) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+}
+git() { echo 'git version 2.50.0'; }
+sudo() {
+    echo "INSTALL:$*"
+    case "$*" in
+        *update*) ;;
+        *) TEST_GIT_PRESENT="$TEST_INSTALL_SUCCEEDS" ;;
+    esac
+}
+brew() {
+    echo "INSTALL:brew $*"
+    TEST_GIT_PRESENT="$TEST_INSTALL_SUCCEEDS"
+}
+read() {
+    echo READ_ATTEMPT >&2
+    builtin read "$@"
+}
+'''
+    helpers += f"\nTEST_GIT_PRESENT={int(available)}\n"
+    helpers += f"TEST_MANAGERS='{ ' '.join(managers) }'\n"
+    helpers += f"TEST_INSTALL_SUCCEEDS={int(install_succeeds)}\n"
+    helpers += f"NONINTERACTIVE={int(noninteractive)}\n"
+    if noninteractive:
+        helpers += _installer_block(r"^(ask\(\) \{.*?^\})")
+    else:
+        helpers += f"ask() {{ INSTALL_GIT='{answer}'; echo ASKED; }}"
+    block = _installer_block(r"^(check_git\(\) \{.*?^\})")
+    return _run_installer_block(
+        tmp_path, block + '\ncheck_git\necho "AVAILABLE:$GIT_AVAILABLE"', helpers,
+    )
+
+
+def test_linux_existing_git_skips_prompt_and_install(tmp_path):
+    result = _run_git_check(tmp_path, available=True, managers=("apt-get",))
+
+    assert "Git found: git version 2.50.0" in result.stdout
+    assert "AVAILABLE:1" in result.stdout
+    assert "ASKED" not in result.stdout
+    assert "INSTALL:" not in result.stdout
+
+
+@pytest.mark.parametrize("answer", ["n", "N", ""])
+def test_linux_declining_git_keeps_install_usable(tmp_path, answer):
+    result = _run_git_check(tmp_path, answer=answer, managers=("apt-get",))
+
+    assert "Skipping Git" in result.stdout
+    assert "pip install --upgrade cloudmesh" in result.stdout
+    assert "AVAILABLE:0" in result.stdout
+    assert "INSTALL:" not in result.stdout
+
+
+def test_linux_noninteractive_git_check_never_reads_stdin(tmp_path):
+    result = _run_git_check(tmp_path, noninteractive=True, managers=("apt-get",))
+
+    assert "READ_ATTEMPT" not in result.stderr
+    assert "Skipping Git" in result.stdout
+    assert "AVAILABLE:0" in result.stdout
+    assert "INSTALL:" not in result.stdout
+
+
+@pytest.mark.parametrize("managers, expected", [
+    (("apt-get", "yum", "dnf", "pacman", "zypper", "apk", "brew"),
+     ["apt-get update -qq", "apt-get install -y -qq git"]),
+    (("yum", "dnf", "pacman", "zypper", "apk", "brew"), ["yum install -y git"]),
+    (("dnf", "pacman", "zypper", "apk", "brew"), ["dnf install -y git"]),
+    (("pacman", "zypper", "apk", "brew"), ["pacman -Sy --noconfirm git"]),
+    (("zypper", "apk", "brew"), ["zypper install -y git"]),
+    (("apk", "brew"), ["apk add --no-cache git"]),
+    (("brew",), ["brew install git"]),
+])
+def test_linux_installs_git_with_first_available_manager(tmp_path, managers, expected):
+    result = _run_git_check(tmp_path, managers=managers, answer="Y")
+
+    commands = [line.removeprefix("INSTALL:") for line in result.stdout.splitlines()
+                if line.startswith("INSTALL:")]
+    assert commands == expected
+    assert "Git installed: git version 2.50.0" in result.stdout
+    assert "AVAILABLE:1" in result.stdout
+
+
+def test_linux_missing_package_manager_gives_manual_install_url(tmp_path):
+    result = _run_git_check(tmp_path, answer="y")
+
+    assert "https://git-scm.com/downloads" in result.stdout
+    assert "AVAILABLE:0" in result.stdout
+    assert "INSTALL:" not in result.stdout
+
+
+def test_linux_rechecks_git_after_package_manager_returns(tmp_path):
+    result = _run_git_check(tmp_path, answer="y", managers=("apt-get",), install_succeeds=False)
+
+    assert "Git install did not complete" in result.stdout
+    assert "will need pip instead" in result.stdout
+    assert "AVAILABLE:0" in result.stdout
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires native cmd.exe")
+@pytest.mark.parametrize("available", [False, True], ids=["missing-git", "installed-git"])
+def test_windows_git_detection_noninteractive(tmp_path, available):
+    """Exercise the batch subroutine without downloads or real package managers."""
+    match = re.search(r"^:check_git\r?$.*?(?=^:verify_install)", _text(WINDOWS_INSTALLER), re.M | re.S)
+    assert match, "Installer structure changed; update the batch test harness"
+    script = tmp_path / "check-git.cmd"
+    where = tmp_path / "where.cmd"
+    git = tmp_path / "git.cmd"
+    where.write_text(f"@exit /b {0 if available else 1}\n")
+    git.write_text("@echo git version 2.50.0\n@exit /b 0\n")
+    # CALL returns control after a .cmd test double, just as an executable would.
+    block = match.group().replace("where git", "call where.cmd git")
+    script.write_text(
+        '@echo off\nsetlocal EnableDelayedExpansion\nset "NONINTERACTIVE=1"\n'
+        'set "LOG=nul"\ncall :check_git\necho AVAILABLE:!GIT_AVAILABLE!\nexit /b 0\n'
+        + block,
+    )
+    try:
+        result = subprocess.run(
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(script)],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5,
+            cwd=tmp_path, env={**os.environ, "PATH": str(tmp_path)},
+        )
+    finally:
+        for path in (script, where, git):
+            path.unlink()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"AVAILABLE:{int(available)}" in result.stdout
+    assert ("Git found" if available else "Skipping Git") in result.stdout

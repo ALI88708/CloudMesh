@@ -51,6 +51,7 @@ from cloudmesh.core.panic import PanicManager, TripwireManager, ShamirPanicManag
 from cloudmesh.core.weather import WeatherForecast
 from cloudmesh.core.gossip import GossipManager
 from cloudmesh.core.checkpoint import CheckpointManager
+from cloudmesh.core import git_support
 from cloudmesh.core.advanced import (
     discover_network, run_full_benchmark, ScheduleManager, NotifyManager,
     CloudMeshAPI, ProfileManager, audit_server, quick_ssh,
@@ -2087,12 +2088,12 @@ def cmd_version(args):
 
 
 def cmd_doctor(args):
-    """Print local source, configuration, and storage health checks.
+    """Print local source, configuration, storage, and Git/update health checks.
 
     Storage checks may initialize database/key files, import nodes, and
-    refresh their mirror. Report storage failures in the table; source read
-    and file stat errors outside those checks propagate. Failed checks do
-    not set an exit status.
+    refresh their mirror. Report storage and Git check failures in the table;
+    source read and file stat errors outside those checks propagate. Failed
+    checks do not set an exit status.
     """
     console.print(Panel("[bold bright_blue]CloudMesh Doctor — Security & Health Check[/]", border_style="bright_blue"))
     checks = []
@@ -2135,6 +2136,27 @@ def cmd_doctor(args):
 
     ddos_src = base / "core" / "ddos.py"
     checks.append(("DDoS module", ddos_src.exists(), "core/ddos.py present"))
+
+    # `cm update` shells out to git, and pushing your own work needs it too.
+    # Nothing used to report this, so the requirement only surfaced as a raw
+    # "[Errno 2] No such file or directory: 'git'" when updating.
+    try:
+        from cloudmesh.core import git_support
+
+        has_git = git_support.git_available()
+        checks.append((
+            "Git",
+            has_git,
+            (git_support.git_version() or "available") if has_git
+            else "not found - 'cm update' needs git, or use pip",
+        ))
+        checks.append((
+            "Update path",
+            git_support.update_support() != "none",
+            f"{git_support.update_support()} ({git_support.installed_version() or 'version unknown'})",
+        ))
+    except Exception as e:
+        checks.append(("Git", False, f"check failed: {e}"))
 
     ssh_src = base / "core" / "ssh_util.py"
     if ssh_src.exists():
@@ -2265,17 +2287,74 @@ def cmd_doctor(args):
         console.print("[yellow]Some checks failed — review above[/]")
 
 
+def cmd_update_via_pip():
+    """Refresh CloudMesh with pip instead of git.
+
+    Run pip install --upgrade cloudmesh with the current Python interpreter
+    and a 300-second timeout, without a CloudMesh confirmation prompt. Print
+    subprocess errors or nonzero exit results and return without setting an
+    exit status. Version lookup errors outside the subprocess call propagate.
+    """
+    import sys as _sys
+
+    console.print(f"[cyan]Installed version: {git_support.installed_version() or 'unknown'}[/]")
+    try:
+        result = subprocess.run(
+            [_sys.executable, "-m", "pip", "install", "--upgrade", "cloudmesh"],
+            capture_output=True, text=True, timeout=300,
+        )
+    except Exception as e:
+        console.print(f"[red]pip failed to start: {e}[/]")
+        return
+    if result.returncode != 0:
+        console.print(f"[red]pip upgrade failed: {result.stderr.strip()[-500:]}[/]")
+        return
+    console.print(f"[green]Updated via pip to CloudMesh {get_version().get('version', '?')}[/]")
+
+
 def cmd_update(args):
-    """Fetch, pull, and reinstall the latest CloudMesh changes from git."""
+    """Update a source checkout from origin/main, or upgrade through pip.
+
+    args.pip selects pip without requiring .git or Git, takes precedence over
+    args.git, and skips confirmation. Otherwise require .git, fetch and, when
+    behind, prompt before pulling unless args.yes is set, then install
+    requirements if present. Without .git, print pip instructions and return.
+    In a checkout, missing Git raises SystemExit(1) when args.git is set;
+    otherwise print advice and return. Git detection and pip helper errors
+    propagate; exceptions during the fetch/pull path are reported without
+    setting an exit status.
+    """
     import subprocess
     import shutil
 
     repo_dir = Path(__file__).parent.parent
-    if not (repo_dir / ".git").exists():
-        console.print("[red]Not a git repository. Cannot self-update.[/]")
+    # --pip is checked before anything else: for a wheel install there is no
+    # .git, so the not-a-checkout return below would otherwise swallow it and
+    # `cm update --pip` would never run in the one case where pip is the only
+    # updater.
+    if getattr(args, "pip", False):
+        console.print("[cyan]Updating via pip (--pip)...[/]")
+        cmd_update_via_pip()
         return
 
-    console.print("[cyan]Checking for updates...[/]")
+    if not (repo_dir / ".git").exists():
+        console.print("[red]Not a git repository. Cannot self-update.[/]")
+        console.print("[dim]This is a pip install. Use: pip install --upgrade cloudmesh[/]")
+        console.print("[dim]Or from the CLI: cm update --pip[/]")
+        return
+
+    if not git_support.git_available():
+        console.print("[red]Git is not installed, so 'cm update' cannot pull.[/]")
+        if getattr(args, "git", False):
+            console.print("[dim]--git was requested but git is missing. Install it from "
+                          "https://git-scm.com/downloads[/]")
+            sys.exit(1)
+        console.print("[dim]Use pip instead: cm update --pip[/]")
+        console.print("[dim]Or install Git, then run 'cm update' again.[/]")
+        return
+
+    mode = "git (--git)" if getattr(args, "git", False) else "git"
+    console.print(f"[cyan]Checking for updates via {mode}...[/]")
     try:
         result = subprocess.run(
             ["git", "fetch", "origin", "main"],
@@ -4021,6 +4100,14 @@ def main():
 
     upd = subparsers.add_parser("update", help="Update CloudMesh from GitHub")
     upd.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    upd.add_argument(
+        "--git", action="store_true",
+        help="Force the git path (fetch + pull) instead of auto-detecting",
+    )
+    upd.add_argument(
+        "--pip", action="store_true",
+        help="Force pip instead of git",
+    )
 
     sts = subparsers.add_parser("status", help="Quick status of all servers")
     sts.add_argument("--json", "-j", action="store_true", dest="as_json", help="Output as JSON")
