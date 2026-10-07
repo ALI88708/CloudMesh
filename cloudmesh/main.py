@@ -1438,7 +1438,23 @@ def cmd_node_gpu(args):
 
 def cmd_node_job(args):
     keys = _load_node_keys()
-    action = getattr(args, "job_action", None) or args.action
+    # `node_sub` claims args.action ("job"); every real subcommand lands in
+    # job_action. Falling back to args.action here would match nothing and exit
+    # 0 in silence.
+    action = getattr(args, "job_action", None)
+    if action is None:
+        console.print("[red]Usage: cm node job <start|status|list|kill|checkpoint|recover|checkpoints>[/]")
+        sys.exit(2)
+
+    # These three used to be reached through the node dispatch table, which
+    # still lists them; they now arrive as job_action instead.
+    if action == "checkpoint":
+        return cmd_job_checkpoint(args)
+    if action == "recover":
+        return cmd_job_recover(args)
+    if action == "checkpoints":
+        return cmd_job_checkpoints(args)
+
     if action == "start":
         if args.name not in keys:
             console.print(f"[red]Node '{args.name}' not found.[/]")

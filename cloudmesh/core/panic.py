@@ -54,19 +54,27 @@ class PanicManager:
         """Replace .secret.key atomically with owner-only permissions.
 
         A plain write_bytes() would create the file 0644 on first use, quietly
-        downgrading the 0600 that StorageManager establishes.
+        downgrading the 0600 that StorageManager establishes. Writing in place
+        is just as bad: the 0o600 mode argument only applies when the open
+        creates the file, so an existing 0644 key would keep its permissions,
+        and a crash between truncate and write would leave an empty key that
+        makes every later command fail. Stage the key in a 0600 temp file and
+        rename it into place, on every platform.
         """
+        tmp = self.secret_key_file.with_name(self.secret_key_file.name + ".tmp")
+        tmp.unlink(missing_ok=True)
         if os.name == "nt":
-            tmp = self.secret_key_file.with_suffix(".key.tmp")
             tmp.write_bytes(key)
-            os.replace(tmp, self.secret_key_file)
-            return
-        fd = os.open(str(self.secret_key_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, key)
-        finally:
-            os.close(fd)
-        os.chmod(self.secret_key_file, 0o600)
+        else:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                os.write(fd, key)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        os.replace(tmp, self.secret_key_file)
+        if os.name != "nt":
+            os.chmod(self.secret_key_file, 0o600)
 
     def _log_panic(self, actions):
         entries = []

@@ -65,6 +65,8 @@ GITHUB_BRANCH="main"
 INSTALL_DIR="$HOME/.cloudmesh"
 PROJECT_DIR="$INSTALL_DIR/project"
 CLOUDMESH_DIR="$PROJECT_DIR/cloudmesh"
+# Where installs from before the project/ layout kept their state.
+LEGACY_CLOUDMESH_DIR="$INSTALL_DIR/cloudmesh"
 NODE_DIR="$HOME/.cloudmesh-node"
 VENV_DIR="$INSTALL_DIR/venv"
 NODE_SCRIPT="cloudmesh_node.py"
@@ -129,7 +131,7 @@ stage_payload() {
 # CHECK INSTALL STATUS
 # ============================================
 IS_INSTALLED=0
-if [ -f "$CLOUDMESH_DIR/main.py" ]; then
+if [ -f "$CLOUDMESH_DIR/main.py" ] || [ -f "$LEGACY_CLOUDMESH_DIR/main.py" ]; then
     IS_INSTALLED=1
 fi
 if [ -d "$VENV_DIR" ]; then
@@ -272,9 +274,11 @@ do_uninstall() {
     echo -e "${BLUE}============================================${NC}"
     echo ""
 
-    [ -d "$CLOUDMESH_DIR" ] && rm -rf "$CLOUDMESH_DIR" && echo -e "${GREEN}[OK] Removed program files${NC}"
-    [ -d "$NODE_DIR" ] && rm -rf "$NODE_DIR" && echo -e "${GREEN}[OK] Removed node agent${NC}"
-    [ -d "$VENV_DIR" ] && rm -rf "$VENV_DIR" && echo -e "${GREEN}[OK] Removed virtual environment${NC}"
+    [ -d "$CLOUDMESH_DIR" ] && rm -rf "$CLOUDMESH_DIR" && log "Removed program files"
+    [ -d "$PROJECT_DIR" ] && rm -rf "$PROJECT_DIR" && log "Removed project directory"
+    [ -d "$LEGACY_CLOUDMESH_DIR" ] && rm -rf "$LEGACY_CLOUDMESH_DIR" && log "Removed legacy program files"
+    [ -d "$NODE_DIR" ] && rm -rf "$NODE_DIR" && log "Removed node agent"
+    [ -d "$VENV_DIR" ] && rm -rf "$VENV_DIR" && log "Removed virtual environment"
 
     if command -v systemctl &> /dev/null; then
         sudo systemctl stop cloudmesh-node 2>/dev/null || true
@@ -624,17 +628,38 @@ while true; do
                 echo -e "${BLUE}============================================${NC}"
                 echo ""
 
-                BACKUP_DIR="/tmp/cloudmesh_backup"
-                mkdir -p "$BACKUP_DIR"
-                [ -f "$CLOUDMESH_DIR/.node_keys.json" ] && cp "$CLOUDMESH_DIR/.node_keys.json" "$BACKUP_DIR/" && echo -e "${GREEN}[OK] Backed up node keys${NC}"
-                [ -f "$INSTALL_DIR/cloudmesh.json" ] && cp "$INSTALL_DIR/cloudmesh.json" "$BACKUP_DIR/" && echo -e "${GREEN}[OK] Backed up server config${NC}"
+                BACKUP_DIR="$(mktemp -d -t cloudmesh_backup.XXXXXX)"
+                # Look in the new layout and the legacy one. An install created
+                # before PROJECT_DIR existed keeps its state in
+                # $INSTALL_DIR/cloudmesh, and an update that only checked the
+                # new path would silently drop the user's keys.
+                saved=0
+                for f in .node_keys.json .secret.key; do
+                    for d in "$CLOUDMESH_DIR" "$LEGACY_CLOUDMESH_DIR"; do
+                        if [ -f "$d/$f" ]; then
+                            cp -p "$d/$f" "$BACKUP_DIR/"
+                            saved=$((saved + 1))
+                            break
+                        fi
+                    done
+                done
+                [ "$saved" -gt 0 ] && log "Backed up $saved state file(s)"
+                [ -f "$INSTALL_DIR/cloudmesh.json" ] && cp -p "$INSTALL_DIR/cloudmesh.json" "$BACKUP_DIR/"
 
-                fetch_payload || { ui_pause; continue; }
+                fetch_payload || { rm -rf "$BACKUP_DIR"; ui_pause; continue; }
 
-                [ -f "$BACKUP_DIR/.node_keys.json" ] && cp "$BACKUP_DIR/.node_keys.json" "$CLOUDMESH_DIR/" 2>/dev/null
-                [ -f "$BACKUP_DIR/cloudmesh.json" ] && cp "$BACKUP_DIR/cloudmesh.json" "$INSTALL_DIR/" 2>/dev/null
+                # fetch_payload replaces the whole project dir, so put the
+                # state back. Restoring .secret.key matters most: without it
+                # every Fernet-encrypted password and node key is unreadable.
+                for f in .node_keys.json .secret.key; do
+                    [ -f "$BACKUP_DIR/$f" ] && cp -p "$BACKUP_DIR/$f" "$CLOUDMESH_DIR/" 2>/dev/null
+                done
+                [ -f "$BACKUP_DIR/cloudmesh.json" ] && cp -p "$BACKUP_DIR/cloudmesh.json" "$INSTALL_DIR/" 2>/dev/null
                 rm -rf "$BACKUP_DIR"
-                echo -e "${GREEN}[OK] Config restored${NC}"
+                # The old tree is now redundant; leaving it would confuse
+                # do_uninstall and keep stale secrets on disk.
+                rm -rf "$LEGACY_CLOUDMESH_DIR"
+                log "Config restored"
 
                 do_setup
                 echo -e "${GREEN}[OK] Update complete!${NC}"
