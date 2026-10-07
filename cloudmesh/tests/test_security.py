@@ -580,7 +580,6 @@ class TestTripwire:
 
 class TestSpaPacket:
     def test_valid_hmac_packet(self):
-        import hashlib
         import hmac as hmac_mod
         import uuid
         import time
@@ -615,7 +614,6 @@ class TestSpaPacket:
     def test_spa_knock_sends_udp(self):
         from core.node_client import NodeClient
         import hmac as hmac_mod
-        import hashlib
         import time
         import uuid
 

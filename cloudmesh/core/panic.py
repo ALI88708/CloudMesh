@@ -13,12 +13,60 @@ from cloudmesh.core.shamir import ShamirSecretSharing
 
 
 class PanicManager:
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, keyring=None):
         self.base_dir = Path(base_dir or Path(__file__).parent.parent)
         self.secret_key_file = self.base_dir / ".secret.key"
         self.node_keys_file = self.base_dir / ".node_keys.json"
         self.panic_log_file = self.base_dir / ".panic_log.json"
         self.pending_file = self.base_dir / ".panic_pending.json"
+        # Node auth keys live in SQLite; `.node_keys.json` is only a mirror.
+        # Rotations must go through the keyring, otherwise the next keyring
+        # construction rewrites the JSON mirror from SQLite and silently
+        # restores the pre-panic keys.
+        self._keyring = keyring
+
+    @property
+    def keyring(self):
+        """Lazily built NodeKeyring sharing this manager's base directory."""
+        if self._keyring is None:
+            from cloudmesh.core.nodekeyring import NodeKeyring
+
+            self._keyring = NodeKeyring(base_dir=self.base_dir)
+        return self._keyring
+
+    def _load_nodes(self):
+        """Return the authoritative node keyring (SQLite first, JSON fallback)."""
+        try:
+            return self.keyring.load()
+        except Exception:
+            if self.node_keys_file.exists():
+                try:
+                    return json.loads(self.node_keys_file.read_text())
+                except Exception:
+                    return {}
+            return {}
+
+    def _save_nodes(self, nodes):
+        """Persist the keyring to SQLite and refresh the JSON mirror."""
+        self.keyring.save(nodes)
+
+    def _write_secret_key(self, key: bytes) -> None:
+        """Replace .secret.key atomically with owner-only permissions.
+
+        A plain write_bytes() would create the file 0644 on first use, quietly
+        downgrading the 0600 that StorageManager establishes.
+        """
+        if os.name == "nt":
+            tmp = self.secret_key_file.with_suffix(".key.tmp")
+            tmp.write_bytes(key)
+            os.replace(tmp, self.secret_key_file)
+            return
+        fd = os.open(str(self.secret_key_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, key)
+        finally:
+            os.close(fd)
+        os.chmod(self.secret_key_file, 0o600)
 
     def _log_panic(self, actions):
         entries = []
@@ -54,16 +102,22 @@ class PanicManager:
         else:
             actions.append(("rotate_secret_key", "No key file found — will create new one"))
 
-        if self.node_keys_file.exists():
-            try:
-                nodes = json.loads(self.node_keys_file.read_text())
-                for name in nodes:
-                    actions.append(("rotate_node_key", f"Will rotate auth key for node '{name}' (local + remote)"))
-                actions.append(("backup_node_keys", "Will backup .node_keys.json"))
-            except Exception:
-                actions.append(("rotate_node_keys", "Will regenerate .node_keys.json"))
+        actions.append((
+            "invalidate_secrets",
+            "Stored server passwords and node auth keys become undecryptable "
+            "and must be re-entered",
+        ))
+
+        try:
+            nodes = self._load_nodes()
+        except Exception:
+            nodes = {}
+        if nodes:
+            for name in nodes:
+                actions.append(("rotate_node_key", f"Will rotate auth key for node '{name}' (local + remote)"))
+            actions.append(("backup_node_keys", "Will back up the node keyring"))
         else:
-            actions.append(("rotate_node_keys", "No .node_keys.json found — nothing to rotate"))
+            actions.append(("rotate_node_keys", "No nodes found — nothing to rotate"))
 
         actions.append(("log_panic", "Will record panic event in .panic_log.json"))
         return actions
@@ -74,60 +128,106 @@ class PanicManager:
         if self.secret_key_file.exists():
             shutil.copy2(self.secret_key_file, self.secret_key_file.with_suffix(".key.bak"))
             new_key = Fernet.generate_key()
-            self.secret_key_file.write_bytes(new_key)
+            self._write_secret_key(new_key)
             actions.append("Rotated .secret.key (backup saved as .secret.key.bak)")
         else:
             new_key = Fernet.generate_key()
-            self.secret_key_file.write_bytes(new_key)
+            self._write_secret_key(new_key)
             actions.append("Created new .secret.key (none existed before)")
 
-        if self.node_keys_file.exists():
-            try:
-                from cloudmesh.core.node_client import NodeClient, save_private_json
-                nodes = json.loads(self.node_keys_file.read_text())
+        # The new Fernet key cannot decrypt anything the old one encrypted, so
+        # every stored server password and node auth key becomes unreadable.
+        actions.append(
+            "Stored server passwords and node auth keys are now undecryptable "
+            "— re-add servers and nodes with fresh credentials"
+        )
+
+        nodes = self._load_nodes()
+        if nodes:
+            from cloudmesh.core.node_client import NodeClient
+
+            if self.node_keys_file.exists():
                 shutil.copy2(self.node_keys_file, self.node_keys_file.with_suffix(".json.bak"))
-                pending = self._load_pending()
-                for name, info in nodes.items():
-                    new_auth = secrets.token_hex(32)
-                    client = NodeClient.from_config(info)
-                    try:
-                        result = client.rotate_key(new_auth)
-                        if result.get("success"):
-                            nodes[name]["key"] = new_auth
-                            actions.append(f"Rotated '{name}' — confirmed remotely")
-                        else:
-                            pending[name] = {
-                                "host": info["host"],
-                                "port": info["port"],
-                                "old_key": info["key"],
-                                "new_key": new_auth,
-                                "tls": info.get("tls", False),
-                                "ca_file": info.get("ca_file"),
-                            }
-                            actions.append(f"Rotated '{name}' locally, remote confirm FAILED — retry needed")
-                    except Exception as e:
-                        pending[name] = {
-                            "host": info["host"],
-                            "port": info["port"],
-                            "old_key": info["key"],
-                            "new_key": new_auth,
-                            "tls": info.get("tls", False),
-                            "ca_file": info.get("ca_file"),
-                        }
-                        actions.append(f"Node '{name}' unreachable ({e}) — rotation PENDING")
-                save_private_json(self.node_keys_file, nodes)
-                if pending:
-                    self._save_pending(pending)
-                    actions.append(f"{len(pending)} node(s) pending — use 'cm panic retry-pending' later")
-                actions.append(f"Rotated auth keys for {len(nodes)} node(s) (backup saved as .node_keys.json.bak)")
-            except Exception as e:
-                actions.append(f"Error rotating node keys: {e}")
+            pending = self._load_pending()
+            for name, info in list(nodes.items()):
+                new_auth = secrets.token_hex(32)
+                client = NodeClient.from_config(info)
+                try:
+                    result = client.rotate_key(new_auth)
+                    if result.get("success"):
+                        nodes[name]["key"] = new_auth
+                        actions.append(f"Rotated '{name}' — confirmed remotely")
+                        continue
+                    reason = result.get("message", "remote refused rotation")
+                except Exception as e:
+                    reason = str(e)
+                pending[name] = {
+                    "host": info["host"],
+                    "port": info["port"],
+                    "old_key": info["key"],
+                    "new_key": new_auth,
+                    "tls": info.get("tls", False),
+                    "ca_file": info.get("ca_file"),
+                }
+                actions.append(f"Node '{name}' rotation PENDING ({reason}) — retry with 'cm panic retry-pending'")
+
+            self._save_nodes(nodes)
+            if pending:
+                self._save_pending(pending)
+                actions.append(f"{len(pending)} node(s) pending — use 'cm panic retry-pending' later")
+            actions.append(f"Rotated auth keys for {len(nodes)} node(s) (backup saved as .node_keys.json.bak)")
         else:
-            actions.append("No .node_keys.json found — skipped node key rotation")
+            actions.append("No nodes found — skipped node key rotation")
 
         self._log_panic(actions)
         actions.append(f"Panic event logged at {datetime.now().isoformat()}")
 
+        return actions
+
+    def rotate_node_keys(self):
+        """Rotate remote node auth keys without touching the encryption key.
+
+        Returns a list of human-readable action strings. Remote nodes that
+        cannot be reached are queued in the pending file instead of being
+        silently dropped.
+        """
+        from cloudmesh.core.node_client import NodeClient
+
+        nodes = self._load_nodes()
+        if not nodes:
+            return ["No nodes configured — nothing to rotate"]
+
+        actions = []
+        pending = self._load_pending()
+        for name, info in list(nodes.items()):
+            new_auth = secrets.token_hex(32)
+            client = NodeClient.from_config(info)
+            try:
+                result = client.rotate_key(new_auth)
+                if result.get("success"):
+                    nodes[name]["key"] = new_auth
+                    actions.append(f"Rotated '{name}' — confirmed remotely")
+                    continue
+                reason = result.get("message", "remote refused rotation")
+            except Exception as e:
+                reason = str(e)
+            pending[name] = {
+                "host": info["host"],
+                "port": info["port"],
+                "old_key": info["key"],
+                "new_key": new_auth,
+                "tls": info.get("tls", False),
+                "ca_file": info.get("ca_file"),
+            }
+            actions.append(f"Node '{name}' rotation PENDING ({reason})")
+
+        self._save_nodes(nodes)
+        if pending:
+            self._save_pending(pending)
+            actions.append(f"{len(pending)} node(s) pending — use 'cm panic retry-pending' later")
+        actions.append(f"Rotated auth keys for {len(nodes)} node(s)")
+
+        self._log_panic(actions)
         return actions
 
     def retry_pending(self):
@@ -135,23 +235,19 @@ class PanicManager:
         if not pending:
             return ["No pending rotations"]
 
-        from cloudmesh.core.node_client import NodeClient, save_private_json
+        from cloudmesh.core.node_client import NodeClient
+
         actions = []
         remaining = {}
+        nodes = self._load_nodes()
 
         for name, info in pending.items():
-            client = NodeClient.from_config({
-                **info,
-                "key": info["old_key"],
-            })
+            client = NodeClient.from_config({**info, "key": info["old_key"]})
             try:
                 result = client.rotate_key(info["new_key"])
                 if result.get("success"):
-                    if self.node_keys_file.exists():
-                        nodes = json.loads(self.node_keys_file.read_text())
-                        if name in nodes:
-                            nodes[name]["key"] = info["new_key"]
-                            save_private_json(self.node_keys_file, nodes)
+                    if name in nodes:
+                        nodes[name]["key"] = info["new_key"]
                     actions.append(f"Retry SUCCESS: '{name}' rotated remotely")
                 else:
                     remaining[name] = info
@@ -159,6 +255,9 @@ class PanicManager:
             except Exception as e:
                 remaining[name] = info
                 actions.append(f"Retry FAILED: '{name}' ({e}) — still pending")
+
+        if nodes:
+            self._save_nodes(nodes)
 
         if remaining:
             self._save_pending(remaining)

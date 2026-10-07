@@ -1,0 +1,110 @@
+name: Release
+
+# Builds the distributable artifacts when a version tag is pushed and attaches
+# them to the GitHub Release.
+#
+# PRs do not need this: ci.yml already proves the wheel builds, installs, and
+# passes the command-surface smoke test. What happens here is only packaging
+# the verified artifact and naming the release after the tag.
+
+on:
+  push:
+    tags: [ "v*.*.*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v3.4.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Metadata check
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python -m pip install --quiet twine
+          python -m twine check dist/*
+
+      - name: Install the wheel and check the entry point
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .rel-venv
+          # shellcheck disable=SC1091
+          source .rel-venv/bin/activate 2>/dev/null || source .rel-venv/Scripts/activate
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          cm --version
+          python scripts/smoke_cli.py --cmd cm --jobs 8 --quiet
+          echo "[OK] release artifact verified"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/
+          retention-days: 14
+
+  publish:
+    name: Attach artifacts to the release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: actions/checkout@v4
+
+      - name: Work out the release notes
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          SECTION=$(awk -v t="$TAG" '
+            $0 ~ "^## \\[" t "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md || true)
+          if [ -n "$SECTION" ]; then
+            {
+              echo 'notes<<CMEOF'
+              echo "$SECTION"
+              echo CMEOF
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "notes=See CHANGELOG.md for $TAG." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.notes.outputs.tag }}
+          body: ${{ steps.notes.outputs.notes }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            artifacts/*.whl
+            artifacts/*.tar.gz
