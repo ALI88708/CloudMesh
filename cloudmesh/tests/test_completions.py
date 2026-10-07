@@ -51,7 +51,24 @@ def test_powershell_completion_maps_subcommands_and_options(tmp_path):
     assert "$context = $candidate" in script
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="Bash is not installed")
+def _native_bash() -> str | None:
+    """Return a bash that can read this checkout, or None.
+
+    On Windows `shutil.which("bash")` finds the WSL launcher, which cannot see
+    C:\\ paths at all: it exits 1 with "No such file or directory" and the test
+    fails for a reason that has nothing to do with the completion script.
+    Git Bash, if present, handles native paths fine.
+    """
+    git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+    if git_bash.exists():
+        return str(git_bash)
+    if sys.platform != "win32":
+        found = shutil.which("bash")
+        return found
+    return None
+
+
+@pytest.mark.skipif(_native_bash() is None, reason="no native bash on this platform")
 def test_bash_completion_returns_nested_commands_and_matching_options(tmp_path):
     output = tmp_path / "completions.bash"
     cmd_completions(argparse.Namespace(shell="bash", output=str(output)))
@@ -65,7 +82,7 @@ _cloudmesh_completions
 printf 'worker-options:%s\n' "${COMPREPLY[*]}"
 '''
     result = subprocess.run(
-        ["bash"],
+        [_native_bash()],
         input=output.read_bytes() + checks.encode("utf-8"),
         capture_output=True,
         check=True,

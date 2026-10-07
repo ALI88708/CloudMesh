@@ -4,6 +4,93 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [Unreleased]
+
+This release is about making failures visible. Every item below shipped with a
+green test suite; the suite now covers them.
+
+### Fixed — the command surface
+
+- **`cm run "cmd"` no longer exits 0 in silence.** `add_subparsers(dest="command")`
+  shared a destination with the positional argument holding the command to run,
+  so the positional overwrote the command name, dispatch found no handler, and the
+  process exited 0 with no output. The same breakage affected `cm group run`,
+  `cm node exec`, `cm node job start`, `cm exec --all`, and `cm plugins add`.
+- **`cm node job start` reaches its handler.** `node`'s sub-subparsers shared
+  `dest="action"` with `node`'s own, so `start` was looked up in the node table,
+  missed, and printed node help.
+- **A group with no subcommand prints help** (`cm server`, `cm node`, `cm queue`).
+  The dispatch fallback took no arguments and raised `TypeError`.
+- **An unknown command exits 1** with a message instead of exiting 0 silently.
+
+### Fixed — crashes on first use
+
+- `cm api` raised `NameError: time` — `time` was never imported.
+- `cm panic rotate` raised `NameError: _load_config` — no such function existed.
+- `cm panic retry-pending` raised `UnboundLocalError` — the manager was bound
+  after the branch that used it.
+- `cm weather` forecast paths raised `NameError: datetime`.
+- Removed the `__import__("time")` / `__import__("datetime")` string hacks that
+  hid all of the above.
+
+### Fixed — security
+
+- **Panic key rotation now persists to SQLite.** `PanicManager` read and wrote
+  `.node_keys.json` directly while SQLite was the source of truth, so the next
+  `NodeKeyring` construction rewrote the mirror from SQLite and silently restored
+  the pre-panic keys. The emergency rotation did not stick.
+- `.secret.key` is replaced atomically with owner-only permissions instead of a
+  plain `write_bytes`, which created it world-readable on first use.
+- `cm panic --dry-run` and the rotation output now state that stored server
+  passwords and node auth keys become undecryptable afterwards.
+- `cm doctor` inspects the loaded modules and `build_ssh_cmd`'s signature instead
+  of grepping source files for magic strings. The SSH check looked for
+  `"MITMWarning"` while the class is `SSHWarning`, so it always reported FAIL.
+
+### Fixed — installers
+
+- **The Linux installer runs at all.** `cm_for-linux.sh` and
+  `cloudmesh/node/node-install.sh` were committed with CRLF endings, so bash
+  failed with a syntax error on the first line. The one-line install documented in
+  the README could never run. `.gitattributes` now pins the endings.
+- **The Windows installer stops truncating `cloudmesh/core/__init__.py`.** It ran
+  `echo. > core\__init__.py`, replacing the package re-exports with a blank line.
+- **The Windows installer installs every declared dependency.** Its hard-coded
+  list named five packages and omitted `bcrypt`, so ACL commands raised
+  `ImportError` on any machine installed that way.
+- **Both installers install the project** (`pip install <project dir>`) instead of
+  running `main.py` from a source tree, so `cm` is a real console script and
+  packaging problems surface at install time.
+- Both installers take a scripted path (`cm.sh --yes`, `cm_for-windows.bat /Y`)
+  and verify the result: console script present, dependencies import, `cm
+  --version` and `cm --help` succeed, node agent and `core/__init__.py` intact.
+  `--verify-only` / `/VERIFYONLY` re-runs just the checks.
+- Both accept `CM_SOURCE_DIR` / `--source=` to install from a checkout instead of
+  downloading `main`, which is how CI verifies a branch under test.
+- Temp files moved to `mktemp` instead of a fixed world-writable `/tmp` path.
+
+### Added — verification
+
+- **CI runs on Linux and Windows.** `lint` (ruff `F821`/`F823`/`E9`/`F811`,
+  LF-ending check, shellcheck), `test` (4 Python versions x 2 OSes), and
+  `installed-cli`, which builds the wheel, installs it into a clean venv, and
+  walks every command path asking for `--help`.
+- **New `installers.yml` workflow** installs from the checkout on each platform and
+  asserts the result works. Neither installer could be verified before, because
+  both were interactive-only.
+- **New `release.yml` workflow** builds and attaches artifacts on a version tag,
+  taking the release notes from this file.
+- `scripts/smoke_cli.py` walks the whole command surface (119 paths) against
+  whatever `cm` is on `PATH`, so it verifies an installed release.
+- `cloudmesh/tests/test_installers.py` pins the installer contracts above.
+- `test_cli_regressions.py`, `test_cli_no_tracebacks.py`, and
+  `test_panic_rotation.py` cover the dispatch, first-use, and key-rotation bugs.
+
+### Changed
+
+- The dispatch destination is `cmd_name`; handlers read the command to run from
+  `args.command` as before.
+
 ## [3.4.0] - 2026-10-05 — Enterprise (stable)
 
 This is the Enterprise stable release: SQLite is the source of truth for all

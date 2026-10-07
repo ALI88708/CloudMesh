@@ -27,6 +27,24 @@ venv/
 cloudmesh.db
 backups/
 
+# Runtime state the CLI writes next to the package. Some of it was committed by
+# accident, so it is listed explicitly rather than left to a broad pattern.
+.secret.key
+.secret.key.bak
+.panic_log.json
+.panic_pending.json
+.panic_shares.json
+command_log.json
+checkpoints/
+history/
+data/
+.task_queue/
+.checkpoints/
+.verify-venv/
+.rel-venv/
+dist/
+build/
+
 # IDE
 .vscode/
 .idea/

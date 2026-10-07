@@ -1,0 +1,21 @@
+# CloudMesh — line ending rules
+#
+# Shell scripts must keep Unix line endings. Both installers were committed with
+# CRLF, which made `bash cm_for-linux.sh` fail with a syntax error on the very
+# first line on Linux, so the documented one-line Linux install could never run.
+#
+# These rules make the working tree authoritative regardless of core.autocrlf
+# or the contributor's editor.
+
+*.sh          text eol=lf
+*.bash        text eol=lf
+
+# Windows launchers stay CRLF: cmd.exe reads them more reliably that way.
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+
+# Keep generated artefacts away from end-of-line churn.
+*.sqlite3     binary
+*.db          binary
+*.png         binary
+*.ico         binary

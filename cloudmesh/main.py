@@ -5,6 +5,9 @@ import json
 import subprocess
 import tempfile
 import shlex
+import inspect
+import time
+from datetime import datetime
 from pathlib import Path
 
 # Allow running as `cd cloudmesh && python main.py` (CI) as well as
@@ -1435,7 +1438,8 @@ def cmd_node_gpu(args):
 
 def cmd_node_job(args):
     keys = _load_node_keys()
-    if args.action == "start":
+    action = getattr(args, "job_action", None) or args.action
+    if action == "start":
         if args.name not in keys:
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
@@ -1447,7 +1451,7 @@ def cmd_node_job(args):
             console.print(f"[green]Job started: {result['job_id']}[/]")
         else:
             console.print(f"[red]Failed: {result}[/]")
-    elif args.action == "status":
+    elif action == "status":
         if args.name not in keys:
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
@@ -1465,7 +1469,7 @@ def cmd_node_job(args):
                 console.print(f"  stderr: {result['stderr'][:200]}")
         else:
             console.print(f"[red]Job not found[/]")
-    elif args.action == "list":
+    elif action == "list":
         if args.name not in keys:
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
@@ -1485,7 +1489,7 @@ def cmd_node_job(args):
             color = "green" if status == "completed" else "red" if status in ("failed", "error") else "yellow"
             table.add_row(j.get("id", "?"), j.get("command", "?")[:40], f"[{color}]{status}[/]", j.get("started_at", "?")[:19])
         console.print(table)
-    elif args.action == "kill":
+    elif action == "kill":
         if args.name not in keys:
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
@@ -2074,11 +2078,20 @@ def cmd_doctor(args):
 
     api_src = base / "core" / "advanced.py"
     if api_src.exists():
-        content = api_src.read_text()
-        api_ok = "compare_digest" in content
-        bind_ok = '"127.0.0.1"' in content
-        ddos_ok = "DDoSProtection" in content
-        checks.append(("API: hmac.compare_digest", api_ok, "Uses timing-safe comparison"))
+        # Inspect the loaded class, not its source file: a magic string can
+        # appear in a comment or docstring and make a broken check pass.
+        try:
+            from cloudmesh.core.advanced import CloudMeshAPI
+
+            params = inspect.signature(CloudMeshAPI.__init__).parameters
+            api_ok = "api_key" in params
+            ddos_ok = "DDoSProtection" in inspect.getsource(CloudMeshAPI.__init__)
+        except Exception as e:
+            api_ok = False
+            ddos_ok = False
+            console.print(f"[dim]API introspection failed: {e}[/]")
+        bind_ok = '"127.0.0.1"' in api_src.read_text()
+        checks.append(("API: token auth", api_ok, "API accepts an auth key"))
         checks.append(("API: localhost binding", bind_ok, "Bound to 127.0.0.1"))
         checks.append(("API: DDoS protection", ddos_ok, "Rate limiting enabled"))
     else:
@@ -2089,7 +2102,7 @@ def cmd_doctor(args):
         ncontent = node_src.read_text()
         auth_ok = "compare_digest" in ncontent
         path_ok = "relative_to" in ncontent and "realpath" in ncontent
-        ddos_node = "DDoSProtection" in ncontent
+        ddos_node = "DDoSProtection" in ncontent or "_StandaloneDDoSProtection" in ncontent
         spa_ok = "spa_mode" in ncontent
         checks.append(("Node: hmac.compare_digest", auth_ok, "Uses timing-safe comparison"))
         checks.append(("Node: path traversal guard", path_ok, "Validates paths with realpath+relative_to"))
@@ -2103,8 +2116,20 @@ def cmd_doctor(args):
 
     ssh_src = base / "core" / "ssh_util.py"
     if ssh_src.exists():
-        sc = ssh_src.read_text()
-        checks.append(("SSH: centralized", "MITMWarning" in sc, "MITM warnings enabled"))
+        try:
+            from cloudmesh.core import ssh_util
+
+            sc = ssh_util
+            # The warning class must actually exist, and build_ssh_cmd must
+            # default to strict host key checking.
+            warn_cls = getattr(sc, "SSHWarning", None)
+            warn_subclass = warn_cls is not None and issubclass(warn_cls, UserWarning)
+            sig = inspect.signature(sc.build_ssh_cmd)
+            strict_default = sig.parameters["strict"].default is True
+            checks.append(("SSH: centralized", warn_subclass, "MITM warning class defined"))
+            checks.append(("SSH: strict host keys", strict_default, "StrictHostKeyChecking enabled by default"))
+        except Exception as e:
+            checks.append(("SSH: centralized", False, f"ssh_util introspection failed: {e}"))
     else:
         checks.append(("SSH: centralized", False, "ssh_util.py not found"))
 
@@ -2414,7 +2439,6 @@ def cmd_exec(args):
 
 
 def cmd_watch(args):
-    import time
     import subprocess as _sp
 
     interval = args.interval
@@ -2426,7 +2450,7 @@ def cmd_watch(args):
     try:
         while True:
             _sp.run(["cls" if sys.platform == "win32" else "clear"], shell=False)
-            now = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             console.print(Panel(f"[bold]CloudMesh Watch[/] — {now}", border_style="bright_blue"))
 
             names_ssh = server_mgr.list_servers()
@@ -2543,14 +2567,14 @@ def cmd_keys(args):
         ssh_dir.mkdir(exist_ok=True)
         bits = args.bits or 4096
         console.print(f"[cyan]Generating {bits}-bit SSH key: {key_path}[/]")
-        result = __import__("subprocess").run(
+        result = subprocess.run(
             ["ssh-keygen", "-t", "ed25519" if bits == 256 else "rsa", "-b", str(bits),
              "-f", str(key_path), "-N", args.passphrase or "", "-C", f"cloudmesh@{key_name}"],
             capture_output=True, text=True
         )
         if result.returncode == 0:
             saved = load_keys()
-            saved[key_name] = {"path": str(key_path), "pub": str(key_path) + ".pub", "bits": bits, "created": __import__("datetime").datetime.now().isoformat()}
+            saved[key_name] = {"path": str(key_path), "pub": str(key_path) + ".pub", "bits": bits, "created": datetime.now().isoformat()}
             save_keys(saved)
             console.print(f"[green]Key generated: {key_path}[/]")
             console.print(f"[green]Public key: {key_path}.pub[/]")
@@ -2565,7 +2589,7 @@ def cmd_keys(args):
             for f in ssh_dir.iterdir():
                 if f.suffix == "" and not f.name.endswith(".pub") and f.name not in (".", ".."):
                     try:
-                        result = __import__("subprocess").run(
+                        result = subprocess.run(
                             ["ssh-keygen", "-l", "-f", str(f)],
                             capture_output=True, text=True, timeout=5
                         )
@@ -2661,7 +2685,7 @@ def cmd_config(args):
         for name, path in config_files.items():
             if path.exists():
                 size = path.stat().st_size
-                mtime = __import__("datetime").datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                mtime = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
                 table.add_row(name, str(path), f"{size} B", mtime)
             else:
                 table.add_row(name, str(path), "[dim]missing[/]", "-")
@@ -2669,7 +2693,7 @@ def cmd_config(args):
 
     elif args.action == "export":
         import shutil as _sh
-        out_dir = Path(args.output) if args.output else Path(f"cloudmesh_backup_{__import__('time').strftime('%Y%m%d_%H%M%S')}")
+        out_dir = Path(args.output) if args.output else Path(f"cloudmesh_backup_{time.strftime('%Y%m%d_%H%M%S')}")
         out_dir.mkdir(parents=True, exist_ok=True)
         exported = 0
         for name, path in config_files.items():
@@ -3354,6 +3378,9 @@ def _alias_acl_rm(args):
 
 
 def cmd_panic(args):
+    # Built up front: the `rotate` and `retry-pending` branches below need it,
+    # and binding it only after them raised UnboundLocalError.
+    panic = PanicManager()
     if hasattr(args, "panic_action") and args.panic_action:
         shamir = ShamirPanicManager()
         if args.panic_action == "setup":
@@ -3398,34 +3425,11 @@ def cmd_panic(args):
             return
         elif args.panic_action == "rotate":
             console.print(Panel("[bold red]PANIC ROTATE — Rotating keys on all remote nodes[/]", border_style="red"))
-            from cloudmesh.core.node_client import NodeClient
-            cfg = _load_config()
-            nodes = cfg.get("nodes", {})
-            if not nodes:
-                console.print("[dim]No nodes configured[/]")
-                return
-            for name, srv in nodes.items():
-                host = srv.get("host", "")
-                port = srv.get("port", 9999)
-                key = srv.get("auth_key", "")
-                client = NodeClient(
-                    host,
-                    port,
-                    key,
-                    tls=srv.get("tls", False),
-                    ca_file=srv.get("ca_file"),
-                )
-                try:
-                    import secrets as _secrets
-                    new_auth = _secrets.token_hex(32)
-                    result = client.rotate_key(new_auth)
-                    if result.get("success"):
-                        console.print(f"  [green]+[/] {name}: rotated successfully")
-                    else:
-                        console.print(f"  [red]![/] {name}: {result.get('message', 'failed')}")
-                except Exception as e:
-                    console.print(f"  [red]![/] {name}: {e}")
-            console.print("\n[red bold]All node keys rotated. Update your local node_keys.json![/]")
+            for action in panic.rotate_node_keys():
+                if action.startswith("Rotated '") or action.startswith("Rotated auth"):
+                    console.print(f"  [green]+[/] {action}")
+                else:
+                    console.print(f"  [yellow]![/] {action}")
             return
         elif args.panic_action == "retry-pending":
             console.print(Panel("[bold yellow]Retrying pending key rotations...[/]", border_style="yellow"))
@@ -3434,7 +3438,6 @@ def cmd_panic(args):
                 console.print(f"  [green]+[/] {action}")
             return
 
-    panic = PanicManager()
     if args.dry_run:
         console.print(Panel("[bold red]PANIC — Dry Run[/]", border_style="red"))
         actions = panic.dry_run()
@@ -3682,6 +3685,21 @@ def cmd_job_checkpoints(args):
     console.print(table)
 
 
+def _lookup_handler(cmds, name):
+    """Return the handler registered for ``name``.
+
+    A missing entry means the dispatch table and the argparse definitions have
+    drifted apart. That used to exit 0 with no output at all, which made broken
+    commands look like successes; it now reports the name and exits 1.
+    """
+    handler = cmds.get(name)
+    if handler is None:
+        console.print(f"[red]Unknown command: {name}[/]")
+        console.print("[dim]Run 'cm --help' to see available commands.[/]")
+        sys.exit(1)
+    return handler
+
+
 def main():
     """Parse process arguments and dispatch the selected CloudMesh command.
 
@@ -3690,7 +3708,12 @@ def main():
     """
     parser = argparse.ArgumentParser(prog="cloudmesh", description="CloudMesh - Connect devices & servers into one resource pool")
     parser.add_argument("--version", "-V", action="version", version=f"CloudMesh {get_version()['version']}")
-    subparsers = parser.add_subparsers(dest="command", help="Command")
+    # `dest="cmd_name"` (not "command"): several subcommands take a positional
+    # argument that is also the shell command to execute (`cm run "uptime"`,
+    # `cm exec --all "uptime"`, `cm plugins add -c "..."`). Sharing the dest
+    # made the positional overwrite the command name, so dispatch looked up
+    # cmds["uptime"], found nothing, and the command exited 0 in silence.
+    subparsers = parser.add_subparsers(dest="cmd_name", help="Command")
 
     srv = subparsers.add_parser("server", help="Manage servers/devices")
     srv_sub = srv.add_subparsers(dest="action")
@@ -3829,7 +3852,10 @@ def main():
     gpu_p.add_argument("--name", "-n", help="Node name")
 
     job_p = node_sub.add_parser("job", help="Async jobs on nodes")
-    job_sub = job_p.add_subparsers(dest="action")
+    # Dedicated dest: sharing "action" with node_sub made `cm node job start`
+    # look up "start" in the node dispatch table (which only knows "job"),
+    # so the command printed node help instead of starting a job.
+    job_sub = job_p.add_subparsers(dest="job_action")
     js_p = job_sub.add_parser("start", help="Start async job")
     js_p.add_argument("--name", "-n", required=True)
     js_p.add_argument("command")
@@ -4578,7 +4604,7 @@ def main():
     aclrm.add_argument("--username", "-u", required=True)
 
     args = parser.parse_args()
-    if args.command is None:
+    if args.cmd_name is None:
         parser.print_help()
         return
 
@@ -4587,7 +4613,7 @@ def main():
             "add": cmd_server_add, "remove": cmd_server_remove,
             "list": cmd_server_list, "test": cmd_server_test,
             "info": cmd_node_info,
-        }.get(args.action, lambda: srv.print_help())(args),
+        }.get(args.action, lambda _a: srv.print_help())(args),
         "node": lambda: {
             "add": cmd_node_add_cloud, "remove": cmd_node_remove,
             "list": cmd_node_list_cloud, "test": cmd_node_test,
@@ -4598,7 +4624,7 @@ def main():
             "checkpoint": cmd_job_checkpoint,
             "recover": cmd_job_recover,
             "checkpoints": cmd_job_checkpoints,
-        }.get(args.action, lambda: node.print_help())(args),
+        }.get(args.action, lambda _a: node.print_help())(args),
         "monitor": lambda: cmd_monitor(args),
         "mon": lambda: cmd_monitor(args),
         "dashboard": lambda: cmd_dashboard(args),
@@ -4620,7 +4646,7 @@ def main():
             "submit": cmd_task_queue, "status": cmd_task_queue,
             "list": cmd_task_queue, "cancel": cmd_task_queue,
             "worker": cmd_task_queue,
-        }.get(args.action, lambda: queue_p.print_help())(args),
+        }.get(args.action, lambda _a: queue_p.print_help())(args),
         "autosync": lambda: cmd_autosync(args),
         "interactive": lambda: cmd_interactive(args),
         "backup": lambda: cmd_backup(args),
@@ -4720,9 +4746,8 @@ def main():
         "acladd": lambda: _alias_acl_add(args),
         "aclrm": lambda: _alias_acl_rm(args),
     }
-    handler = cmds.get(args.command)
-    if handler:
-        handler()
+    handler = _lookup_handler(cmds, args.cmd_name)
+    handler()
 
 
 if __name__ == "__main__":

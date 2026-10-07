@@ -1,44 +1,208 @@
 name: CloudMesh CI
 
+# Everything a pull request has to satisfy before it can be merged.
+#
+# Three layers, because each catches a different class of failure:
+#   lint        undefined names, syntax errors, dead imports (ruff)
+#   test        the pytest suite with the coverage gate
+#   installed   the built wheel installed into a clean venv, then every one of
+#               the ~119 command paths asked for --help
+#
+# The installed job exists because the suite runs against the source tree and
+# never touches the packaging. `cm api`, `cm panic rotate`, and `cm weather`
+# all shipped raising NameError on first use.
+
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  lint-and-test:
-    runs-on: ubuntu-latest
+  lint:
+    name: Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
+        os: [ubuntu-latest, windows-latest]
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r cloudmesh/requirements.txt
+      - name: Install ruff
+        run: python -m pip install --upgrade pip "ruff==0.16.10"
 
-    - name: Syntax check all Python files
-      run: |
-        find cloudmesh -name "*.py" -exec python -m py_compile {} \;
-        echo "All files compile successfully"
+      # F821 undefined name is the one that matters: it is exactly the class of
+      # bug that made `cm api` and `cm weather` raise NameError at runtime while
+      # the whole test suite stayed green. F811 catches a shadowed import that
+      # can silently rebind a name.
+      - name: Ruff — undefined names, shadowed imports, syntax errors
+        run: python -m ruff check --no-cache --output-format=github --select F821,F823,E9,F811 cloudmesh scripts
 
-    - name: Run tests with coverage
-      run: |
-        cd cloudmesh
-        python main.py test --suite --coverage
+      # Not yet a gate: F841/F401 have accumulated across the whole tree and
+      # fixing them belongs in its own change. Reported so it stays visible.
+      # `continue-on-error` alone still fails the step, so swallow the status
+      # explicitly and print the count.
+      - name: Ruff report — unused locals and imports (not blocking)
+        shell: bash
+        run: |
+          python -m ruff check --no-cache --output-format=concise --select F841,F401 cloudmesh scripts \
+            || echo "[info] F841/F401 are known debt; not a gate yet"
 
-    - name: Verify CLI commands work
-      run: |
-        cd cloudmesh
-        python main.py --help
-        python main.py test --help
-        python main.py queue worker --help
+      - name: Syntax check every Python file
+        shell: bash
+        run: find cloudmesh -name "*.py" -not -path "*/__pycache__/*" -exec python -m py_compile {} \; && echo "all modules compile"
+
+      # bash is only present on the Linux runner, so this check runs there.
+      # Both installers were committed with CRLF endings, which makes bash fail
+      # on line one, so the documented one-line install never ran.
+      - name: Shell scripts must use LF line endings
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+          while IFS= read -r script; do
+            if grep -qU $'\r' "$script"; then
+              echo "::error file=$script::CRLF line endings; bash cannot parse this on Linux"
+              failed=1
+            fi
+          done < <(find . -name '*.sh' -not -path './.git/*')
+          exit $failed
+
+      - name: Shellcheck the Linux installer
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          # SC1091: the generated node scripts are heredocs, not sources.
+          shellcheck --severity=warning --exclude=SC1091 cm_for-linux.sh
+
+  test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r cloudmesh/requirements.txt
+
+      - name: Run the suite through the CLI with coverage
+        working-directory: cloudmesh
+        run: python main.py test --suite --coverage
+
+  installed-cli:
+    name: Installed CLI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install the wheel into a clean venv
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .verify-venv
+          # shellcheck disable=SC1091
+          source .verify-venv/bin/activate 2>/dev/null || source .verify-venv/Scripts/activate
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          cm --version
+
+      # `cm <cmd> --help` for every command and subcommand. Three of these were
+      # never run by CI, which is how NameError-on-first-use reached a release.
+      - name: Smoke test the whole command surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source .verify-venv/bin/activate 2>/dev/null || source .verify-venv/Scripts/activate
+          python scripts/smoke_cli.py --cmd cm --jobs 8
+
+      # The driver reads SAFE_COMMANDS out of the test module with ast, so this
+      # needs no pytest and no shell quoting gymnastics.
+      - name: Commands must not crash on first use
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source .verify-venv/bin/activate 2>/dev/null || source .verify-venv/Scripts/activate
+          python cloudmesh/tests/cli_driver.py
+
+  build-check:
+    name: Build artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: The wheel must contain the packages the CLI imports
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet twine
+          python -m twine check dist/*
+          python - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          required = {
+              "cloudmesh/main.py",
+              "cloudmesh/core/__init__.py",
+              "cloudmesh/core/storage.py",
+              "cloudmesh/node/cloudmesh_node.py",
+          }
+          missing = required - set(names)
+          assert not missing, f"wheel is missing {sorted(missing)}"
+          print(f"[OK] {wheel} contains {len(names)} entries")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7

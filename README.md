@@ -107,6 +107,17 @@ curl -sL https://raw.githubusercontent.com/ALI88708/CloudMesh/main/cm_for-linux.
 chmod +x cm.sh && ./cm.sh
 ```
 
+The installer also runs unattended, which is how CI verifies it on every pull request:
+
+```bash
+./cm.sh --yes                # install with no prompts, then self-verify
+./cm.sh --verify-only        # re-run the checks on an existing install
+./cm.sh --yes --source=.     # install from this checkout instead of downloading
+./cm.sh --yes --skip-node --skip-systemd   # controller only, no root needed
+```
+
+`cm_for-windows.bat` accepts the same switches as `/Y`, `/VERIFYONLY`, and `/S=DIR`.
+
 ### Update
 ```bash
 cm update              # Self-update from GitHub (recommended)
