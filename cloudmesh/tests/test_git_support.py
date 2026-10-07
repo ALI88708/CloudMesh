@@ -436,10 +436,16 @@ def test_update_support_accepts_git_worktree_files(monkeypatch, tmp_path, availa
 
 
 def test_wheel_update_support_does_not_probe_git(monkeypatch, tmp_path):
+    """A wheel install must answer from the filesystem, never by shelling out.
+
+    Reports "pip", not "none": `pip install --upgrade cloudmesh` does work
+    there, so calling it "none" made cm doctor's Update path row fail on every
+    ordinary install.
+    """
     probe = Mock(side_effect=AssertionError("wheel installs cannot use git"))
     monkeypatch.setattr(git_support, "git_available", probe)
 
-    assert git_support.update_support(tmp_path) == "none"
+    assert git_support.update_support(tmp_path) == "pip"
     probe.assert_not_called()
 
 
