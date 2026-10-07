@@ -2315,14 +2315,14 @@ def cmd_update_via_pip():
 def cmd_update(args):
     """Update a source checkout from origin/main, or upgrade through pip.
 
-    Require .git even when args.pip selects pip; that flag takes precedence
-    over args.git and skips confirmation. Otherwise fetch and, when behind,
-    prompt before pulling unless args.yes is set, then install requirements.
-    Without .git, print manual pip instructions and return. Missing Git raises
-    SystemExit(1) only when args.git is set and args.pip is not; otherwise
-    print advice and return. Git detection and pip helper errors propagate;
-    exceptions during the fetch/pull path are reported without setting an
-    exit status.
+    args.pip selects pip without requiring .git or Git, takes precedence over
+    args.git, and skips confirmation. Otherwise require .git, fetch and, when
+    behind, prompt before pulling unless args.yes is set, then install
+    requirements if present. Without .git, print pip instructions and return.
+    In a checkout, missing Git raises SystemExit(1) when args.git is set;
+    otherwise print advice and return. Git detection and pip helper errors
+    propagate; exceptions during the fetch/pull path are reported without
+    setting an exit status.
     """
     import subprocess
     import shutil
