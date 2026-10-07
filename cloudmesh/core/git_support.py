@@ -90,18 +90,21 @@ def git_version() -> str:
 
 
 def update_support(base_dir: Path | str | None = None) -> str:
-    """Return how this installation can be updated: "git", "pip", or "none".
+    """Return how this installation can be updated: "git" or "pip".
 
-    Inspect .git directly under base_dir, defaulting to this module's project
-    root. Return "none" when it is absent; otherwise return "git" if Git is
-    usable and "pip" if it is not. Pip availability is not checked.
+    A source checkout is a git working tree, so it can pull when git is
+    available. Everything else — a wheel install, or a checkout on a machine
+    without git — can still be refreshed with
+    `pip install --upgrade cloudmesh`, which is why "pip" is the floor and
+    "none" is never returned. Inspect .git directly under base_dir, defaulting
+    to this module's project root.
     """
     if base_dir is None:
         base_dir = Path(__file__).resolve().parent.parent.parent
     base = Path(base_dir)
-    if (base / ".git").exists():
-        return "git" if git_available() else "pip"
-    return "none"
+    if (base / ".git").exists() and git_available():
+        return "git"
+    return "pip"
 
 
 def _installed_version() -> str:

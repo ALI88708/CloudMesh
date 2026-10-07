@@ -2328,16 +2328,19 @@ def cmd_update(args):
     import shutil
 
     repo_dir = Path(__file__).parent.parent
-    if not (repo_dir / ".git").exists():
-        console.print("[red]Not a git repository. Cannot self-update.[/]")
-        console.print("[dim]This is a pip install. Use: pip install --upgrade cloudmesh[/]")
-        return
-
-    # Route before doing any work. A missing git used to surface much later as
-    # "Update failed: [Errno 2] No such file or directory: 'git'".
+    # --pip is checked before anything else: for a wheel install there is no
+    # .git, so the not-a-checkout return below would otherwise swallow it and
+    # `cm update --pip` would never run in the one case where pip is the only
+    # updater.
     if getattr(args, "pip", False):
         console.print("[cyan]Updating via pip (--pip)...[/]")
         cmd_update_via_pip()
+        return
+
+    if not (repo_dir / ".git").exists():
+        console.print("[red]Not a git repository. Cannot self-update.[/]")
+        console.print("[dim]This is a pip install. Use: pip install --upgrade cloudmesh[/]")
+        console.print("[dim]Or from the CLI: cm update --pip[/]")
         return
 
     if not git_support.git_available():

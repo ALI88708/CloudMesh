@@ -85,11 +85,22 @@ class _Completed:
 
 
 def test_update_support_is_reported_for_a_plain_pip_install(tmp_path, monkeypatch):
-    """A wheel install has no .git, so git-based self-update cannot work."""
+    """A wheel install has no .git, but pip can still refresh it."""
     base = tmp_path / "site-packages"
     base.mkdir()
 
-    assert git_support.update_support(base) == "none"
+    # Not "none": `pip install --upgrade cloudmesh` works there, and reporting
+    # "none" made cm doctor's Update path row FAIL on every normal install.
+    assert git_support.update_support(base) == "pip"
+
+
+def test_update_support_is_pip_when_git_is_missing_entirely(tmp_path, monkeypatch):
+    """No checkout and no git: pip is still the updater."""
+    monkeypatch.setattr(git_support, "_which", lambda _name: None)
+    base = tmp_path / "site-packages"
+    base.mkdir()
+
+    assert git_support.update_support(base) == "pip"
 
 
 def test_update_support_is_git_for_a_checkout(tmp_path):
@@ -211,6 +222,29 @@ def test_installer_non_interactive_mode_skips_the_git_prompt(path):
     assert "NONINTERACTIVE" in text
 
 
+def test_windows_git_detection_is_not_inverted():
+    """`if not !ERRORLEVEL! NEQ 0` means ERRORLEVEL == 0.
+
+    Which is the *opposite* of what the branch names claim: git being present
+    took the :git_missing path, and git being absent printed "Git found". CI
+    never caught it because /Y skips the prompt entirely, so only interactive
+    users would have hit it.
+    """
+    text = _installer_text(WINDOWS_INSTALLER)
+    assert "if not !ERRORLEVEL! NEQ 0 goto :git_missing" not in text, (
+        "inverted git detection: a successful `where git` would report git missing"
+    )
+    assert "if !ERRORLEVEL! NEQ 0 goto :git_missing" in text
+
+
+def test_linux_git_detection_is_not_inverted():
+    """`command -v git` returning success must take the found path."""
+    text = _installer_text(LINUX_INSTALLER)
+    assert "if !ERRORLEVEL! NEQ 0" not in text
+    # The Linux check is a direct `command -v`, not an errorlevel test.
+    assert "if command -v git > /dev/null 2>&1; then" in text
+
+
 def test_doctor_reports_git_availability():
     """`cm doctor` is where a user looks for 'is my machine set up'."""
     import main as cloudmesh_main
@@ -274,6 +308,25 @@ def test_update_outside_a_checkout_points_at_pip(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "pip install --upgrade cloudmesh" in out
+
+
+def test_update_pip_flag_works_even_outside_a_checkout(monkeypatch, capsys):
+    """The regression: --pip was handled after the not-a-checkout early return.
+
+    For a wheel install — the case where pip is the only updater — `cm update
+    --pip` returned at the .git check before ever reaching the pip branch.
+    """
+    import main as cloudmesh_main
+
+    called = []
+    monkeypatch.setattr(
+        cloudmesh_main, "cmd_update_via_pip", lambda: called.append(True)
+    )
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+
+    cloudmesh_main.cmd_update(_UpdateArgs(pip=True))
+
+    assert called == [True], "cm update --pip never reached the pip updater"
 
 
 def test_update_pip_flag_never_touches_git(monkeypatch, capsys):

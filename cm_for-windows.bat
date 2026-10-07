@@ -109,7 +109,7 @@ REM "cm update (recommended)" in the README, and only find out at the worst mome
 :check_git
 set "GIT_AVAILABLE=0"
 where git >nul 2>&1
-if not !ERRORLEVEL! NEQ 0 goto :git_missing
+if !ERRORLEVEL! NEQ 0 goto :git_missing
 
 set "GIT_AVAILABLE=1"
 for /f "tokens=3" %%v in ('git --version 2^>nul') do set "GIT_VERSION=%%v"
