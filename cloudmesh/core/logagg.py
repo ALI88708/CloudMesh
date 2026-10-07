@@ -93,10 +93,12 @@ def available_logs(server_name):
 
 
 def _sources_file():
+    """Return the path to the log sources JSON file."""
     return os.path.join(DATA_DIR, "logagg_sources.json")
 
 
 def _load_sources():
+    """Load the list of configured log sources from disk."""
     p = _sources_file()
     if os.path.exists(p):
         try:
@@ -108,12 +110,14 @@ def _load_sources():
 
 
 def _save_sources(sources):
+    """Persist the list of configured log sources to disk."""
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(_sources_file(), "w") as f:
         json.dump(sources, f, indent=2)
 
 
 def _parse_since(since):
+    """Parse a relative time string like '1h' or '30m' into seconds."""
     if not since:
         return None
     m = re.match(r"^\s*(\d+)\s*([smhd]?)\s*$", str(since).lower())
@@ -124,6 +128,7 @@ def _parse_since(since):
 
 
 def _to_entries(server, log, text, level=None):
+    """Convert raw log text into a list of structured entry dicts."""
     entries = []
     for i, line in enumerate((text or "").splitlines()):
         line = line.strip()
@@ -148,6 +153,7 @@ class LogAggregator:
     """Adapter exposing the CLI-facing log API over the functions above."""
 
     def add_source(self, server=None, path=None, tag="default"):
+        """Register a log source for a server under the given tag."""
         if not path:
             return "Specify a log path with --path"
         sources = _load_sources()
@@ -158,6 +164,7 @@ class LogAggregator:
         return f"Source '{tag}' added ({entry['server']}:{path})"
 
     def list_sources(self):
+        """Return the list of configured log sources."""
         return _load_sources()
 
     def _resolve(self, source):
@@ -171,6 +178,7 @@ class LogAggregator:
         return [(None, "/var/log/syslog")]
 
     def search(self, pattern, source=None, since="1h", limit=50):
+        """Search log entries matching a pattern across a source's servers."""
         try:
             limit = max(int(limit), 1)
         except (TypeError, ValueError):
@@ -187,6 +195,7 @@ class LogAggregator:
         return out[:limit]
 
     def filter_logs(self, source=None, level="info", since="1h", limit=50):
+        """Return log entries from a source filtered by severity level."""
         try:
             limit = max(int(limit), 1)
         except (TypeError, ValueError):
@@ -205,6 +214,7 @@ class LogAggregator:
         return out[:limit]
 
     def subscribe(self, source=None, filter=None, interval=2):  # noqa: A002 - CLI flag name
+        """Follow a log source in near real time, optionally filtering lines."""
         server, path = self._resolve(source)[0]
         if server in (None, "all"):
             return "Subscribe needs a concrete server: --source SERVER"
@@ -214,6 +224,7 @@ class LogAggregator:
         return text or "(no output)"
 
     def stats(self):
+        """Return a summary of line counts per configured log source."""
         counts = {}
         total = 0
         for s in _load_sources():
@@ -226,6 +237,7 @@ class LogAggregator:
         return "\n".join(lines) if counts else "No log sources configured"
 
     def clear(self, source=None):
+        """Remove a specific log source, or all sources if none is given."""
         if not source:
             _save_sources([])
             return "All log sources cleared"

@@ -29,10 +29,12 @@ except ImportError:
 
 class _Monitor:
     def get_all_metrics(self, name):
+        """Return no metrics for any server; only used where metrics are irrelevant."""
         return None
 
 
 def test_node_keyring_roundtrip_and_mirror(tmp_path):
+    """Keys saved to the keyring must round-trip and stay encrypted on disk."""
     secret1 = "k1-secret-9f2c4b7e1a5d8f3c6b0e2a4d7c9e1b3d5"
     secret2 = "k2-secret-1a3c5e7b9d2f4a6c8e0b2d4f6a8c0e2a4"
     ring = NodeKeyring(storage=StorageManager(tmp_path), json_path=tmp_path / ".node_keys.json")
@@ -53,6 +55,7 @@ def test_node_keyring_roundtrip_and_mirror(tmp_path):
 
 
 def test_node_keyring_legacy_import_and_empty_stays_empty(tmp_path):
+    """Legacy JSON keys must import once, and a fully cleared keyring must stay empty."""
     (tmp_path / ".node_keys.json").write_text(
         json.dumps({"legacy": {"host": "10.0.0.9", "port": 9999, "key": "lk"}}))
     ring = NodeKeyring(storage=StorageManager(tmp_path), json_path=tmp_path / ".node_keys.json")
@@ -65,6 +68,7 @@ def test_node_keyring_legacy_import_and_empty_stays_empty(tmp_path):
 
 
 def test_alerts_wired_to_storage(tmp_path):
+    """Alert rules must persist to and be removable from shared storage."""
     mgr = AlertManager(_Monitor(), base_dir=str(tmp_path))
     mgr.add_rule("cpu-high", "cpu", 80.0, server="web1")
     rules = mgr.list_rules()
@@ -78,6 +82,7 @@ def test_alerts_wired_to_storage(tmp_path):
 
 
 def test_alerts_legacy_import(tmp_path):
+    """A legacy alerts.json file must be imported into the alert manager."""
     (tmp_path / "alerts.json").write_text(json.dumps({
         "rules": [{"name": "old-rule", "metric": "ram", "threshold": 90}],
         "history": [], "last_notified": {},
@@ -87,6 +92,7 @@ def test_alerts_legacy_import(tmp_path):
 
 
 def test_schedules_templates_wired(tmp_path):
+    """Schedules and templates must persist to and be removable from shared storage."""
     sm = ScheduleManager(schedule_file=str(tmp_path / ".schedule.json"),
                          storage=StorageManager(tmp_path), base_dir=str(tmp_path))
     sm.add("nightly", "cm backup", interval_seconds=86400, server="db1")
@@ -109,6 +115,7 @@ def test_schedules_templates_wired(tmp_path):
 
 
 def test_aliases_wired_with_legacy_import(tmp_path):
+    """Aliases must import from legacy JSON and stay wired to shared storage."""
     f = tmp_path / ".aliases.json"
     f.write_text(json.dumps({"ll": "ls -la"}))
     store = StorageManager(tmp_path)
@@ -122,6 +129,7 @@ def test_aliases_wired_with_legacy_import(tmp_path):
 
 
 def test_migrate_verify_ok_and_drift(tmp_path):
+    """Migration must verify clean, then detect drift from a post-migration JSON edit."""
     try:
         from cloudmesh.core.migrate import MigrationManager
     except ImportError:
@@ -143,6 +151,7 @@ def test_migrate_verify_ok_and_drift(tmp_path):
 
 
 def test_doctor_reports_storage_checks(tmp_path, capsys):
+    """`cm doctor` output must include a Storage section."""
     try:
         import cloudmesh.main as cloudmesh_main
     except ImportError:
@@ -153,6 +162,7 @@ def test_doctor_reports_storage_checks(tmp_path, capsys):
 
 
 def test_status_empty_keyring_no_crash(tmp_path, monkeypatch, capsys):
+    """`cm status` with an empty keyring must report no servers, not crash."""
     try:
         import cloudmesh.main as cloudmesh_main
     except ImportError:
@@ -164,6 +174,7 @@ def test_status_empty_keyring_no_crash(tmp_path, monkeypatch, capsys):
 
 
 def test_alert_history_preserves_import_timestamps(tmp_path):
+    """An explicit alert history timestamp must be kept, not overwritten with now."""
     store = StorageManager(tmp_path)
     store.add_alert_history("r1", "s1", "cpu", 95.0, 80.0, "gt", "critical",
                             timestamp="2026-01-01T00:00:00")

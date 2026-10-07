@@ -23,12 +23,15 @@ except ImportError:
 
 class _Monitor:
     def __init__(self, metrics):
+        """Store the per-server metrics this fake monitor will return."""
         self._metrics = metrics
 
     def get_local_metrics(self):
+        """Return the canned metrics for the local server."""
         return self._metrics["local"]
 
     def get_all_metrics(self, name):
+        """Return the canned metrics for a named server, or raise if unknown."""
         if name not in self._metrics:
             raise ValueError(f"unknown server {name}")
         return self._metrics[name]
@@ -36,13 +39,16 @@ class _Monitor:
 
 class _Servers:
     def __init__(self, names):
+        """Store the fixed list of server names this fake will report."""
         self._names = names
 
     def list_servers(self):
+        """Return a copy of the fixed server name list."""
         return list(self._names)
 
 
 def _metrics(cpu=10.0, ram=20.0, disk=30.0):
+    """Build a fake metrics dict with the given CPU, RAM, and disk percentages."""
     return {
         "cpu_percent": cpu,
         "ram": {"used_gb": 1.6, "total_gb": 8.0, "percent": ram},
@@ -53,6 +59,7 @@ def _metrics(cpu=10.0, ram=20.0, disk=30.0):
 # -- drift ---------------------------------------------------------------
 
 def test_drift_snapshot_check_clean(tmp_path):
+    """A snapshot taken right before check() must report no drift."""
     dm = DriftManager(storage=StorageManager(tmp_path))
     dm.storage.add_server("web1", "10.0.0.1", "root")
     dm.snapshot()
@@ -62,6 +69,7 @@ def test_drift_snapshot_check_clean(tmp_path):
 
 
 def test_drift_detects_added_removed_modified(tmp_path):
+    """Adding, removing, and creating resources after a snapshot must show up as drift."""
     dm = DriftManager(storage=StorageManager(tmp_path))
     dm.storage.add_server("web1", "10.0.0.1", "root")
     dm.storage.create_group("g1")
@@ -78,12 +86,14 @@ def test_drift_detects_added_removed_modified(tmp_path):
 
 
 def test_drift_no_baseline(tmp_path):
+    """Checking before any snapshot must report no baseline and no drift."""
     dm = DriftManager(storage=StorageManager(tmp_path))
     result = dm.check()
     assert result == {"has_baseline": False, "drifted": False, "diff": {}}
 
 
 def test_drift_collection_failure_never_reports_removals(tmp_path):
+    """A storage read failure must surface as an error, never as false removals."""
     from cloudmesh.core.drift import DriftError
     real = StorageManager(tmp_path)
     dm = DriftManager(storage=real)
@@ -94,9 +104,11 @@ def test_drift_collection_failure_never_reports_removals(tmp_path):
         """Settings work, but every collection read fails."""
 
         def __init__(self, inner):
+            """Wrap a real storage manager whose list_* reads will be broken."""
             self._inner = inner
 
         def __getattr__(self, name):
+            """Raise on any list_* read; delegate everything else to the inner storage."""
             if name.startswith("list_"):
                 raise RuntimeError("db unreadable")
             return getattr(self._inner, name)
@@ -117,6 +129,7 @@ def test_drift_collection_failure_never_reports_removals(tmp_path):
 
 
 def test_drift_excludes_secrets(tmp_path):
+    """A drift snapshot must never contain a node's raw auth key."""
     dm = DriftManager(storage=StorageManager(tmp_path))
     dm.storage.add_node("n1", "10.0.0.5", 9999, "supersecret-auth-key")
     state = dm.snapshot()
@@ -127,6 +140,7 @@ def test_drift_excludes_secrets(tmp_path):
 # -- diagnose ------------------------------------------------------------
 
 def test_diagnose_healthy_reports_info(tmp_path):
+    """A healthy system must still produce findings, all at info level or above."""
     engine = DiagnoseEngine(
         monitor=_Monitor({"local": _metrics()}),
         server_mgr=_Servers([]),
@@ -139,6 +153,7 @@ def test_diagnose_healthy_reports_info(tmp_path):
 
 
 def test_diagnose_flags_critical_disk_and_ram():
+    """Disk, RAM, and CPU usage near 100% must be flagged critical with suggestions."""
     engine = DiagnoseEngine(
         monitor=_Monitor({"local": _metrics(cpu=99.0, ram=95.0, disk=97.0)}),
         server_mgr=_Servers([]),
@@ -154,6 +169,7 @@ def test_diagnose_flags_critical_disk_and_ram():
 
 
 def test_diagnose_unreachable_server_warns():
+    """A server that can't be reached must produce a warning finding naming it."""
     engine = DiagnoseEngine(
         monitor=_Monitor({"local": _metrics()}),
         server_mgr=_Servers(["ghost"]),
@@ -166,6 +182,7 @@ def test_diagnose_unreachable_server_warns():
 
 
 def test_diagnose_includes_drift_findings(tmp_path):
+    """Diagnose output must include a drift finding naming the new server."""
     dm = DriftManager(storage=StorageManager(tmp_path))
     dm.storage.add_server("web1", "10.0.0.1", "root")
     dm.snapshot()
@@ -183,12 +200,14 @@ def test_diagnose_includes_drift_findings(tmp_path):
 
 
 def test_diagnose_without_components_never_raises(tmp_path):
+    """DiagnoseEngine with no components wired in must still return a list."""
     engine = DiagnoseEngine()
     findings = engine.diagnose()
     assert isinstance(findings, list)
 
 
 def test_diagnose_without_storage_skips_drift_silently(tmp_path, monkeypatch):
+    """Without storage, diagnose must skip drift checks and touch no files."""
     monkeypatch.chdir(tmp_path)
     engine = DiagnoseEngine(monitor=_Monitor({"local": {
         "cpu_percent": 5.0,

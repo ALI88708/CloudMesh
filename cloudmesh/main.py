@@ -1437,6 +1437,7 @@ def cmd_node_gpu(args):
 
 
 def cmd_node_job(args):
+    """Start, check status of, list, or kill a remote job on a node."""
     keys = _load_node_keys()
     action = getattr(args, "job_action", None) or args.action
     if action == "start":
@@ -2244,6 +2245,7 @@ def cmd_doctor(args):
 
 
 def cmd_update(args):
+    """Fetch, pull, and reinstall the latest CloudMesh changes from git."""
     import subprocess
     import shutil
 
@@ -2323,6 +2325,7 @@ def cmd_update(args):
 
 
 def cmd_status(args):
+    """Print the online status and resource usage of all configured servers."""
     servers = _load_node_keys()
     if not servers:
         if getattr(args, "as_json", False):
@@ -2439,6 +2442,7 @@ def cmd_exec(args):
 
 
 def cmd_watch(args):
+    """Continuously refresh and print live metrics for all servers and nodes until interrupted."""
     import subprocess as _sp
 
     interval = args.interval
@@ -2543,6 +2547,7 @@ def cmd_watch(args):
 
 
 def cmd_keys(args):
+    """Generate, list, show, deploy, or remove managed SSH keys."""
     home = Path.home()
     ssh_dir = home / ".ssh"
     keys_file = Path(__file__).parent / ".ssh_keys.json"
@@ -2656,6 +2661,7 @@ def cmd_keys(args):
 
 
 def cmd_config(args):
+    """List, export, import, or show CloudMesh configuration files."""
     config_dir = Path(__file__).parent
     config_files = {
         "servers": config_dir / "data" / "servers.json",
@@ -3378,6 +3384,7 @@ def _alias_acl_rm(args):
 
 
 def cmd_panic(args):
+    """Set up, execute, or manage Shamir-share-based or direct panic key rotation."""
     # Built up front: the `rotate` and `retry-pending` branches below need it,
     # and binding it only after them raised UnboundLocalError.
     panic = PanicManager()

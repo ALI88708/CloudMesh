@@ -93,9 +93,11 @@ class SSLChecker:
     """Adapter exposing the CLI-facing SSL API over the functions above."""
 
     def check_domain(self, domain, port=443):
+        """Check the SSL certificate for a single domain."""
         return check_cert(domain, port)
 
     def check_all(self):
+        """Check the SSL certificates for all tracked domains."""
         rows = []
         for r in check_all_tracked():
             if not isinstance(r, dict):
@@ -110,15 +112,19 @@ class SSLChecker:
         return rows
 
     def list_domains(self):
+        """Return the names of all tracked domains."""
         return [d.get("domain") for d in load_domains() if isinstance(d, dict) and d.get("domain")]
 
     def add_domain(self, domain, port=443):
+        """Add a domain to the tracked list."""
         return add_domain(domain, port)
 
     def remove_domain(self, domain):
+        """Remove a domain from the tracked list."""
         return remove_domain(domain)
 
     def history(self):
+        """Return the current certificate status for all tracked domains, timestamped."""
         from datetime import datetime as _dt
         now = _dt.now().isoformat(timespec="seconds")
         rows = []
@@ -134,6 +140,7 @@ class SSLChecker:
         return rows
 
     def renew_check(self, days=30):
+        """Return tracked domains whose certificates expire within the given number of days."""
         try:
             days = int(days)
         except (TypeError, ValueError):

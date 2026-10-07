@@ -37,6 +37,7 @@ SHELL_SCRIPTS = sorted(
 
 
 def _text(path: Path) -> str:
+    """Read a file as text, replacing any undecodable bytes."""
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -110,6 +111,7 @@ def test_linux_installer_is_committed_executable():
 
 
 def test_shell_scripts_are_syntactically_valid():
+    """Every tracked installer shell script must pass `bash -n`."""
     bash = _find_bash()
     if not bash:
         pytest.skip("no native bash on this platform; CI runs this on ubuntu-latest")
@@ -210,6 +212,7 @@ def test_installer_verifies_the_result(path):
 
 
 def test_linux_installer_help_does_not_require_a_tty():
+    """`--help` must work with stdin closed, not block waiting on a TTY."""
     bash = _find_bash()
     if not bash:
         pytest.skip("no native bash on this platform; CI runs this on ubuntu-latest")
@@ -234,6 +237,7 @@ def test_linux_installer_parses_the_project_layout():
 
 
 def test_windows_installer_parses_the_project_layout():
+    """The Windows batch installer must point pip at the project directory."""
     text = _text(WINDOWS_INSTALLER)
     assert 'set "CLOUDMESH_DIR=%PROJECT_DIR%\\cloudmesh"' in text
     assert 'pip install --quiet "%PROJECT_DIR%"' in text

@@ -99,6 +99,7 @@ def load_commands(argv: list[str]) -> list[list[str]]:
 
 
 def main() -> int:
+    """Run every loaded command, print failures, and return the process exit code."""
     verbose = "--verbose" in sys.argv
     commands = load_commands(sys.argv)
     failures = []

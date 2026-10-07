@@ -30,6 +30,7 @@ def _capture_handler(monkeypatch, name, record=None):
     calls = record if record is not None else []
 
     def _handler(args):
+        """Record the args it was called with instead of doing real work."""
         calls.append(args)
 
     monkeypatch.setattr(cloudmesh_main, name, _handler)
@@ -111,7 +112,9 @@ def test_lookup_handler_reports_a_missing_entry(capsys):
 
 
 def test_lookup_handler_returns_the_registered_callable():
+    """A name present in the table must return its handler, not raise."""
     def _handler():
+        """No-op handler used only as a sentinel for identity checks."""
         return None
 
     assert cloudmesh_main._lookup_handler({"run": _handler}, "run") is _handler
@@ -138,9 +141,11 @@ def test_cmd_api_reaches_its_sleep_loop(monkeypatch, capsys):
         api_key = "fake-key"
 
         def __init__(self, *a, **k):
+            """Accept and ignore any constructor arguments."""
             pass
 
         def start(self):
+            """Return a fixed fake port instead of binding a real server."""
             return 8123
 
     monkeypatch.setattr(cloudmesh_main, "CloudMeshAPI", _FakeAPI)
@@ -148,6 +153,7 @@ def test_cmd_api_reaches_its_sleep_loop(monkeypatch, capsys):
     monkeypatch.setattr(cloudmesh_main, "init_components", lambda: tuple([None] * 11))
 
     def _interrupt(_seconds):
+        """Simulate Ctrl-C so the fake API's sleep loop exits immediately."""
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cloudmesh_main.time, "sleep", _interrupt)
@@ -167,9 +173,11 @@ def test_cmd_weather_forecast_has_no_undefined_names(monkeypatch, capsys):
     """`cm weather` forecast paths raised NameError: datetime was never imported."""
     class _FakeWeather:
         def __init__(self, *a, **k):
+            """Accept and ignore any constructor arguments."""
             pass
 
         def predict_all(self, hour=None):
+            """Return a fixed fake forecast for a single server."""
             return {
                 "srv1": {
                     "status": "predicted",
@@ -218,6 +226,7 @@ def test_panic_retry_pending_is_not_an_unbound_local(monkeypatch, capsys):
 
 
 def test_panic_dry_run_runs(monkeypatch, capsys):
+    """`cm panic --dry-run` must report planned changes without applying them."""
     monkeypatch.setattr(
         cloudmesh_main, "PanicManager",
         lambda *a, **k: _StubPanic(dry_run=[("rotate_secret_key", "Will generate new Fernet key")]),
@@ -231,18 +240,23 @@ def test_panic_dry_run_runs(monkeypatch, capsys):
 
 class _StubPanic:
     def __init__(self, **results):
+        """Store the canned results each stubbed method should return."""
         self._results = results
 
     def rotate_node_keys(self):
+        """Return the canned rotate_node_keys result, or an empty list."""
         return self._results.get("rotate_node_keys", [])
 
     def retry_pending(self):
+        """Return the canned retry_pending result, or an empty list."""
         return self._results.get("retry_pending", [])
 
     def dry_run(self):
+        """Return the canned dry_run result, or an empty list."""
         return self._results.get("dry_run", [])
 
     def execute_panic(self):
+        """Return the canned execute_panic result, or an empty list."""
         return self._results.get("execute_panic", [])
 
 

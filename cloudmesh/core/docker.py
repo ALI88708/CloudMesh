@@ -151,6 +151,7 @@ class DockerManager:
     """Adapter exposing the CLI-facing Docker API over the functions above."""
 
     def list_servers(self):
+        """Return the names of all configured servers and nodes."""
         cfg = _load_config()
         names = list(cfg.get("servers", {}).keys()) + list(cfg.get("nodes", {}).keys())
         if not names:
@@ -158,6 +159,7 @@ class DockerManager:
         return names
 
     def list_containers(self, server):
+        """Return a formatted listing of containers running on the given server."""
         results = docker_list()
         if isinstance(results, str):
             return results
@@ -173,6 +175,7 @@ class DockerManager:
         return f"Server '{server}' not found"
 
     def docker_compose(self, path, server, action="up"):
+        """Run docker compose up or down for the given path on the server."""
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
@@ -184,12 +187,15 @@ class DockerManager:
         return "Compose started" if rc == 0 else f"Failed: {out}"
 
     def container_stats(self, server):
+        """Return live resource usage stats for containers on the server."""
         return docker_action(server, "stats")
 
     def list_images(self, server):
+        """Return the list of Docker images available on the server."""
         return docker_action(server, "images")
 
     def pull_image(self, image, server):
+        """Pull the given Docker image on the server."""
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
@@ -198,6 +204,7 @@ class DockerManager:
         return f"Pulled {image}" if rc == 0 else f"Failed: {out}"
 
     def exec_command(self, container, cmd, server):
+        """Execute a command inside a container on the server."""
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
@@ -206,6 +213,7 @@ class DockerManager:
         return out if rc == 0 else f"Failed: {out}"
 
     def container_logs(self, container, server, lines=50):
+        """Return the last N lines of logs for a container on the server."""
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
@@ -218,6 +226,7 @@ class DockerManager:
         return out if rc == 0 else f"Failed: {out}"
 
     def cleanup(self, server):
+        """Prune stopped containers and unused images on the server."""
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
@@ -226,4 +235,5 @@ class DockerManager:
         return out if rc == 0 else f"Failed: {out}"
 
     def prune(self, server):
+        """Run a Docker system prune on the server."""
         return docker_action(server, "prune")

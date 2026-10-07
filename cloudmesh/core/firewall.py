@@ -141,6 +141,7 @@ class FirewallManager:
     """Adapter exposing the CLI-facing firewall API over the functions above."""
 
     def list_rules(self, server=None):
+        """Return firewall rules for a server, or a summary across all servers."""
         if not server:
             results = firewall_check_all()
             rules = []
@@ -160,16 +161,19 @@ class FirewallManager:
         return [{"port": "?", "protocol": "?", "action": "raw", "source": ""}]
 
     def add_rule(self, port, proto="tcp", action="allow", server=None):
+        """Add a firewall rule for a port/protocol on the given server."""
         if server is None:
             return "Specify a server with --server"
         return firewall_add_rule(server, f"{action} {port}/{proto}")
 
     def remove_rule(self, port, proto="tcp", server=None):
+        """Remove the allow rule for a port/protocol on the given server."""
         if server is None:
             return "Specify a server with --server"
         return firewall_delete_rule(server, f"allow {port}/{proto}")
 
     def status(self, server=None):
+        """Return the firewall status for a server, or all servers if none given."""
         if server is None:
             results = firewall_check_all()
             if not results:
@@ -178,6 +182,7 @@ class FirewallManager:
         return firewall_list(server)
 
     def check_port(self, port, server=None):
+        """Check whether a port is open or closed on the given server."""
         if server is None:
             return "Specify a server with --server"
         srv = _get_server(server)
@@ -189,6 +194,7 @@ class FirewallManager:
         return f"Port {port} on {server}: {state}"
 
     def backup(self, server=None, output="firewall_backup.json"):
+        """Save the current firewall rules for a server to a JSON file."""
         import json as _json
         rules = self.list_rules(server)
         try:
@@ -199,6 +205,7 @@ class FirewallManager:
             return f"Backup failed: {e}"
 
     def load_rules(self, path, server=None):
+        """Load firewall rules from a JSON file and apply them to a server."""
         import json as _json
         if server is None:
             return "Specify a server with --server"

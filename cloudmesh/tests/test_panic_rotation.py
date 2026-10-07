@@ -22,6 +22,7 @@ class _FakeClient:
     fail_names = set()
 
     def __init__(self, host, port=9999, auth_key=None, tls=False, ca_file=None):
+        """Record connection details and register this instance for inspection."""
         self.host = host
         self.port = port
         self.auth_key = auth_key
@@ -30,6 +31,7 @@ class _FakeClient:
 
     @classmethod
     def from_config(cls, info):
+        """Build a fake client from a node config dict, like the real NodeClient."""
         return cls(
             info.get("host"),
             info.get("port", 9999),
@@ -39,6 +41,7 @@ class _FakeClient:
         )
 
     def rotate_key(self, new_key):
+        """Record the rotated key, or report failure for hosts marked to fail."""
         if self.host in _FakeClient.fail_names:
             return {"success": False, "message": "node refused"}
         self.rotated_to = new_key
@@ -47,11 +50,13 @@ class _FakeClient:
 
 @pytest.fixture
 def storage(tmp_path):
+    """Return a fresh StorageManager backed by a temp directory."""
     return StorageManager(tmp_path)
 
 
 @pytest.fixture
 def keyring(tmp_path, storage):
+    """Return a NodeKeyring pre-populated with a single node's key."""
     ring = NodeKeyring(storage=storage, base_dir=tmp_path)
     ring.save({"node-a": {"host": "10.0.0.1", "port": 9999, "key": "old-key-a"}})
     return ring
@@ -59,6 +64,7 @@ def keyring(tmp_path, storage):
 
 @pytest.fixture(autouse=True)
 def _patch_client(monkeypatch):
+    """Replace NodeClient with _FakeClient and reset its state around each test."""
     _FakeClient.instances = []
     _FakeClient.fail_names = set()
     monkeypatch.setattr("cloudmesh.core.node_client.NodeClient", _FakeClient)
@@ -94,6 +100,7 @@ def test_rotate_survives_a_fresh_keyring(tmp_path, storage, keyring):
 
 
 def test_rotate_mirror_matches_storage(tmp_path, storage, keyring):
+    """The JSON mirror and SQLite storage must agree on the rotated key."""
     manager = PanicManager(base_dir=tmp_path, keyring=keyring)
     manager.rotate_node_keys()
 
@@ -104,6 +111,7 @@ def test_rotate_mirror_matches_storage(tmp_path, storage, keyring):
 
 
 def test_failed_rotation_is_queued_for_retry(tmp_path, storage, keyring):
+    """A rotation an unreachable node refuses must be queued for later retry."""
     _FakeClient.fail_names = {"10.0.0.1"}
     manager = PanicManager(base_dir=tmp_path, keyring=keyring)
 
@@ -116,6 +124,7 @@ def test_failed_rotation_is_queued_for_retry(tmp_path, storage, keyring):
 
 
 def test_retry_pending_commits_the_new_key(tmp_path, storage, keyring):
+    """Retrying a pending rotation once the node is reachable must commit the key."""
     _FakeClient.fail_names = {"10.0.0.1"}
     manager = PanicManager(base_dir=tmp_path, keyring=keyring)
     manager.rotate_node_keys()
