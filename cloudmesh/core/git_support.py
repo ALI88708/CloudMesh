@@ -96,8 +96,9 @@ def update_support(base_dir: Path | str | None = None) -> str:
     available. Everything else — a wheel install, or a checkout on a machine
     without git — can still be refreshed with
     `pip install --upgrade cloudmesh`, which is why "pip" is the floor and
-    "none" is never returned. Inspect .git directly under base_dir, defaulting
-    to this module's project root.
+    "none" is never returned. Accept a .git file or directory directly under
+    base_dir, defaulting to this module's project root. Git output decoding
+    errors propagate.
     """
     if base_dir is None:
         base_dir = Path(__file__).resolve().parent.parent.parent
