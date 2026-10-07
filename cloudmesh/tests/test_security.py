@@ -16,7 +16,8 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -28,6 +29,101 @@ if str(ROOT) not in sys.path:
 # ─────────────────────────────────────────────
 # 1. REST API Auth Tests
 # ─────────────────────────────────────────────
+
+class TestPanicSecretKeyWrite:
+    @pytest.mark.parametrize("existing", [False, True])
+    @pytest.mark.parametrize("platform", ["posix", "nt"])
+    def test_replaces_key_atomically(self, tmp_path, monkeypatch, existing, platform):
+        from cloudmesh.core import panic
+
+        if platform == "posix" and os.name == "nt":
+            pytest.skip("POSIX file permissions are unavailable on Windows")
+        manager = panic.PanicManager(base_dir=tmp_path)
+        destination = manager.secret_key_file
+        old_key = b"old-key"
+        new_key = b"replacement-key"
+        if existing:
+            destination.write_bytes(old_key)
+            destination.chmod(0o644)
+        staged = tmp_path / ".secret.key.tmp"
+        staged.write_bytes(b"stale interrupted write")
+        staged.chmod(0o644)
+        observed = []
+
+        def replace(source, target):
+            assert Path(target) == destination
+            assert Path(source).parent == destination.parent
+            assert Path(source).read_bytes() == new_key
+            if existing:
+                assert destination.read_bytes() == old_key
+            else:
+                assert not destination.exists()
+            if platform == "posix":
+                assert Path(source).stat().st_mode & 0o777 == 0o600
+            observed.append(True)
+            os.replace(source, target)
+
+        fake_os = SimpleNamespace(**vars(os))
+        fake_os.name = platform
+        fake_os.replace = replace
+        monkeypatch.setattr(panic, "os", fake_os)
+
+        manager._write_secret_key(new_key)
+
+        assert observed == [True]
+        assert destination.read_bytes() == new_key
+        assert not staged.exists()
+        if platform == "posix":
+            assert destination.stat().st_mode & 0o777 == 0o600
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX write/fsync path")
+    @pytest.mark.parametrize("operation", ["write", "fsync", "replace"])
+    def test_failed_write_preserves_key_and_can_be_retried(
+        self, tmp_path, monkeypatch, operation
+    ):
+        from cloudmesh.core import panic
+        from cryptography.fernet import Fernet
+
+        manager = panic.PanicManager(base_dir=tmp_path)
+        old_key = Fernet.generate_key()
+        new_key = Fernet.generate_key()
+        ciphertext = Fernet(old_key).encrypt(b"stored password")
+        manager.secret_key_file.write_bytes(old_key)
+        fake_os = SimpleNamespace(**vars(os))
+        fake_os.close = Mock(wraps=os.close)
+        setattr(fake_os, operation, Mock(side_effect=OSError("injected disk failure")))
+
+        with monkeypatch.context() as patch:
+            patch.setattr(panic, "os", fake_os)
+            with pytest.raises(OSError, match="injected disk failure"):
+                manager._write_secret_key(new_key)
+
+        assert manager.secret_key_file.read_bytes() == old_key
+        assert Fernet(manager.secret_key_file.read_bytes()).decrypt(ciphertext) == b"stored password"
+        fake_os.close.assert_called_once()
+        with pytest.raises(OSError):
+            os.fstat(fake_os.close.call_args.args[0])
+
+        manager._write_secret_key(new_key)
+
+        assert manager.secret_key_file.read_bytes() == new_key
+        assert not (tmp_path / ".secret.key.tmp").exists()
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX symbolic link behavior")
+    def test_stale_temporary_symlink_does_not_overwrite_its_target(self, tmp_path):
+        from cloudmesh.core.panic import PanicManager
+
+        unrelated = tmp_path / "unrelated"
+        unrelated.write_bytes(b"keep this data")
+        (tmp_path / ".secret.key.tmp").symlink_to(unrelated)
+        manager = PanicManager(base_dir=tmp_path)
+
+        manager._write_secret_key(b"new-key")
+
+        assert unrelated.read_bytes() == b"keep this data"
+        assert manager.secret_key_file.read_bytes() == b"new-key"
+        assert not (tmp_path / ".secret.key.tmp").is_symlink()
+
 
 class FakeRequest:
     def __init__(self, path="/api/status", headers=None):
