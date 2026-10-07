@@ -101,24 +101,30 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
-          # Storage is created on first use, not at install time, so touch it
-          # before asserting anything about its permissions.
+          # Storage is created on first use, and it lands beside the *installed*
+          # package (site-packages), not in the staged source tree. Ask the tool
+          # where its files are instead of guessing the path.
           cm node list > /dev/null
-          KEY="$HOME/.cloudmesh/project/cloudmesh/.secret.key"
-          test -f "$KEY"
-          mode=$(stat -c '%a' "$KEY")
-          case "$mode" in
-            600|400) echo "[OK] .secret.key is $mode" ;;
-            *) echo "::error file=$KEY::expected 600, found $mode"; exit 1 ;;
-          esac
-          db="$HOME/.cloudmesh/project/cloudmesh/cloudmesh.db"
-          if [ -f "$db" ]; then
-            dbmode=$(stat -c '%a' "$db")
-            case "$dbmode" in
-              600|400) echo "[OK] cloudmesh.db is $dbmode" ;;
-              *) echo "::error file=$db::expected 600, found $dbmode"; exit 1 ;;
-            esac
-          fi
+          "$HOME/.cloudmesh/venv/bin/python" - <<'PY'
+          import os
+          import stat
+          from pathlib import Path
+          from cloudmesh.core.storage import StorageManager
+
+          storage = StorageManager()
+          problems = []
+          for label, path in ((".secret.key", storage.key_path), ("cloudmesh.db", storage.db_path)):
+              if not Path(path).exists():
+                  problems.append(f"{label} was not created at {path}")
+                  continue
+              mode = stat.S_IMODE(os.stat(path).st_mode)
+              if mode not in (0o600, 0o400):
+                  problems.append(f"{label} is {oct(mode)}, expected 0o600")
+              else:
+                  print(f"[OK] {label} is {oct(mode)} at {path}")
+          if problems:
+              raise SystemExit("\n".join(problems))
+          PY
 
       - name: The whole command surface answers --help
         run: |
