@@ -53,17 +53,23 @@ jobs:
 
       # Not yet a gate: F841/F401 have accumulated across the whole tree and
       # fixing them belongs in its own change. Reported so it stays visible.
+      # `continue-on-error` alone still fails the step, so swallow the status
+      # explicitly and print the count.
       - name: Ruff report — unused locals and imports (not blocking)
-        continue-on-error: true
-        run: python -m ruff check --no-cache --output-format=concise --select F841,F401 cloudmesh scripts
+        shell: bash
+        run: |
+          python -m ruff check --no-cache --output-format=concise --select F841,F401 cloudmesh scripts \
+            || echo "[info] F841/F401 are known debt; not a gate yet"
 
       - name: Syntax check every Python file
         shell: bash
         run: find cloudmesh -name "*.py" -not -path "*/__pycache__/*" -exec python -m py_compile {} \; && echo "all modules compile"
 
+      # bash is only present on the Linux runner, so this check runs there.
       # Both installers were committed with CRLF endings, which makes bash fail
-      # on line one on Linux, so the documented one-line install never ran.
+      # on line one, so the documented one-line install never ran.
       - name: Shell scripts must use LF line endings
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -77,6 +83,7 @@ jobs:
           exit $failed
 
       - name: Shellcheck the Linux installer
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -149,13 +156,15 @@ jobs:
           source .verify-venv/bin/activate 2>/dev/null || source .verify-venv/Scripts/activate
           python scripts/smoke_cli.py --cmd cm --jobs 8
 
+      # The driver reads SAFE_COMMANDS out of the test module with ast, so this
+      # needs no pytest and no shell quoting gymnastics.
       - name: Commands must not crash on first use
         shell: bash
         run: |
           set -euo pipefail
           # shellcheck disable=SC1091
           source .verify-venv/bin/activate 2>/dev/null || source .verify-venv/Scripts/activate
-          python cloudmesh/tests/cli_driver.py "$(python -c "import json,sys; sys.path.insert(0,'cloudmesh/tests'); from test_cli_no_tracebacks import SAFE_COMMANDS; print(json.dumps(SAFE_COMMANDS))")"
+          python cloudmesh/tests/cli_driver.py
 
   build-check:
     name: Build artifacts

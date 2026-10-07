@@ -48,16 +48,30 @@ jobs:
           bash -n ./cm_for-linux.sh
           echo "[OK] cm_for-linux.sh parses"
 
+      # `--yes` drives the scripted path; `bash <script>` is used rather than
+      # `./cm.sh` so a lost executable bit cannot fail the job for the wrong
+      # reason. A test asserts the executable bit is actually committed.
+      - name: The installer must be committed executable
+        run: |
+          set -euo pipefail
+          mode=$(git ls-files -s cm_for-linux.sh | cut -d' ' -f1)
+          echo "git mode: $mode"
+          if [ "$mode" != "100755" ]; then
+            echo "::error file=cm_for-linux.sh::committed mode $mode; the documented 'chmod +x && ./cm.sh' flow depends on 100755"
+            exit 1
+          fi
+          echo "[OK] cm_for-linux.sh is committed as 100755"
+
       - name: --help must not need a TTY
         run: |
           set -euo pipefail
-          ./cm_for-linux.sh --help < /dev/null
+          bash ./cm_for-linux.sh --help < /dev/null
           echo "[OK] --help works without a terminal"
 
       - name: Install from this checkout and verify
         run: |
           set -euo pipefail
-          ./cm_for-linux.sh --yes --source="$GITHUB_WORKSPACE" < /dev/null
+          bash ./cm_for-linux.sh --yes --source="$GITHUB_WORKSPACE" < /dev/null
 
       - name: The installed cm must be on PATH and working
         run: |
@@ -215,13 +229,17 @@ jobs:
           print("declared:", sorted(declared))
 
           bat = pathlib.Path("cm_for-windows.bat").read_text()
-          installs = re.search(r"pip install[^\n]*", bat)
-          print("windows pip line:", installs.group(0) if installs else "none")
 
-          # `pip install <dir>` resolves the real dependency set from
-          # pyproject.toml, so a hard-coded list is the thing to flag.
-          bad = re.search(r"pip install\s+(?!-)(--\S+\s+)*[a-z0-9_.-]+\s+[a-z0-9_.-]+", bat)
-          assert not bad, f"installer hard-codes a dependency list: {bad.group(0)!r}"
+          # Look at real command lines only. A naive `pip install a b` search also
+          # matches log text such as `echo [FAIL] pip install failed 1`.
+          lines = [
+              ln.strip()
+              for ln in bat.splitlines()
+              if re.match(r'\s*"?%VENV_PYTHON%"?\s+-m\s+pip\s+install\s+(?!-)(?!["%])\S', ln)
+          ]
+          print("windows pip command lines:", lines)
+          assert not lines, f"installer hard-codes a dependency list: {lines}"
+          assert 'pip install --quiet "%PROJECT_DIR%"' in bat
           print("[OK] the Windows installer installs the project, not a pinned list")
           PY
 

@@ -10,6 +10,7 @@ exception. A clean run prints ``OK <count>``.
 
 from __future__ import annotations
 
+import ast
 import io
 import json
 import sys
@@ -68,9 +69,33 @@ def run_one(argv: list[str]) -> str | None:
     return None
 
 
+def load_commands(argv: list[str]) -> list[list[str]]:
+    """Return the command list from argv, a JSON file, or the test module.
+
+    Reading the test module directly with ast keeps CI from having to shell out
+    to a second Python process just to pass a list through, and avoids importing
+    pytest here. argv[1] may still be an inline JSON array or a path to one.
+    """
+    if len(argv) > 1 and argv[1] not in ("--verbose",):
+        payload = Path(argv[1])
+        if not payload.exists():
+            return json.loads(argv[1])
+        return json.loads(payload.read_text(encoding="utf-8"))
+
+    module = Path(__file__).resolve().parent / "test_cli_no_tracebacks.py"
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "SAFE_COMMANDS"
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise SystemExit(f"SAFE_COMMANDS not found in {module}")
+
+
 def main() -> int:
     verbose = "--verbose" in sys.argv
-    commands = json.loads(sys.argv[1])
+    commands = load_commands(sys.argv)
     failures = []
     for argv in commands:
         if verbose:

@@ -84,6 +84,31 @@ def test_gitattributes_pins_shell_scripts_to_lf():
     )
 
 
+def test_linux_installer_is_committed_executable():
+    """The README flow is `chmod +x cm.sh && ./cm.sh`; CI runs it directly too.
+
+    Committed as 100644 this fails with exit 126 on Linux, which is what the
+    first installer run in CI hit.
+    """
+    import subprocess
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "-s", "--", str(LINUX_INSTALLER), str(NODE_SH)],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        timeout=60,
+    )
+    if tracked.returncode != 0 or not tracked.stdout.strip():
+        pytest.skip("not a git checkout")
+    for line in tracked.stdout.strip().splitlines():
+        mode, _sha, _stage, path = line.split(maxsplit=3)
+        assert mode == "100755", (
+            f"{path} is committed as {mode}; a shell script needs 100755 "
+            "for './cm.sh' to run"
+        )
+
+
 def test_shell_scripts_are_syntactically_valid():
     bash = _find_bash()
     if not bash:
