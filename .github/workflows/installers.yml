@@ -100,14 +100,25 @@ jobs:
       - name: Key files are private
         run: |
           set -euo pipefail
-          check_mode() {
-            mode=$(stat -c '%a' "$1")
-            case "$mode" in
-              600|400) echo "[OK] $1 is $mode" ;;
-              *) echo "::error file=$1::expected 600, found $mode"; return 1 ;;
+          export PATH="$HOME/.local/bin:$PATH"
+          # Storage is created on first use, not at install time, so touch it
+          # before asserting anything about its permissions.
+          cm node list > /dev/null
+          KEY="$HOME/.cloudmesh/project/cloudmesh/.secret.key"
+          test -f "$KEY"
+          mode=$(stat -c '%a' "$KEY")
+          case "$mode" in
+            600|400) echo "[OK] .secret.key is $mode" ;;
+            *) echo "::error file=$KEY::expected 600, found $mode"; exit 1 ;;
+          esac
+          db="$HOME/.cloudmesh/project/cloudmesh/cloudmesh.db"
+          if [ -f "$db" ]; then
+            dbmode=$(stat -c '%a' "$db")
+            case "$dbmode" in
+              600|400) echo "[OK] cloudmesh.db is $dbmode" ;;
+              *) echo "::error file=$db::expected 600, found $dbmode"; exit 1 ;;
             esac
-          }
-          check_mode "$HOME/.cloudmesh/project/cloudmesh/.secret.key"
+          fi
 
       - name: The whole command surface answers --help
         run: |

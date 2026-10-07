@@ -18,7 +18,6 @@ command costs ~1.5s of paramiko import, which is too slow to keep in CI across a
 Python-version matrix on two operating systems.
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -106,8 +105,11 @@ def _child_env() -> dict:
 @pytestmark_timeout
 def test_safe_commands_do_not_crash():
     """Every command in the sweep must fail gracefully, never with a traceback."""
+    # No JSON argument: the list is long enough to hit the per-argument length
+    # limit on Linux ("File name too long"), so the driver reads it from the
+    # module itself.
     proc = subprocess.run(
-        [sys.executable, str(DRIVER), json.dumps(SAFE_COMMANDS)],
+        [sys.executable, str(DRIVER)],
         capture_output=True,
         text=True,
         timeout=TIMEOUT,

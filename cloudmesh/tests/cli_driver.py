@@ -74,9 +74,14 @@ def load_commands(argv: list[str]) -> list[list[str]]:
 
     Reading the test module directly with ast keeps CI from having to shell out
     to a second Python process just to pass a list through, and avoids importing
-    pytest here. argv[1] may still be an inline JSON array or a path to one.
+    pytest here.
+
+    argv[1] may be an inline JSON array, a path to a JSON file, or the literal
+    `auto` (the default). Inline JSON is accepted for convenience but the list
+    is long enough to exceed the per-argument length limit on Linux, so CI
+    should call the driver with no argument at all.
     """
-    if len(argv) > 1 and argv[1] not in ("--verbose",):
+    if len(argv) > 1 and argv[1] not in ("--verbose", "auto"):
         payload = Path(argv[1])
         if not payload.exists():
             return json.loads(argv[1])
