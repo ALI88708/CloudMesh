@@ -1437,6 +1437,10 @@ def cmd_node_gpu(args):
 
 
 def cmd_node_job(args):
+    """Dispatch a node job subcommand by args.job_action.
+
+    Print usage and raise SystemExit(2) if no subcommand was given.
+    """
     keys = _load_node_keys()
     # `node_sub` claims args.action ("job"); every real subcommand lands in
     # job_action. Falling back to args.action here would match nothing and exit
