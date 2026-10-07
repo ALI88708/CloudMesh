@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -368,3 +369,136 @@ def test_update_help_offers_both_paths():
 def _always_true(self):
     """Make Path.exists() report a git checkout, whatever the path."""
     return str(self).endswith(".git") or Path.exists(self)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [FileNotFoundError("git disappeared"), PermissionError("not executable"),
+     subprocess.TimeoutExpired("git", 10), subprocess.SubprocessError("failed")],
+    ids=["missing", "permission", "timeout", "subprocess-error"],
+)
+def test_git_probe_handles_execution_errors(monkeypatch, error):
+    monkeypatch.setattr(git_support, "_which", Mock(return_value="/test/git"))
+    run = Mock(side_effect=error)
+    monkeypatch.setattr(git_support, "_run", run)
+
+    assert git_support.git_available() is False
+    assert git_support.git_version() == ""
+
+
+def test_missing_git_does_not_start_a_process(monkeypatch):
+    monkeypatch.setattr(git_support, "_which", Mock(return_value=None))
+    run = Mock(side_effect=AssertionError("must not start git"))
+    monkeypatch.setattr(git_support, "_run", run)
+
+    assert git_support.git_version() == ""
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("error", [OSError("removed"), subprocess.TimeoutExpired("git", 10)])
+def test_git_version_handles_failure_after_successful_detection(monkeypatch, error):
+    monkeypatch.setattr(git_support, "_which", Mock(return_value="/test/git"))
+    monkeypatch.setattr(git_support, "_run", Mock(side_effect=[
+        subprocess.CompletedProcess([], 0, stdout="git version 2.50.0\n"), error,
+    ]))
+
+    assert git_support.git_version() == ""
+
+
+def test_git_version_strips_surrounding_whitespace(monkeypatch):
+    monkeypatch.setattr(git_support, "git_available", Mock(return_value=True))
+    monkeypatch.setattr(git_support, "_run", Mock(return_value=
+        subprocess.CompletedProcess([], 0, stdout="  git version 2.50.0.windows.1\r\n")))
+
+    assert git_support.git_version() == "git version 2.50.0.windows.1"
+
+
+@pytest.mark.parametrize("with_cwd", [False, True])
+def test_git_subprocess_is_bounded_and_has_no_inherited_stdin(monkeypatch, tmp_path, with_cwd):
+    result = subprocess.CompletedProcess([], 1, stdout="", stderr="failure")
+    run = Mock(return_value=result)
+    monkeypatch.setattr(git_support.subprocess, "run", run)
+    cwd = tmp_path if with_cwd else None
+
+    assert git_support._run(["git", "--version"], cwd=cwd) is result
+    run.assert_called_once_with(
+        ["git", "--version"], cwd=str(tmp_path) if with_cwd else None,
+        capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
+    )
+
+
+@pytest.mark.parametrize("available, expected", [(True, "git"), (False, "pip")])
+def test_update_support_accepts_git_worktree_files(monkeypatch, tmp_path, available, expected):
+    (tmp_path / ".git").write_text("gitdir: /some/repo/.git/worktrees/test\n")
+    monkeypatch.setattr(git_support, "git_available", Mock(return_value=available))
+
+    assert git_support.update_support(str(tmp_path)) == expected
+
+
+def test_wheel_update_support_does_not_probe_git(monkeypatch, tmp_path):
+    probe = Mock(side_effect=AssertionError("wheel installs cannot use git"))
+    monkeypatch.setattr(git_support, "git_available", probe)
+
+    assert git_support.update_support(tmp_path) == "none"
+    probe.assert_not_called()
+
+
+@pytest.mark.parametrize("version_line", ['version = "9.8.7"', "  version = '9.8.7'  "])
+def test_checkout_version_accepts_quotes_and_whitespace(monkeypatch, tmp_path, version_line):
+    (tmp_path / "pyproject.toml").write_text(f"[project]\n{version_line}\n", encoding="utf-8")
+    fallback = Mock(return_value="1.0.0")
+    monkeypatch.setattr(git_support, "_installed_version", fallback)
+
+    assert git_support.installed_version(str(tmp_path)) == "9.8.7"
+    fallback.assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["missing", "no-version", "unreadable"])
+def test_checkout_version_falls_back_when_unavailable(monkeypatch, tmp_path, state):
+    project = tmp_path / "pyproject.toml"
+    if state == "no-version":
+        project.write_text('[project]\nname = "cloudmesh"\n')
+    elif state == "unreadable":
+        project.mkdir()  # Opening a directory as a file raises OSError on supported platforms.
+    fallback = Mock(return_value="7.6.5")
+    monkeypatch.setattr(git_support, "_installed_version", fallback)
+
+    assert git_support.installed_version(tmp_path) == "7.6.5"
+    fallback.assert_called_once_with()
+
+
+@pytest.mark.parametrize("metadata, expected", [
+    ({"version": "7.6.5"}, "7.6.5"), ({"version": None}, ""), ({}, ""),
+])
+def test_package_version_handles_missing_metadata(monkeypatch, metadata, expected):
+    from cloudmesh.core import features
+
+    monkeypatch.setattr(features, "get_version", Mock(return_value=metadata))
+    assert git_support._installed_version() == expected
+
+
+def test_package_version_lookup_failure_is_reported_as_unknown(monkeypatch):
+    from cloudmesh.core import features
+
+    monkeypatch.setattr(features, "get_version", Mock(side_effect=RuntimeError("metadata missing")))
+    assert git_support.latest_version() == ""
+
+
+@pytest.mark.parametrize("available, version, git_version, expected", [
+    (False, "", "", ["CloudMesh unknown", "git not found", "pip install --upgrade cloudmesh"]),
+    (True, "9.8.7", "git version 2.50.0", ["CloudMesh 9.8.7", "2.50.0", "cm update can pull"]),
+    (True, "9.8.7", "", ["CloudMesh 9.8.7", "git available", "cm update can pull"]),
+])
+def test_update_advice_explains_version_and_update_path(
+    monkeypatch, tmp_path, available, version, git_version, expected,
+):
+    installed = Mock(return_value=version)
+    monkeypatch.setattr(git_support, "installed_version", installed)
+    monkeypatch.setattr(git_support, "git_available", Mock(return_value=available))
+    monkeypatch.setattr(git_support, "git_version", Mock(return_value=git_version))
+
+    message = git_support.update_advice(tmp_path)
+
+    installed.assert_called_once_with(tmp_path)
+    for fragment in expected:
+        assert fragment in message
