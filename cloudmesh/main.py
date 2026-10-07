@@ -2088,12 +2088,12 @@ def cmd_version(args):
 
 
 def cmd_doctor(args):
-    """Print local source, configuration, and storage health checks.
+    """Print local source, configuration, storage, and Git/update health checks.
 
     Storage checks may initialize database/key files, import nodes, and
-    refresh their mirror. Report storage failures in the table; source read
-    and file stat errors outside those checks propagate. Failed checks do
-    not set an exit status.
+    refresh their mirror. Report storage and Git check failures in the table;
+    source read and file stat errors outside those checks propagate. Failed
+    checks do not set an exit status.
     """
     console.print(Panel("[bold bright_blue]CloudMesh Doctor — Security & Health Check[/]", border_style="bright_blue"))
     checks = []
@@ -2290,8 +2290,10 @@ def cmd_doctor(args):
 def cmd_update_via_pip():
     """Refresh CloudMesh with pip instead of git.
 
-    The only option for a wheel install, and the fallback when a source
-    checkout lives on a machine without git.
+    Run pip install --upgrade cloudmesh with the current Python interpreter
+    and a 300-second timeout, without a CloudMesh confirmation prompt. Print
+    subprocess errors or nonzero exit results and return without setting an
+    exit status. Version lookup errors outside the subprocess call propagate.
     """
     import sys as _sys
 
@@ -2311,7 +2313,17 @@ def cmd_update_via_pip():
 
 
 def cmd_update(args):
-    """Fetch, pull, and reinstall the latest CloudMesh changes from git."""
+    """Update a source checkout from origin/main, or upgrade through pip.
+
+    Require .git even when args.pip selects pip; that flag takes precedence
+    over args.git and skips confirmation. Otherwise fetch and, when behind,
+    prompt before pulling unless args.yes is set, then install requirements.
+    Without .git, print manual pip instructions and return. Missing Git raises
+    SystemExit(1) only when args.git is set and args.pip is not; otherwise
+    print advice and return. Git detection and pip helper errors propagate;
+    exceptions during the fetch/pull path are reported without setting an
+    exit status.
+    """
     import subprocess
     import shutil
 

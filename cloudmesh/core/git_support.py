@@ -39,7 +39,13 @@ def _which(name: str) -> str | None:
 
 
 def _run(argv: list[str], cwd: str | Path | None = None, timeout: int = _VERSION_TIMEOUT):
-    """Run a command with no inherited stdin. Isolated for tests."""
+    """Run a command with no inherited stdin. Isolated for tests.
+
+    Return a CompletedProcess with stdout and stderr captured as text, even
+    for a nonzero exit status. Use cwd as the working directory when supplied;
+    timeout is in seconds. Process startup errors, TimeoutExpired, and output
+    decoding errors propagate to the caller.
+    """
     return subprocess.run(
         argv,
         cwd=str(cwd) if cwd else None,
@@ -55,6 +61,9 @@ def git_available() -> bool:
 
     Presence on PATH is not enough: a shim that cannot execute would make
     `cm update` fail later with a stranger error than we can give here.
+    Return False for a missing executable, a nonzero exit status, or an OS or
+    subprocess error, including a 10-second timeout. Output decoding errors
+    propagate.
     """
     if _which("git") is None:
         return False
@@ -65,7 +74,12 @@ def git_available() -> bool:
 
 
 def git_version() -> str:
-    """Return the installed git version string, or "" when unavailable."""
+    """Return stripped stdout from git --version, or "" when unavailable.
+
+    Return "" if the availability check fails or the subsequent version call
+    raises an OS or subprocess error. That second call's exit status is not
+    checked. Output decoding errors propagate.
+    """
     if not git_available():
         return ""
     try:
@@ -78,9 +92,9 @@ def git_version() -> str:
 def update_support(base_dir: Path | str | None = None) -> str:
     """Return how this installation can be updated: "git", "pip", or "none".
 
-    A source checkout is a git working tree, so it can pull. A wheel install has
-    no .git, so only pip can refresh it. A checkout on a machine without git
-    still has pip.
+    Inspect .git directly under base_dir, defaulting to this module's project
+    root. Return "none" when it is absent; otherwise return "git" if Git is
+    usable and "pip" if it is not. Pip availability is not checked.
     """
     if base_dir is None:
         base_dir = Path(__file__).resolve().parent.parent.parent
@@ -91,7 +105,10 @@ def update_support(base_dir: Path | str | None = None) -> str:
 
 
 def _installed_version() -> str:
-    """Return the version of the currently importable cloudmesh package."""
+    """Return the local version reported by get_version, including its fallback.
+
+    Return "" if the version is empty or importing or calling get_version fails.
+    """
     try:
         from cloudmesh.core.features import get_version
 
@@ -103,9 +120,12 @@ def _installed_version() -> str:
 def installed_version(base_dir: Path | str | None = None) -> str:
     """Return the version of the CloudMesh this checkout provides.
 
-    Prefers the checkout's own pyproject.toml over installed package metadata,
-    so a developer running from source sees the version they are editing rather
-    than whatever is in site-packages.
+    Read pyproject.toml under base_dir, defaulting to this module's project
+    root. Prefer the first stripped line starting with "version" over the
+    local get_version result. A missing file, no matching line, or an OSError
+    while reading falls back to _installed_version, which may return "".
+    Invalid UTF-8 raises UnicodeDecodeError; a matching line without "="
+    raises IndexError.
     """
     if base_dir is None:
         base_dir = Path(__file__).resolve().parent.parent.parent
@@ -122,11 +142,9 @@ def installed_version(base_dir: Path | str | None = None) -> str:
 
 
 def latest_version() -> str:
-    """Return the newest version available, or "" when it cannot be determined.
+    """Return the local version from _installed_version, or "" on lookup failure.
 
-    Intentionally does not shell out to git: the useful comparison for an
-    already-installed tool is "what is installed", and a failed lookup must
-    leave the caller in charge of the message.
+    This includes get_version's fallback and does not query remote releases.
     """
     return _installed_version()
 
@@ -135,7 +153,10 @@ def update_advice(base_dir: Path | str | None = None, tmp_path_with_git: bool = 
     """Return a one-line status suitable for `cm doctor` and `cm update`.
 
     Names the installed version when it is known, says whether git is present,
-    and states what that means for self-update.
+    and states what that means for self-update. Pass base_dir to
+    installed_version; its read/parse errors propagate. tmp_path_with_git is
+    ignored. Advice depends on Git availability without checking for .git;
+    Git output decoding errors propagate.
     """
     del tmp_path_with_git  # accepted for call-site clarity; git state comes from _which
     version = installed_version(base_dir)
