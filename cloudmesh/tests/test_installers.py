@@ -31,8 +31,17 @@ WINDOWS_INSTALLER = ROOT / "cm_for-windows.bat"
 NODE_SH = ROOT / "cloudmesh" / "node" / "node-install.sh"
 PYPROJECT = ROOT / "pyproject.toml"
 
+# Directories that hold third-party code; their shell scripts are not ours to
+# police (and `.gitignore` already lists several of them).
+_SKIP_DIRS = {
+    ".git", ".verify-venv", ".rel-venv", "venv", ".venv", "build", "dist",
+    "node_modules", ".tox", ".mypy_cache", ".pytest_cache",
+}
+
 SHELL_SCRIPTS = sorted(
-    p for p in ROOT.glob("**/*.sh") if ".git" not in p.parts
+    p
+    for p in ROOT.glob("**/*.sh")
+    if not (_SKIP_DIRS & set(p.relative_to(ROOT).parts))
 )
 
 

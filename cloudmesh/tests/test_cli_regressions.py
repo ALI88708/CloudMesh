@@ -73,6 +73,66 @@ def test_node_job_start_dispatches_to_job_handler(monkeypatch):
     assert calls[0].command == "sleep 1"
 
 
+def test_node_job_subcommands_reach_their_handlers(monkeypatch):
+    """checkpoint/recover/checkpoints used to exit 0 with no output.
+
+    They were reached through the node dispatch table keyed on args.action.
+    After node's sub-subparsers moved to job_action, args.action stayed "job",
+    so cmd_node_job received an action it did not handle and returned silently.
+    """
+    # Only `checkpoint` takes --job-id; `recover` and `checkpoints` do not.
+    cases = {
+        "checkpoint": ("cmd_job_checkpoint", ["-n", "n1", "-j", "abc"]),
+        "recover": ("cmd_job_recover", ["--relaunch"]),
+        "checkpoints": ("cmd_job_checkpoints", []),
+    }
+    for action, (handler_name, extra) in cases.items():
+        calls = []
+        monkeypatch.setattr(cloudmesh_main, handler_name, lambda args: calls.append(args))
+        monkeypatch.setattr(cloudmesh_main, "_load_node_keys", lambda: {})
+        monkeypatch.setattr(
+            sys, "argv", ["cloudmesh", "node", "job", action, *extra]
+        )
+
+        cloudmesh_main.main()
+
+        assert calls, f"`cm node job {action}` never reached {handler_name}"
+        assert calls[0].job_action == action
+
+
+@pytest.mark.parametrize(
+    "action, extra",
+    [
+        ("start", ["sleep 1"]),
+        ("status", ["-j", "abc"]),
+        ("list", []),
+        ("kill", ["-j", "abc"]),
+    ],
+)
+def test_node_job_core_subcommands_still_dispatch(monkeypatch, action, extra):
+    """The four job actions must keep reaching cmd_node_job itself."""
+    calls = _capture_handler(monkeypatch, "cmd_node_job")
+    monkeypatch.setattr(
+        sys, "argv", ["cloudmesh", "node", "job", action, "-n", "n1", *extra]
+    )
+
+    cloudmesh_main.main()
+
+    assert len(calls) == 1
+    assert calls[0].job_action == action
+
+
+def test_node_job_without_a_subcommand_reports_usage(monkeypatch, capsys):
+    """It used to fall through every branch and exit 0 saying nothing."""
+    monkeypatch.setattr(sys, "argv", ["cloudmesh", "node", "job"])
+
+    with pytest.raises(SystemExit) as exc:
+        cloudmesh_main.main()
+
+    assert exc.value.code == 2
+    assert "cm node job" in capsys.readouterr().out
+
+
 def test_plugins_add_still_reads_the_command_flag(monkeypatch):
     """`plugins add -c` writes args.command; renaming the subparser dest must not."""
     calls = _capture_handler(monkeypatch, "cmd_plugins")
