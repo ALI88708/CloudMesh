@@ -56,6 +56,7 @@ def _child_env() -> dict:
 
 
 def _split(path: list[str]) -> str:
+    """Join a command path into a space-separated string for messages."""
     return " ".join(path)
 
 
@@ -123,6 +124,7 @@ def walk(cmd: str) -> tuple[list[list[str]], list[tuple[list[str], str]]]:
 
 
 def main() -> int:
+    """Walk the whole CLI command surface and report any broken commands."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cmd", default="cm", help="CLI executable to exercise")
     ap.add_argument("--jobs", type=int, default=8, help="parallel workers")
@@ -147,6 +149,7 @@ def main() -> int:
     # Re-run every discovered path once more in parallel to catch anything the
     # sequential walk raced past, and to time the full surface.
     def _check(path: list[str]) -> str | None:
+        """Re-run `--help` for a discovered path and return an error message, if any."""
         _, err, out = run_help(args.cmd, path)
         if err:
             return err

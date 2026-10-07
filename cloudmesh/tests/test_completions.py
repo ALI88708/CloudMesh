@@ -70,6 +70,7 @@ def _native_bash() -> str | None:
 
 @pytest.mark.skipif(_native_bash() is None, reason="no native bash on this platform")
 def test_bash_completion_returns_nested_commands_and_matching_options(tmp_path):
+    """The generated bash script must complete subcommands and option names."""
     output = tmp_path / "completions.bash"
     cmd_completions(argparse.Namespace(shell="bash", output=str(output)))
     script = output.read_text(encoding="utf-8")

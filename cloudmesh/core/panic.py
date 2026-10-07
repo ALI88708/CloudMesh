@@ -14,6 +14,7 @@ from cloudmesh.core.shamir import ShamirSecretSharing
 
 class PanicManager:
     def __init__(self, base_dir=None, keyring=None):
+        """Initialize the panic manager and its file paths under base_dir."""
         self.base_dir = Path(base_dir or Path(__file__).parent.parent)
         self.secret_key_file = self.base_dir / ".secret.key"
         self.node_keys_file = self.base_dir / ".node_keys.json"
@@ -104,6 +105,7 @@ class PanicManager:
         save_private_json(self.pending_file, pending)
 
     def dry_run(self):
+        """Return the list of actions that execute_panic would perform, without applying them."""
         actions = []
         if self.secret_key_file.exists():
             actions.append(("rotate_secret_key", "Will generate new Fernet encryption key"))
@@ -131,6 +133,7 @@ class PanicManager:
         return actions
 
     def execute_panic(self):
+        """Rotate the secret key and all node auth keys, logging each action taken."""
         actions = []
 
         if self.secret_key_file.exists():
@@ -239,6 +242,7 @@ class PanicManager:
         return actions
 
     def retry_pending(self):
+        """Retry key rotation for nodes that were left in the pending state."""
         pending = self._load_pending()
         if not pending:
             return ["No pending rotations"]

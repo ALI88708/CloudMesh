@@ -149,6 +149,7 @@ class _StandaloneDDoSProtection:
 
     def __init__(self, rate_max=30, rate_window=60, conn_per_ip=5,
                  ban_threshold=5, ban_duration=300):
+        """Initialize rate-limit, connection, and ban-tracking state."""
         self.rate_max = rate_max
         self.rate_window = rate_window
         self.conn_per_ip = conn_per_ip
@@ -161,12 +162,15 @@ class _StandaloneDDoSProtection:
         self._banned_until = {}
 
     def _now(self):
+        """Return the current time in seconds since the epoch."""
         return time.time()
 
     def _banned(self, ip):
+        """Return whether the given IP is currently banned."""
         return self._banned_until.get(ip, 0) > self._now()
 
     def check_connection(self, ip):
+        """Check whether a new connection from the IP is allowed under rate, connection, and ban limits."""
         now = self._now()
         with self._lock:
             if self._banned(ip):
@@ -182,11 +186,13 @@ class _StandaloneDDoSProtection:
         return True, "OK"
 
     def release_connection(self, ip):
+        """Decrement the active connection count for the given IP."""
         with self._lock:
             if self._conns.get(ip, 0) > 0:
                 self._conns[ip] -= 1
 
     def on_auth_failure(self, ip):
+        """Record an authentication failure for the IP, banning it once the threshold is reached."""
         with self._lock:
             fails = self._fails.get(ip, 0) + 1
             self._fails[ip] = fails
@@ -196,6 +202,7 @@ class _StandaloneDDoSProtection:
         return False
 
     def on_auth_success(self, ip):
+        """Clear any recorded authentication failures for the IP."""
         with self._lock:
             self._fails.pop(ip, None)
 
@@ -503,6 +510,7 @@ class NodeAgent:
     def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",
                  tls_cert=None, tls_key=None,
                  spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
+        """Initialize the node agent's listener, job store, and DDoS protection."""
         if bool(tls_cert) != bool(tls_key):
             raise ValueError("--tls-cert and --tls-key must be supplied together")
         self.port = port

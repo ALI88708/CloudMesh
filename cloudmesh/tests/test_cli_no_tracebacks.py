@@ -94,6 +94,7 @@ pytestmark_timeout = pytest.mark.timeout(TIMEOUT)
 
 
 def _child_env() -> dict:
+    """Build the subprocess environment used to run the CLI sweep."""
     env = dict(os.environ)
     env["PYTHONWARNINGS"] = "ignore"
     env["COLUMNS"] = "200"

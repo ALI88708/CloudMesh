@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 
 def _import(name):
+    """Import a cloudmesh.core module, falling back to the top-level core package."""
     try:
         module = __import__(f"cloudmesh.core.{name}", fromlist=["*"])
     except ImportError:
@@ -23,6 +24,7 @@ def _import(name):
 
 
 def test_docker_manager_api():
+    """DockerManager must expose all the methods the CLI adapter relies on."""
     mod = _import("docker")
     assert hasattr(mod, "DockerManager")
     mgr = mod.DockerManager()
@@ -33,6 +35,7 @@ def test_docker_manager_api():
 
 
 def test_firewall_manager_api():
+    """FirewallManager must expose all the methods the CLI adapter relies on."""
     mod = _import("firewall")
     assert hasattr(mod, "FirewallManager")
     mgr = mod.FirewallManager()
@@ -42,6 +45,7 @@ def test_firewall_manager_api():
 
 
 def test_ssl_checker_api():
+    """SSLChecker must expose all the methods the CLI adapter relies on."""
     mod = _import("sslcheck")
     assert hasattr(mod, "SSLChecker")
     mgr = mod.SSLChecker()
@@ -51,6 +55,7 @@ def test_ssl_checker_api():
 
 
 def test_log_aggregator_api():
+    """LogAggregator must expose all the methods the CLI adapter relies on."""
     mod = _import("logagg")
     assert hasattr(mod, "LogAggregator")
     mgr = mod.LogAggregator()
@@ -60,6 +65,7 @@ def test_log_aggregator_api():
 
 
 def test_firewall_ufw_parsing():
+    """`_parse_ufw_rules` must parse ufw status output into rule dicts."""
     mod = _import("firewall")
     sample = "[ 1] 22/tcp ALLOW IN Anywhere\n[ 2] 443 ALLOW IN Anywhere (v6)\n"
     rules = mod._parse_ufw_rules(sample)
@@ -120,6 +126,7 @@ def test_node_agent_starts_without_core_package(tmp_path):
 
 
 def test_standalone_ddos_blocks_bruteforce():
+    """The embedded DDoS fallback must ban an IP after repeated auth failures."""
     try:
         from cloudmesh.node.cloudmesh_node import _StandaloneDDoSProtection
     except ImportError:
