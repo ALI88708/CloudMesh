@@ -31,6 +31,7 @@ backups/
 # accident, so it is listed explicitly rather than left to a broad pattern.
 .secret.key
 .secret.key.bak
+.ssh_keys.json
 .panic_log.json
 .panic_pending.json
 .panic_shares.json
