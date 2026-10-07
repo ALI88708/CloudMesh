@@ -11,6 +11,8 @@ looked up ``cmds["uptime"]``, found nothing, and exited 0 without a peep.
 """
 
 import sys
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -132,6 +134,76 @@ def test_node_job_without_a_subcommand_reports_usage(monkeypatch, capsys):
 
     assert exc.value.code == 2
     assert "cm node job" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("action", ["checkpoint", "recover", "checkpoints"])
+def test_node_job_delegates_once_and_returns_handler_result(monkeypatch, action):
+    args = SimpleNamespace(action="job", job_action=action)
+    handlers = {
+        name: Mock() for name in ("checkpoint", "recover", "checkpoints")
+    }
+    for name, handler in handlers.items():
+        monkeypatch.setattr(cloudmesh_main, f"cmd_job_{name}", handler)
+    monkeypatch.setattr(cloudmesh_main, "_load_node_keys", lambda: {})
+
+    result = cloudmesh_main.cmd_node_job(args)
+
+    assert result is handlers[action].return_value
+    handlers[action].assert_called_once_with(args)
+    for name, handler in handlers.items():
+        if name != action:
+            handler.assert_not_called()
+
+
+@pytest.mark.parametrize("extra", [{}, {"job_action": None}])
+def test_node_job_does_not_fall_back_to_outer_action(monkeypatch, capsys, extra):
+    handler = Mock()
+    monkeypatch.setattr(cloudmesh_main, "cmd_job_recover", handler)
+    monkeypatch.setattr(cloudmesh_main, "_load_node_keys", lambda: {})
+
+    with pytest.raises(SystemExit) as exc:
+        cloudmesh_main.cmd_node_job(SimpleNamespace(action="recover", **extra))
+
+    assert exc.value.code == 2
+    assert "Usage: cm node job" in capsys.readouterr().out
+    handler.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "action, extra, expected",
+    [
+        ("checkpoint", ["--name", "node-a", "--job-id", "job-123"],
+         {"name": "node-a", "job_id": "job-123"}),
+        ("recover", [], {"relaunch": False, "target": None}),
+        ("recover", ["--relaunch", "--target", "node-b"],
+         {"relaunch": True, "target": "node-b"}),
+    ],
+)
+def test_node_job_forwards_subcommand_options(monkeypatch, action, extra, expected):
+    handler = Mock()
+    monkeypatch.setattr(cloudmesh_main, f"cmd_job_{action}", handler)
+    monkeypatch.setattr(cloudmesh_main, "_load_node_keys", lambda: {})
+    monkeypatch.setattr(sys, "argv", ["cloudmesh", "node", "job", action, *extra])
+
+    cloudmesh_main.main()
+
+    handler.assert_called_once()
+    args = handler.call_args.args[0]
+    assert args.action == "job"
+    assert args.job_action == action
+    for name, value in expected.items():
+        assert getattr(args, name) == value
+
+
+@pytest.mark.parametrize("extra", [[], ["-n", "node-a"], ["-j", "job-123"]])
+def test_node_job_checkpoint_rejects_missing_arguments(monkeypatch, capsys, extra):
+    handler = Mock()
+    monkeypatch.setattr(cloudmesh_main, "cmd_job_checkpoint", handler)
+
+    assert _run_main(monkeypatch, ["node", "job", "checkpoint", *extra]) == 2
+
+    assert "required" in capsys.readouterr().err
+    handler.assert_not_called()
 
 
 def test_plugins_add_still_reads_the_command_flag(monkeypatch):

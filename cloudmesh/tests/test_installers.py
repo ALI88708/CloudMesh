@@ -17,6 +17,7 @@ The bugs pinned here, in order of severity:
    any machine installed that way.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -267,3 +268,161 @@ def test_readme_linux_install_command_matches_the_installer():
     match = re.search(r"raw\.githubusercontent\.com/[^/]+/[^/]+/[^/]+/(\S+\.sh)", readme)
     assert match, "README no longer documents a curl-based Linux install"
     assert (ROOT / match.group(1)).exists(), f"README points at missing {match.group(1)}"
+
+
+# Exercise the changed shell blocks without invoking downloads, pip or systemd.
+def _installer_block(pattern):
+    match = re.search(pattern, _text(LINUX_INSTALLER), re.S | re.M)
+    assert match, "Installer structure changed; update the shell test harness"
+    return match.group(1)
+
+
+def _run_installer_block(tmp_path, block, helpers=""):
+    bash = _find_bash()
+    if not bash or sys.platform == "win32":
+        pytest.skip("installer filesystem tests require POSIX bash")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir(exist_ok=True)
+    script = '''
+set -e
+INSTALL_DIR="$1/install with spaces"
+PROJECT_DIR="$INSTALL_DIR/project"
+CLOUDMESH_DIR="$PROJECT_DIR/cloudmesh"
+LEGACY_CLOUDMESH_DIR="$INSTALL_DIR/cloudmesh"
+NODE_DIR="$1/node"
+VENV_DIR="$INSTALL_DIR/venv"
+PAYLOAD_DIR="$1/payload"
+log() { :; }
+fail() { echo "$*" >&2; return 1; }
+''' + helpers + "\n" + block
+    result = subprocess.run(
+        [bash, "-c", script, "installer-test", str(tmp_path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        env={**os.environ, "TMPDIR": str(scratch)},
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result
+
+
+@pytest.mark.parametrize(
+    "current_files, legacy_files",
+    [
+        ([], []),
+        ([".node_keys.json", ".secret.key"], []),
+        ([], [".node_keys.json", ".secret.key"]),
+        ([".node_keys.json", ".secret.key"], [".node_keys.json", ".secret.key"]),
+        ([".node_keys.json"], [".secret.key"]),
+        ([".secret.key"], [".node_keys.json"]),
+        ([], [".secret.key"]),
+        ([".node_keys.json"], []),
+    ],
+    ids=["no-state", "current", "legacy", "current-wins", "split-key",
+         "split-nodes", "secret-only", "nodes-only"],
+)
+def test_linux_update_preserves_state(tmp_path, current_files, legacy_files):
+    install = tmp_path / "install with spaces"
+    current = install / "project" / "cloudmesh"
+    legacy = install / "cloudmesh"
+    expected = {}
+    for directory, names in [(legacy, legacy_files), (current, current_files)]:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "main.py").write_text("old version")
+        for name in names:
+            path = directory / name
+            data = f"{directory.relative_to(install)}:{name}".encode()
+            path.write_bytes(data)
+            path.chmod(0o600)
+            os.utime(path, (1_600_000_000, 1_600_000_000))
+            expected[name] = data
+    config = install / "cloudmesh.json"
+    config.write_text('{"servers": {"saved": {}}}')
+    config.chmod(0o600)
+    payload = tmp_path / "payload"
+    (payload / "cloudmesh").mkdir(parents=True)
+    (payload / "cloudmesh" / "main.py").write_text("new version")
+    (payload / "pyproject.toml").write_text("[project]\nname = 'fixture'\n")
+    stage = _installer_block(r"^(stage_payload\(\) \{.*?^\})")
+    update = _installer_block(r'case "\$CHOICE" in\s+1\)(.*?)\n\s+;;')
+    helpers = stage + '''
+fetch_payload() { stage_payload "$PAYLOAD_DIR"; }
+do_setup() { cp -a "$CLOUDMESH_DIR" "$INSTALL_DIR/state-at-setup"; }
+ui_pause() { exit 0; }
+'''
+
+    _run_installer_block(tmp_path, "while true; do\n" + update + "\nbreak\ndone", helpers)
+
+    assert (current / "main.py").read_text() == "new version"
+    assert not legacy.exists()
+    assert config.read_text() == '{"servers": {"saved": {}}}'
+    assert config.stat().st_mode & 0o777 == 0o600
+    for name in (".node_keys.json", ".secret.key"):
+        if name in expected:
+            assert (current / name).read_bytes() == expected[name]
+            assert (install / "state-at-setup" / name).read_bytes() == expected[name]
+            assert (current / name).stat().st_mode & 0o777 == 0o600
+            assert (current / name).stat().st_mtime == 1_600_000_000
+        else:
+            assert not (current / name).exists()
+    assert list((tmp_path / "scratch").iterdir()) == []
+
+
+def test_linux_update_fetch_failure_keeps_existing_state(tmp_path):
+    install = tmp_path / "install with spaces"
+    originals = {}
+    for layout in ("project/cloudmesh", "cloudmesh"):
+        directory = install / layout
+        directory.mkdir(parents=True)
+        for name in ("main.py", ".node_keys.json", ".secret.key"):
+            path = directory / name
+            path.write_text(f"original {layout}/{name}")
+            originals[path] = path.read_bytes()
+    update = _installer_block(r'case "\$CHOICE" in\s+1\)(.*?)\n\s+;;')
+    helpers = '''
+fetch_payload() { return 1; }
+do_setup() { touch "$INSTALL_DIR/setup-ran"; }
+ui_pause() { exit 0; }
+'''
+
+    _run_installer_block(tmp_path, "while true; do\n" + update + "\nbreak\ndone", helpers)
+
+    assert not (install / "setup-ran").exists()
+    for path, data in originals.items():
+        assert path.read_bytes() == data
+    assert list((tmp_path / "scratch").iterdir()) == []
+
+
+@pytest.mark.parametrize("layout", [None, "cloudmesh", "project/cloudmesh", "venv"])
+def test_linux_install_detection_supports_both_layouts(tmp_path, layout):
+    install = tmp_path / "install with spaces"
+    if layout:
+        directory = install / layout
+        directory.mkdir(parents=True)
+        if layout != "venv":
+            (directory / "main.py").touch()
+    detection = _installer_block(r'^(IS_INSTALLED=0\n.*?if \[ -d "\$VENV_DIR" \]; then.*?^fi)')
+
+    result = _run_installer_block(tmp_path, detection + '\necho "$IS_INSTALLED"')
+
+    assert result.stdout.strip() == ("1" if layout else "0")
+
+
+@pytest.mark.parametrize("layouts", [["cloudmesh"], ["project"], ["cloudmesh", "project"]])
+def test_linux_uninstall_removes_both_program_layouts(tmp_path, layouts):
+    install = tmp_path / "install with spaces"
+    for layout in layouts:
+        directory = install / layout
+        directory.mkdir(parents=True)
+        (directory / "old-secret").write_text("synthetic secret")
+    config = install / "cloudmesh.json"
+    config.write_text("keep config")
+    cleanup = _installer_block(r'^do_uninstall\(\) \{(.*?)\n    if command -v systemctl')
+
+    _run_installer_block(tmp_path, cleanup + "\ntrue")
+
+    assert not (install / "project").exists()
+    assert not (install / "cloudmesh").exists()
+    assert config.read_text() == "keep config"
