@@ -30,13 +30,30 @@ _HELP_FLAGS = ("-h", "--help")
 # The subcommand list inside argparse's usage block, e.g.
 #   usage: cloudmesh node [-h]
 #                         {add,remove,list,...} ...
-# Braces are matched only *after* `[-h]`, because that is where argparse puts
-# the subparser choices; a positional metavar such as `{action}` also renders as
-# braces, but never before the optionals.
-_CHOICES = re.compile(r"\[-h\].*?\{([^{}]*)\}", re.DOTALL)
+#
+# Two properties distinguish it from an option's allowed values:
+#
+#   * argparse terminates a subparser list with an ellipsis, so `{a,b} ...`.
+#     An option's choices render as `[--level {error,warn,info,debug}]` and
+#     never carry one.
+#   * the braces come after `[-h]`, where argparse places subparsers. A
+#     positional metavar such as `{action}` can also render as braces, but
+#     never before the optionals.
+#
+# Matching any brace group after `[-h]` was enough to find the 119 top-level
+# commands, which is why the bug stayed hidden: it also matched
+# `[--level {error,warn,...}]`, and the walker descended into option *values* as
+# if they were commands. Each invented child could sprout more, and with no
+# `seen` set and no depth limit the walk never finished.
+_CHOICES = re.compile(r"\[-h\].*?\{([^{}]*)\}\s*(?:\.\.\.|$)", re.DOTALL)
 
 # Commands whose help is the whole point and that spawn no work.
 _LEAF_TIMEOUT = 60
+
+# Bounds on discovery, so a scraper bug fails fast instead of hanging CI. The
+# real surface is 286 paths at most 3 levels deep.
+_MAX_DEPTH = 6
+_MAX_PATHS = 1000
 
 
 def resolve(cmd: str) -> str | None:
@@ -92,7 +109,15 @@ def _usage_block(out: str) -> str:
 def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
     """Run `<cmd> <path...> --help`.
 
-    Returns the discovered subcommands, an error message, or the raw output.
+    An empty path requests top-level help. Return (subcommands, error, output),
+    where output is stdout followed by stderr and error is None on success.
+    No recognized subcommands means an empty list, including for leaf commands.
+
+    A timeout after 60 seconds or a missing executable returns an error with
+    empty output. A nonzero exit, traceback marker, or absence of both '-h'
+    and '--help' in the output returns an error with the captured output.
+    All error results have no subcommands. Other OS errors and output decoding
+    errors propagate to the caller.
     """
     argv = [cmd, *path, "--help"]
     try:
@@ -116,6 +141,13 @@ def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
     if "Traceback (most recent call last)" in out:
         return [], f"{_split(path)} --help printed a traceback", out
 
+    # A command that exits 0 without printing its flags is broken even if its
+    # imports worked. This used to be a second full pass over every path, which
+    # doubled the cost for no extra coverage: the walk already runs `--help` on
+    # each path and has the output in hand, so assert it here instead.
+    if not any(flag in out for flag in _HELP_FLAGS):
+        return [], f"{_split(path)} produced no usage text", out
+
     match = _CHOICES.search(_usage_block(out))
     if not match:
         return [], None, out  # leaf command
@@ -125,35 +157,85 @@ def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
     return [c for c in choices if re.fullmatch(r"[A-Za-z][\w-]*", c)], None, out
 
 
-def walk(cmd: str) -> tuple[list[list[str]], list[tuple[list[str], str]]]:
-    """Return every command path reachable from the top level, plus failures."""
+def walk(cmd: str, jobs: int = 8) -> tuple[list[list[str]], list[tuple[list[str], str]]]:
+    """Discover command paths through help subprocesses and return failures.
+
+    Probe each level with up to max(1, jobs) workers. Return (paths, failures),
+    where paths exclude the root invocation but include discovered paths whose
+    probes fail or are skipped by a limit. Failures are (path, error) pairs;
+    a top-level help failure uses an empty path and stops discovery.
+
+    Repeated child paths are ignored. Paths with at least _MAX_DEPTH command
+    words are not probed. The _MAX_PATHS budget limits probing, not the size
+    of the returned path list. Hitting either limit is reported as a failure.
+    Errors returned by run_help stop descent on that path; exceptions raised
+    by run_help propagate to the caller.
+    """
     paths: list[list[str]] = []
     failures: list[tuple[list[str], str]] = []
+    seen: set[tuple[str, ...]] = set()
 
     top, err, _ = run_help(cmd, [])
     if err:
         failures.append(([], err))
         return paths, failures
-    for name in top:
-        paths.append([name])
 
-    queue = [[name] for name in top]
-    while queue:
-        path = queue.pop()
-        subs, err, _ = run_help(cmd, path)
-        if err:
-            failures.append((path, err))
-            continue
-        for sub in subs:
-            child = [*path, sub]
-            paths.append(child)
-            queue.append(child)
+    frontier = [[name] for name in top]
+    for path in frontier:
+        seen.add(tuple(path))
+    paths.extend(frontier)
+
+    while frontier:
+        # Bound the level before spawning anything.
+        survivors = []
+        for path in frontier:
+            if len(path) >= _MAX_DEPTH:
+                failures.append(
+                    (path, f"deeper than {_MAX_DEPTH} levels; refusing to descend")
+                )
+                continue
+            if len(paths) + len(survivors) >= _MAX_PATHS:
+                failures.append(
+                    (path, f"more than {_MAX_PATHS} command paths; discovery is runaway")
+                )
+                break
+            survivors.append(path)
+        if not survivors:
+            break
+
+        def _probe(path: list[str]) -> tuple[list[str], list[str], str | None]:
+            """Return the path, subcommands, and help error, if any."""
+            subs, err, _ = run_help(cmd, path)
+            return path, subs, err
+
+        with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+            results = list(pool.map(_probe, survivors))
+
+        frontier = []
+        for path, subs, err in results:
+            if err:
+                failures.append((path, err))
+                continue
+            for sub in subs:
+                child = [*path, sub]
+                if tuple(child) in seen:
+                    continue
+                seen.add(tuple(child))
+                paths.append(child)
+                frontier.append(child)
 
     return paths, failures
 
 
 def main() -> int:
-    """Walk the whole CLI command surface and report any broken commands."""
+    """Walk the whole CLI command surface and report any broken commands.
+
+    Read options from sys.argv. Return 0 on success, 1 for discovery or help
+    failures, or 2 if the executable cannot be resolved. Print failures to
+    stderr; --quiet suppresses success summaries but not the startup message.
+    Argument parsing raises SystemExit for --help or invalid arguments.
+    Exceptions from walk propagate.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cmd", default="cm", help="CLI executable to exercise")
     ap.add_argument("--jobs", type=int, default=8, help="parallel workers")
@@ -167,32 +249,12 @@ def main() -> int:
     args.cmd = resolved
 
     print(f"Smoke testing {args.cmd} ...")
-    paths, failures = walk(args.cmd)
+    paths, failures = walk(args.cmd, jobs=args.jobs)
 
     if failures:
         print(f"\n{len(failures)} command(s) failed:\n", file=sys.stderr)
         for path, err in failures:
             print(f"  [FAIL] {err}", file=sys.stderr)
-        return 1
-
-    # Re-run every discovered path once more in parallel to catch anything the
-    # sequential walk raced past, and to time the full surface.
-    def _check(path: list[str]) -> str | None:
-        """Re-run `--help` for a discovered path and return an error message, if any."""
-        _, err, out = run_help(args.cmd, path)
-        if err:
-            return err
-        if any(flag in out for flag in _HELP_FLAGS) is False:
-            return f"{_split(path)} produced no usage text"
-        return None
-
-    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        problems = [p for p in pool.map(_check, paths) if p]
-
-    if problems:
-        print(f"\n{len(problems)} command(s) failed:\n", file=sys.stderr)
-        for p in problems:
-            print(f"  [FAIL] {p}", file=sys.stderr)
         return 1
 
     if not args.quiet:
