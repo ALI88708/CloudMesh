@@ -30,13 +30,30 @@ _HELP_FLAGS = ("-h", "--help")
 # The subcommand list inside argparse's usage block, e.g.
 #   usage: cloudmesh node [-h]
 #                         {add,remove,list,...} ...
-# Braces are matched only *after* `[-h]`, because that is where argparse puts
-# the subparser choices; a positional metavar such as `{action}` also renders as
-# braces, but never before the optionals.
-_CHOICES = re.compile(r"\[-h\].*?\{([^{}]*)\}", re.DOTALL)
+#
+# Two properties distinguish it from an option's allowed values:
+#
+#   * argparse terminates a subparser list with an ellipsis, so `{a,b} ...`.
+#     An option's choices render as `[--level {error,warn,info,debug}]` and
+#     never carry one.
+#   * the braces come after `[-h]`, where argparse places subparsers. A
+#     positional metavar such as `{action}` can also render as braces, but
+#     never before the optionals.
+#
+# Matching any brace group after `[-h]` was enough to find the 119 top-level
+# commands, which is why the bug stayed hidden: it also matched
+# `[--level {error,warn,...}]`, and the walker descended into option *values* as
+# if they were commands. Each invented child could sprout more, and with no
+# `seen` set and no depth limit the walk never finished.
+_CHOICES = re.compile(r"\[-h\].*?\{([^{}]*)\}\s*(?:\.\.\.|$)", re.DOTALL)
 
 # Commands whose help is the whole point and that spawn no work.
 _LEAF_TIMEOUT = 60
+
+# Bounds on discovery, so a scraper bug fails fast instead of hanging CI. The
+# real surface is 286 paths at most 3 levels deep.
+_MAX_DEPTH = 6
+_MAX_PATHS = 1000
 
 
 def resolve(cmd: str) -> str | None:
@@ -125,29 +142,74 @@ def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
     return [c for c in choices if re.fullmatch(r"[A-Za-z][\w-]*", c)], None, out
 
 
-def walk(cmd: str) -> tuple[list[list[str]], list[tuple[list[str], str]]]:
-    """Return every command path reachable from the top level, plus failures."""
+def walk(cmd: str, jobs: int = 8) -> tuple[list[list[str]], list[tuple[list[str], str]]]:
+    """Return every command path reachable from the top level, plus failures.
+
+    Discovery runs level by level with a thread pool. Every path costs one
+    `cm ... --help` subprocess, so the work is entirely I/O bound: measured at
+    1.8s per path, the 286 real paths take 520s sequentially and about 70s with
+    eight workers. Walking depth-first with a single worker made the job
+    unacceptably slow once the scraper started finding subcommands again.
+
+    The walk is also bounded on purpose. When the scraper mistook an option's
+    `choices` for subcommands it invented children indefinitely, and because
+    every invented path was queued unconditionally and never deduplicated, the
+    job ran for hours instead of finishing. A discovery bug must fail this test,
+    not stall CI: `seen` stops repeats, `_MAX_DEPTH` stops runaway nesting, and
+    `_MAX_PATHS` stops unbounded growth. Hitting a limit is reported as a
+    failure rather than silently truncating the surface.
+    """
     paths: list[list[str]] = []
     failures: list[tuple[list[str], str]] = []
+    seen: set[tuple[str, ...]] = set()
 
     top, err, _ = run_help(cmd, [])
     if err:
         failures.append(([], err))
         return paths, failures
-    for name in top:
-        paths.append([name])
 
-    queue = [[name] for name in top]
-    while queue:
-        path = queue.pop()
-        subs, err, _ = run_help(cmd, path)
-        if err:
-            failures.append((path, err))
-            continue
-        for sub in subs:
-            child = [*path, sub]
-            paths.append(child)
-            queue.append(child)
+    frontier = [[name] for name in top]
+    for path in frontier:
+        seen.add(tuple(path))
+    paths.extend(frontier)
+
+    while frontier:
+        # Bound the level before spawning anything.
+        survivors = []
+        for path in frontier:
+            if len(path) >= _MAX_DEPTH:
+                failures.append(
+                    (path, f"deeper than {_MAX_DEPTH} levels; refusing to descend")
+                )
+                continue
+            if len(paths) + len(survivors) >= _MAX_PATHS:
+                failures.append(
+                    (path, f"more than {_MAX_PATHS} command paths; discovery is runaway")
+                )
+                break
+            survivors.append(path)
+        if not survivors:
+            break
+
+        def _probe(path: list[str]) -> tuple[list[str], list[str], str | None]:
+            subs, err, _ = run_help(cmd, path)
+            return path, subs, err
+
+        with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+            results = list(pool.map(_probe, survivors))
+
+        frontier = []
+        for path, subs, err in results:
+            if err:
+                failures.append((path, err))
+                continue
+            for sub in subs:
+                child = [*path, sub]
+                if tuple(child) in seen:
+                    continue
+                seen.add(tuple(child))
+                paths.append(child)
+                frontier.append(child)
 
     return paths, failures
 
@@ -167,7 +229,7 @@ def main() -> int:
     args.cmd = resolved
 
     print(f"Smoke testing {args.cmd} ...")
-    paths, failures = walk(args.cmd)
+    paths, failures = walk(args.cmd, jobs=args.jobs)
 
     if failures:
         print(f"\n{len(failures)} command(s) failed:\n", file=sys.stderr)

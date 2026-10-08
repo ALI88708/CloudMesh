@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -226,3 +227,78 @@ def test_known_parents_expose_their_subcommands(cmd):
         f"`cm {' '.join(cmd)}` reported no subcommands; the usage scraper is "
         f"broken for multi-word program names"
     )
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        ["logagg", "filter"],   # --level {error,warn,info,debug}
+        ["webhooks", "add"],    # --type {discord,slack,telegram,...}
+        ["logagg", "add-source"],
+        ["transfer"],
+        ["firewall", "load"],
+    ],
+)
+def test_option_choices_are_not_mistaken_for_subcommands(cmd):
+    """A leaf command with `choices` on an option must stay a leaf.
+
+    This is the bug that stalled CI for hours. argparse renders an option's
+    allowed values as `[--level {error,warn,info,debug}]`, which looks exactly
+    like a subparser list, so the walker descended into `cm logagg filter
+    error`, then into whatever that invented, forever. The walk had no `seen`
+    set and no depth limit, so nothing stopped it.
+
+    The trailing ellipsis is the discriminator: argparse terminates a
+    subparser list with `...` and never terminates an option's choices with one.
+    """
+    subs, err = _scraped_help(cmd)
+    assert err is None, f"`cm {' '.join(cmd)} --help` {err}"
+    assert not subs, (
+        f"`cm {' '.join(cmd)}` is a leaf, but the scraper read option choices "
+        f"as subcommands: {subs}"
+    )
+
+
+def test_walk_is_bounded(monkeypatch):
+    """A discovery bug must fail this test, not hang CI.
+
+    Feeds `walk` a scraper that invents two children per command, forever. The
+    walk has to terminate and report the runaway rather than queue paths until
+    the runner's six-hour limit.
+    """
+    def runaway(cmd, path):
+        if not path:
+            return ["alpha", "beta"], None, ""
+        return ["one", "two"], None, ""
+
+    monkeypatch.setattr(smoke_cli, "run_help", runaway)
+    started = time.perf_counter()
+    paths, failures = smoke_cli.walk("cm")
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 30, f"walk took {elapsed:.1f}s on an unbounded scraper"
+    assert len(paths) <= smoke_cli._MAX_PATHS + 2, (
+        f"walk produced {len(paths)} paths, past its own budget of "
+        f"{smoke_cli._MAX_PATHS}"
+    )
+    assert failures, "an unbounded scraper must be reported, not silently trimmed"
+    assert any(
+        "runaway" in err or "deeper than" in err for _, err in failures
+    ), f"expected a runaway/depth failure, got {failures[:3]}"
+
+
+def test_walk_does_not_revisit_a_path(monkeypatch):
+    """Repeated children must be visited once, not queued once per occurrence."""
+    calls = []
+
+    def duplicate(cmd, path):
+        calls.append(tuple(path))
+        # Always advertise the same child name.
+        return ["same"], None, ""
+
+    monkeypatch.setattr(smoke_cli, "run_help", duplicate)
+    paths, _ = smoke_cli.walk("cm")
+
+    repeated = [c for c in calls if calls.count(c) > 1]
+    assert not repeated, f"walk visited the same path repeatedly: {repeated[:3]}"
+    assert len(paths) == len(set(map(tuple, paths))), "duplicate paths collected"
