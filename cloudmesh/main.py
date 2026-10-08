@@ -3807,6 +3807,57 @@ def _lookup_handler(cmds, name):
     return handler
 
 
+ALIAS_REGISTRY: dict[str, str] = {}
+
+
+def _alias_of(subparsers, canonical, alias, help_text):
+    """Register ``alias`` with exactly the arguments ``canonical`` accepts.
+
+    Every alias used to be a hand-copy of its canonical parser's add_argument
+    calls, and they drifted. `cm mon --local` is advertised in the README and
+    in CONTRIBUTING.md but the `mon` parser never declared --local, so it failed
+    with "unrecognized arguments". `cm cp` declared `--server`, `--local`, and
+    `--direction`, none of which `cmd_transfer` reads, so it could not have
+    worked at all. Cloning the actions removes the whole class of bug: there is
+    one definition, and the alias cannot disagree with it.
+
+    Actions are shallow-copied and re-parented so neither parser mutates the
+    other's state. Each alias records its canonical command in ALIAS_REGISTRY
+    so the parity test can check the mapping without re-reading source.
+    """
+    import copy as _copy
+
+    ALIAS_REGISTRY[alias] = canonical.prog.rsplit(" ", 1)[-1]
+    clone = subparsers.add_parser(alias, help=help_text)
+
+    for group in canonical._mutually_exclusive_groups:
+        target = clone.add_mutually_exclusive_group()
+        for action in group._group_actions:
+            new = _copy.copy(action)
+            new.container = target
+            target._group_actions.append(new)
+            if action.option_strings:
+                clone._option_string_actions.update(
+                    {opt: new for opt in action.option_strings}
+                )
+
+    for action in canonical._actions:
+        if isinstance(action, argparse._HelpAction):
+            continue
+        new = _copy.copy(action)
+        new.container = clone
+        clone._actions.append(new)
+        if action.option_strings:
+            clone._option_string_actions.update(
+                {opt: new for opt in action.option_strings}
+            )
+
+    # A required flag stays required, but so does the parser's own requirement
+    # bookkeeping; rebuild it from the cloned actions.
+    clone._defaults = dict(canonical._defaults)
+    return clone
+
+
 def main():
     """Parse process arguments and dispatch the selected CloudMesh command.
 
@@ -4550,10 +4601,21 @@ def main():
     dia_p.add_argument("--name", "-n", help="Diagnose a single server")
     dia_p.add_argument("--json", dest="as_json", action="store_true", help="Output as JSON")
 
-    mon = subparsers.add_parser("mon", help="[alias] Monitor resources")
-    mon.add_argument("--name", "-n")
+    # The alias block below rebinds several of these local names, so hold the
+    # canonical parsers first; _alias_of clones from them.
+    canonical_parsers = {
+        "monitor": mon,
+        "dashboard": dash,
+        "transfer": trn,
+        "logs": lgs,
+        "uptime": upt,
+        "disk": dsk,
+        "network": net,
+        "decrypt": dec,
+    }
 
-    dash = subparsers.add_parser("dash", help="[alias] Live dashboard")
+    _alias_of(subparsers, canonical_parsers["monitor"], "mon", "[alias] Monitor resources")
+    _alias_of(subparsers, canonical_parsers["dashboard"], "dash", "[alias] Live dashboard")
 
     ls = subparsers.add_parser("ls", help="[alias] List servers")
     ls.add_argument("--name", "-n")
@@ -4582,31 +4644,20 @@ def main():
     info_alias = subparsers.add_parser("info", help="[alias] Server info")
     info_alias.add_argument("--name", "-n")
 
-    up = subparsers.add_parser("up", help="[alias] Show uptime")
-    up.add_argument("--name", "-n")
+    up = _alias_of(subparsers, canonical_parsers["uptime"], "up", "[alias] Show uptime")
 
-    df = subparsers.add_parser("df", help="[alias] Disk usage")
-    df.add_argument("--name", "-n")
+    df = _alias_of(subparsers, canonical_parsers["disk"], "df", "[alias] Disk usage")
 
-    log_alias = subparsers.add_parser("log", help="[alias] System logs")
-    log_alias.add_argument("--name", "-n", required=True)
-    log_alias.add_argument("--file", "-f", default="/var/log/syslog")
-    log_alias.add_argument("--lines", "-l", type=int, default=50)
+    log_alias = _alias_of(subparsers, canonical_parsers["logs"], "log", "[alias] System logs")
 
-    net = subparsers.add_parser("net", help="[alias] Network info")
-    net.add_argument("--name", "-n")
+    net = _alias_of(subparsers, canonical_parsers["network"], "net", "[alias] Network info")
 
-    cp = subparsers.add_parser("cp", help="[alias] Transfer file")
-    cp.add_argument("--server", "-s", required=True)
-    cp.add_argument("--local", "-l")
-    cp.add_argument("--remote", "-r")
-    cp.add_argument("--direction", "-d", default="upload", choices=["upload", "download"])
+    cp = _alias_of(subparsers, canonical_parsers["transfer"], "cp", "[alias] Transfer file")
 
     enc_alias = subparsers.add_parser("enc", help="[alias] Encrypt file")
     enc_alias.add_argument("file")
 
-    dec_alias = subparsers.add_parser("dec", help="[alias] Decrypt file")
-    dec_alias.add_argument("file")
+    dec_alias = _alias_of(subparsers, canonical_parsers["decrypt"], "dec", "[alias] Decrypt file")
 
     exp = subparsers.add_parser("exp", help="[alias] Export config")
     exp.add_argument("--file", "-f", default="cloudmesh_export.json")

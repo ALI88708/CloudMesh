@@ -78,7 +78,7 @@ The Releases section reads published releases from the GitHub Releases API, so r
 | Reactive scheduling | `cm weather` - predictive resource forecasting |
 | Single-point trust | `cm trust` - distributed trust evaluation |
 | Jobs lost on crash | `cm node job recover` - checkpoint & auto-recover jobs |
-| TCP ports visible to scanners | `cm node start --spa` - Ghost Ports (SPA) hide your services |
+| TCP ports visible to scanners | `python3 cloudmesh_node.py start --spa` - Ghost Ports (SPA) hide your services |
 | No SSH key management | `cm keys` - generate, list, deploy SSH keys |
 | Batch command execution | `cm exec --all "cmd"` - run on all nodes at once |
 | DDoS on your API | Built-in DDoS protection (rate limiting, banning, slowloris guard) |
@@ -135,7 +135,7 @@ cm discover 192.168.1  # Scan your network for nodes
 cm doctor              # Security & health check (15 checks)
 cm exec --all "uptime" # Run command on all nodes
 cm panic --dry-run     # Preview emergency key rotation
-cm completions bash    # Enable shell completions
+cm completions --shell bash    # Enable shell completions
 ```
 
 ---
@@ -246,9 +246,9 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 | `cm config export -d DIR` | Export all config to directory |
 | `cm config import -d DIR` | Import config from directory |
 | `cm config show` | Show config file contents |
-| `cm completions bash` | Generate bash completions |
-| `cm completions zsh` | Generate zsh completions |
-| `cm completions powershell` | Generate PowerShell completions |
+| `cm completions --shell bash` | Generate bash completions |
+| `cm completions --shell zsh` | Generate zsh completions |
+| `cm completions --shell powershell` | Generate PowerShell completions |
 | `cm status` | Quick overview: servers, nodes, services, alerts |
 | `cm doctor` | 15-point security and health check |
 | `cm update` | Self-update from GitHub |
@@ -295,9 +295,9 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 #### New Commands
 | Command | Description |
 |---------|-------------|
-| `cm node start --spa` | Start node with SPA (Single Packet Authorization) |
-| `cm node start --spa --spa-port 9998` | Custom UDP port for SPA |
-| `cm node start --spa --spa-window 10` | TCP stays open N seconds after knock |
+| `python3 cloudmesh_node.py start --spa` | Start node with SPA (Single Packet Authorization) |
+| `python3 cloudmesh_node.py start --spa --spa-port 9998` | Custom UDP port for SPA |
+| `python3 cloudmesh_node.py start --spa --spa-window 10` | TCP stays open N seconds after knock |
 | `cm tripwire plant --node NAME --host HOST` | Plant a tripwire trap key |
 | `cm tripwire list` | List all planted tripwires |
 | `cm tripwire check` | Check if any tripwire was triggered |
@@ -491,9 +491,9 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 ### Shell Completions (v2.0.0)
 | Command | Description |
 |---------|-------------|
-| `cm completions bash` | Generate bash completions |
-| `cm completions zsh` | Generate zsh completions |
-| `cm completions powershell` | Generate PowerShell completions |
+| `cm completions --shell bash` | Generate bash completions |
+| `cm completions --shell zsh` | Generate zsh completions |
+| `cm completions --shell powershell` | Generate PowerShell completions |
 
 ### Webhooks and Alerts
 | Command | Alias | Description |
@@ -743,9 +743,9 @@ By default, CloudMesh retries only when it can confirm the request was not sent.
 
 ### Ghost Ports (SPA)
 ```bash
-cm node start --spa                           # Start with SPA mode
-cm node start --spa --spa-port 9998           # Custom UDP port
-cm node start --spa --spa-window 10           # TCP stays open 10s
+python3 cloudmesh_node.py start --spa                    # Start with SPA mode
+python3 cloudmesh_node.py start --spa --spa-port 9998     # Custom UDP port
+python3 cloudmesh_node.py start --spa --spa-window 10     # TCP stays open 10s
 ```
 **How it works:** Node listens on UDP silently. Controller sends a signed HMAC packet. Node opens TCP for N seconds. Port scanners see nothing. Only the knocker's source IP can connect.
 
@@ -761,15 +761,15 @@ cm tripwire remove --node honeypot                   # Remove trap
 ```bash
 cm keys generate            # Generate new key pair
 cm keys list                # List all managed keys
-cm keys show                # Show public key
-cm keys deploy              # Deploy to all servers
+cm keys show KEY             # Show public key
+cm keys deploy KEY           # Deploy to all servers
 ```
 
 ### Shell Completions (v2.0.0)
 ```bash
-cm completions bash         # Bash completions
-cm completions zsh          # Zsh completions
-cm completions powershell   # PowerShell completions
+cm completions --shell bash         # Bash completions
+cm completions --shell zsh          # Zsh completions
+cm completions --shell powershell   # PowerShell completions
 ```
 
 ### Self Update (v2.0.0)
@@ -851,11 +851,11 @@ cm nodeinstall -H SERVER_IP -u root -k ~/.ssh/id_rsa
 
 ### Node Options
 ```bash
-cm node start --bind 127.0.0.1       # Bind to specific interface
-cm node start --tls-cert cert.pem --tls-key key.pem  # Enable TLS
-cm node start --spa                  # Enable Ghost Ports (SPA)
-cm node start --spa --spa-port 9998  # Custom UDP port
-cm node start --spa --spa-window 10  # TCP open window in seconds
+python3 cloudmesh_node.py start --bind 127.0.0.1                     # Bind to specific interface
+python3 cloudmesh_node.py start --tls-cert cert.pem --tls-key key.pem  # Enable TLS
+python3 cloudmesh_node.py start --spa                              # Enable Ghost Ports (SPA)
+python3 cloudmesh_node.py start --spa --spa-port 9998               # Custom UDP port
+python3 cloudmesh_node.py start --spa --spa-window 10               # TCP open window in seconds
 ```
 TLS requires both `--tls-cert` and `--tls-key`; the node refuses partial TLS configuration instead of starting without encryption.
 
@@ -974,7 +974,7 @@ netstat -tlnp | grep 9999
 cat ~/.cloudmesh-node/.node_key
 
 # Re-add with correct key
-cm add -n NAME -H HOST -p 9999 -k YOUR_KEY
+cm add -n NAME -H HOST -u root -p 9999 -k YOUR_KEY
 ```
 </details>
 

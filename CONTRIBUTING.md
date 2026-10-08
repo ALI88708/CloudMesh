@@ -311,7 +311,7 @@ cm run "df -h"
 cm doctor
 
 # Enable shell completions (bash/zsh/powershell)
-cm completions bash
+cm completions --shell bash
 ```
 
 ---
@@ -433,23 +433,30 @@ cm node remove -n NAME
 
 ### Node Agent Commands
 
+These run **on the node itself**, not on the controller. The controller has no
+`cm node start` / `stop` / `status` — those subcommands exist only on the agent.
+
 ```bash
-# Start the agent
-cm node start
+# On the node:
+python3 cloudmesh_node.py start                    # Start the agent
+python3 cloudmesh_node.py start --bind 127.0.0.1   # Bind to a specific interface
+python3 cloudmesh_node.py start --port 9999        # Custom TCP port
+python3 cloudmesh_node.py start --spa              # Enable Ghost Ports (SPA)
+python3 cloudmesh_node.py start --spa --spa-port 9998    # Custom UDP port for SPA
+python3 cloudmesh_node.py start --spa --spa-window 10    # TCP stays open 10s after knock
+python3 cloudmesh_node.py start --tls-cert cert.pem --tls-key key.pem  # Enable TLS
 
-# Start with specific options
-cm node start --bind 127.0.0.1         # Bind to specific interface
-cm node start --port 9999              # Custom TCP port
-cm node start --spa                    # Enable Ghost Ports (SPA)
-cm node start --spa --spa-port 9998    # Custom UDP port for SPA
-cm node start --spa --spa-window 10    # TCP stays open 10s after knock
-cm node start --tls-cert cert.pem --tls-key key.pem  # Enable TLS
+python3 cloudmesh_node.py stop                     # Stop the agent
+python3 cloudmesh_node.py status                   # Check status
+```
 
-# Stop the agent
-cm node stop
+The installers wrap these as scripts — `~/.cloudmesh-node/start.sh`,
+`stop.sh`, and `status.sh` on Linux.
 
-# Check status
-cm node status
+To install the agent on a remote machine from the controller:
+
+```bash
+cm node install -H HOST -u USER -k SSH_KEY
 ```
 
 ### Node Dashboard
@@ -598,7 +605,7 @@ Runs the command on every connected node at once.
 ### Distribution Plan
 
 ```bash
-cm plan "deploy.sh"
+cm plan --tasks 5
 ```
 
 Shows which server would run what based on resource availability, without actually executing.
@@ -606,7 +613,7 @@ Shows which server would run what based on resource availability, without actual
 ### Task Slicing
 
 ```bash
-cm slice --file data.csv --parts 4
+cm slice --files data.csv --servers web-1
 ```
 
 Auto-slices a file across servers based on available resources.
@@ -619,10 +626,10 @@ Auto-slices a file across servers based on available resources.
 
 ```bash
 # Upload a file
-cm transfer -s SERVER -l /local/path -r /remote/path
+cm transfer --file /local/path --to-server SERVER
 
 # Download a file
-cm transfer -s SERVER -l /local/path -r /remote/path --download
+cm transfer --file /local/path --from-server SERVER
 
 # Alias: cm cp
 ```
@@ -632,7 +639,7 @@ Uses SFTP under the hood (via paramiko). Supports large files.
 ### Directory Sync
 
 ```bash
-cm sync -s SERVER -l /local/dir -r /remote/dir
+cm sync --local /local/dir --to-server SERVER --remote-to /remote/dir
 ```
 
 Compares MD5 checksums and only transfers changed files.
@@ -640,7 +647,7 @@ Compares MD5 checksums and only transfers changed files.
 ### Auto-sync
 
 ```bash
-cm autosync -s SERVER -l /local/dir -r /remote/dir -i 300
+cm autosync --local /local/dir --to-server SERVER --remote-to /remote/dir
 ```
 
 Watches a local directory and syncs to server every N seconds.
@@ -648,7 +655,7 @@ Watches a local directory and syncs to server every N seconds.
 ### Search Files
 
 ```bash
-cm find -n NAME -p /path -q "pattern"
+cm find -n NAME -p /path "pattern"
 # Alias: cm find
 ```
 
@@ -657,9 +664,8 @@ Runs `find` on the remote server with name pattern matching.
 ### Backups
 
 ```bash
-cm backup list              # List backups
-cm backup create -n NAME    # Create backup
-cm backup restore -n NAME   # Restore backup
+cm backup               # List backups
+cm backup --restore FILE # Restore a backup from FILE
 ```
 
 ---
@@ -800,7 +806,7 @@ cm firewall backup -s SERVER
 ### Load Rules from File
 
 ```bash
-cm firewall load -f rules.txt -s SERVER
+cm firewall load rules.txt -s SERVER
 ```
 
 ---
@@ -878,7 +884,7 @@ cm logagg search -p "error" -s SERVER
 ### Filter by Severity
 
 ```bash
-cm logagg filter -l ERROR -s SERVER
+cm logagg filter -l error -s SERVER
 ```
 
 ### Tail Logs Live
@@ -896,13 +902,13 @@ cm logagg sources
 ### Add Custom Log Source
 
 ```bash
-cm logagg add-source --name "nginx" --path /var/log/nginx/access.log
+cm logagg add-source --path /var/log/nginx/access.log -t nginx
 ```
 
 ### Log Statistics
 
 ```bash
-cm logagg stats -s SERVER
+cm logagg stats
 ```
 
 ### Clear Log Index
@@ -1070,13 +1076,13 @@ cm acl roles
 ### Add Custom Role
 
 ```bash
-cm acl add-role -r custom-role
+cm acl add-role --name custom-role --perms "monitor,ping"
 ```
 
 ### Remove Role
 
 ```bash
-cm acl remove-role -r custom-role
+cm acl remove-role --name custom-role
 ```
 
 ---
@@ -1395,13 +1401,13 @@ cm keys list
 ### Show Public Key
 
 ```bash
-cm keys show
+cm keys show mykey
 ```
 
 ### Deploy to All Servers
 
 ```bash
-cm keys deploy
+cm keys deploy mykey
 ```
 
 Copies your public key to all registered servers.
@@ -1409,7 +1415,7 @@ Copies your public key to all registered servers.
 ### Remove Managed Key
 
 ```bash
-cm keys remove-managed
+cm keys remove-managed --name mykey
 ```
 
 ---
@@ -1427,7 +1433,7 @@ Shows all config files and their locations.
 ### Export Config
 
 ```bash
-cm config export -d /backup/dir
+cm config export --output /backup/dir
 ```
 
 Exports all config files to a directory.
@@ -1435,7 +1441,7 @@ Exports all config files to a directory.
 ### Import Config
 
 ```bash
-cm config import -d /backup/dir
+cm config import /backup/dir
 ```
 
 Imports config from a directory.
@@ -1443,7 +1449,7 @@ Imports config from a directory.
 ### Show Config Contents
 
 ```bash
-cm config show
+cm config show config.json
 ```
 
 ### Profiles
@@ -1466,21 +1472,21 @@ Enable tab completion for CloudMesh commands in your shell.
 ### Bash
 
 ```bash
-cm completions bash >> ~/.bashrc
+cm completions --shell bash >> ~/.bashrc
 source ~/.bashrc
 ```
 
 ### Zsh
 
 ```bash
-cm completions zsh >> ~/.zshrc
+cm completions --shell zsh >> ~/.zshrc
 source ~/.zshrc
 ```
 
 ### PowerShell
 
 ```powershell
-cm completions powershell >> $PROFILE
+cm completions --shell powershell >> $PROFILE
 . $PROFILE
 ```
 
@@ -1556,7 +1562,7 @@ safe_path = shlex.quote(user_input)  # Prevents: ../../../etc/passwd
 Nodes can optionally use TLS encryption:
 
 ```bash
-cm node start --tls-cert cert.pem --tls-key key.pem
+python3 cloudmesh_node.py start --tls-cert cert.pem --tls-key key.pem
 ```
 
 ### ACL System
@@ -1592,11 +1598,11 @@ cm panic --dry-run    # Preview what would happen
 
 ```bash
 # On the node:
-cm node start --spa
+python3 cloudmesh_node.py start --spa
 
 # Custom options:
-cm node start --spa --spa-port 9998    # Custom UDP port
-cm node start --spa --spa-window 10    # TCP stays open 10s
+python3 cloudmesh_node.py start --spa --spa-port 9998    # Custom UDP port
+python3 cloudmesh_node.py start --spa --spa-window 10    # TCP stays open 10s
 ```
 
 ### Source IP Binding
@@ -2093,12 +2099,13 @@ Opens a text-based user interface with menus for all major features. Navigate wi
 
 ## 43. Aliases
 
-Create short aliases for long commands.
+Create short aliases for long commands. `alias` takes **flags, not
+subcommands** — the previous `cm alias add/list/remove` form never existed.
 
 ### Add Alias
 
 ```bash
-cm alias add -n myalias -c "run 'apt update'"
+cm alias --name myalias --cmd "cm ping"
 ```
 
 ### Use Alias
@@ -2110,14 +2117,17 @@ cm myalias
 ### List Aliases
 
 ```bash
-cm alias list
+cm alias --list
 ```
 
 ### Remove Alias
 
 ```bash
-cm alias remove -n myalias
+cm alias --remove myalias
 ```
+
+`cmd_alias` resolves in precedence order: `--remove`, then `--list`, otherwise
+the `--name`/`--cmd` pair creates one.
 
 ---
 
@@ -2128,13 +2138,13 @@ Templates are reusable command patterns with placeholders.
 ### Add Template
 
 ```bash
-cm template add -n deploy -c "ssh {host} 'cd /app && git pull && systemctl restart {service}'"
+cm template add -n deploy "ssh {host} 'cd /app && git pull && systemctl restart {service}'"
 ```
 
 ### Run Template
 
 ```bash
-cm template run -n deploy --host web-1 --service nginx
+cm template run -n deploy --params "host=web-1"
 ```
 
 ### List Templates
@@ -2170,8 +2180,8 @@ Record resource snapshots over time.
 
 ```bash
 cm reshistory snapshot              # Take snapshot
-cm reshistory show                  # Show history
-cm reshistory summary               # Summary
+cm reshistory show SERVER                  # Show history
+cm reshistory summary SERVER               # Summary
 cm reshistory clear                 # Clear history
 ```
 
@@ -2183,11 +2193,11 @@ Group servers and nodes for batch operations.
 
 ```bash
 cm group create -n webservers                # Create group
-cm group add -n webservers -d web-1          # Add device
-cm group add -n webservers -d web-2          # Add device
+cm group add -g webservers -d web-1          # Add device
+cm group add -g webservers -d web-2          # Add device
 cm group list                                # List groups
-cm group run -n webservers "uptime"          # Run on group
-cm group remove -n webservers -d web-1       # Remove device
+cm group run -g webservers "uptime"          # Run on group
+cm group remove -g webservers -d web-1       # Remove device
 cm group delete -n webservers                # Delete group
 ```
 
