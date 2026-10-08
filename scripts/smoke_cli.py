@@ -109,7 +109,15 @@ def _usage_block(out: str) -> str:
 def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
     """Run `<cmd> <path...> --help`.
 
-    Returns the discovered subcommands, an error message, or the raw output.
+    An empty path requests top-level help. Return (subcommands, error, output),
+    where output is stdout followed by stderr and error is None on success.
+    No recognized subcommands means an empty list, including for leaf commands.
+
+    A timeout after 60 seconds or a missing executable returns an error with
+    empty output. A nonzero exit, traceback marker, or absence of both '-h'
+    and '--help' in the output returns an error with the captured output.
+    All error results have no subcommands. Other OS errors and output decoding
+    errors propagate to the caller.
     """
     argv = [cmd, *path, "--help"]
     try:
@@ -150,21 +158,18 @@ def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
 
 
 def walk(cmd: str, jobs: int = 8) -> tuple[list[list[str]], list[tuple[list[str], str]]]:
-    """Return every command path reachable from the top level, plus failures.
+    """Discover command paths through help subprocesses and return failures.
 
-    Discovery runs level by level with a thread pool. Every path costs one
-    `cm ... --help` subprocess, so the work is entirely I/O bound: measured at
-    1.8s per path, the 286 real paths take 520s sequentially and about 70s with
-    eight workers. Walking depth-first with a single worker made the job
-    unacceptably slow once the scraper started finding subcommands again.
+    Probe each level with up to max(1, jobs) workers. Return (paths, failures),
+    where paths exclude the root invocation but include discovered paths whose
+    probes fail or are skipped by a limit. Failures are (path, error) pairs;
+    a top-level help failure uses an empty path and stops discovery.
 
-    The walk is also bounded on purpose. When the scraper mistook an option's
-    `choices` for subcommands it invented children indefinitely, and because
-    every invented path was queued unconditionally and never deduplicated, the
-    job ran for hours instead of finishing. A discovery bug must fail this test,
-    not stall CI: `seen` stops repeats, `_MAX_DEPTH` stops runaway nesting, and
-    `_MAX_PATHS` stops unbounded growth. Hitting a limit is reported as a
-    failure rather than silently truncating the surface.
+    Repeated child paths are ignored. Paths with at least _MAX_DEPTH command
+    words are not probed. The _MAX_PATHS budget limits probing, not the size
+    of the returned path list. Hitting either limit is reported as a failure.
+    Errors returned by run_help stop descent on that path; exceptions raised
+    by run_help propagate to the caller.
     """
     paths: list[list[str]] = []
     failures: list[tuple[list[str], str]] = []
@@ -199,6 +204,7 @@ def walk(cmd: str, jobs: int = 8) -> tuple[list[list[str]], list[tuple[list[str]
             break
 
         def _probe(path: list[str]) -> tuple[list[str], list[str], str | None]:
+            """Return the path, subcommands, and help error, if any."""
             subs, err, _ = run_help(cmd, path)
             return path, subs, err
 
@@ -222,7 +228,14 @@ def walk(cmd: str, jobs: int = 8) -> tuple[list[list[str]], list[tuple[list[str]
 
 
 def main() -> int:
-    """Walk the whole CLI command surface and report any broken commands."""
+    """Walk the whole CLI command surface and report any broken commands.
+
+    Read options from sys.argv. Return 0 on success, 1 for discovery or help
+    failures, or 2 if the executable cannot be resolved. Print failures to
+    stderr; --quiet suppresses success summaries but not the startup message.
+    Argument parsing raises SystemExit for --help or invalid arguments.
+    Exceptions from walk propagate.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cmd", default="cm", help="CLI executable to exercise")
     ap.add_argument("--jobs", type=int, default=8, help="parallel workers")
