@@ -133,6 +133,13 @@ def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
     if "Traceback (most recent call last)" in out:
         return [], f"{_split(path)} --help printed a traceback", out
 
+    # A command that exits 0 without printing its flags is broken even if its
+    # imports worked. This used to be a second full pass over every path, which
+    # doubled the cost for no extra coverage: the walk already runs `--help` on
+    # each path and has the output in hand, so assert it here instead.
+    if not any(flag in out for flag in _HELP_FLAGS):
+        return [], f"{_split(path)} produced no usage text", out
+
     match = _CHOICES.search(_usage_block(out))
     if not match:
         return [], None, out  # leaf command
@@ -235,26 +242,6 @@ def main() -> int:
         print(f"\n{len(failures)} command(s) failed:\n", file=sys.stderr)
         for path, err in failures:
             print(f"  [FAIL] {err}", file=sys.stderr)
-        return 1
-
-    # Re-run every discovered path once more in parallel to catch anything the
-    # sequential walk raced past, and to time the full surface.
-    def _check(path: list[str]) -> str | None:
-        """Re-run `--help` for a discovered path and return an error message, if any."""
-        _, err, out = run_help(args.cmd, path)
-        if err:
-            return err
-        if any(flag in out for flag in _HELP_FLAGS) is False:
-            return f"{_split(path)} produced no usage text"
-        return None
-
-    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        problems = [p for p in pool.map(_check, paths) if p]
-
-    if problems:
-        print(f"\n{len(problems)} command(s) failed:\n", file=sys.stderr)
-        for p in problems:
-            print(f"  [FAIL] {p}", file=sys.stderr)
         return 1
 
     if not args.quiet:
