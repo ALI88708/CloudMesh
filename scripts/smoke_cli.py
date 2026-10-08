@@ -25,8 +25,15 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 # `{a,b,c}` immediately after the program name in a usage banner.
-_CHOICES = re.compile(r"usage:\s*\S+\s+\[?-h\]?.*?\{([^}]*)\}", re.DOTALL)
 _HELP_FLAGS = ("-h", "--help")
+
+# The subcommand list inside argparse's usage block, e.g.
+#   usage: cloudmesh node [-h]
+#                         {add,remove,list,...} ...
+# Braces are matched only *after* `[-h]`, because that is where argparse puts
+# the subparser choices; a positional metavar such as `{action}` also renders as
+# braces, but never before the optionals.
+_CHOICES = re.compile(r"\[-h\].*?\{([^{}]*)\}", re.DOTALL)
 
 # Commands whose help is the whole point and that spawn no work.
 _LEAF_TIMEOUT = 60
@@ -60,6 +67,28 @@ def _split(path: list[str]) -> str:
     return " ".join(path)
 
 
+def _usage_block(out: str) -> str:
+    """Return only argparse's usage section.
+
+    argparse repeats the subcommand list under "positional arguments:", so
+    searching the whole help text would find it twice and, worse, would match
+    braces belonging to an unrelated example in a command's description or
+    epilog. The usage section is the `usage:` line plus its indented
+    continuation lines, ending at the first blank or unindented line.
+    """
+    lines = out.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith("usage:"):
+            continue
+        block = [line]
+        for cont in lines[index + 1:]:
+            if not cont.strip() or not cont[0].isspace():
+                break
+            block.append(cont)
+        return "\n".join(block)
+    return ""
+
+
 def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
     """Run `<cmd> <path...> --help`.
 
@@ -87,7 +116,7 @@ def run_help(cmd: str, path: list[str]) -> tuple[list[str], str | None, str]:
     if "Traceback (most recent call last)" in out:
         return [], f"{_split(path)} --help printed a traceback", out
 
-    match = _CHOICES.search(out)
+    match = _CHOICES.search(_usage_block(out))
     if not match:
         return [], None, out  # leaf command
 

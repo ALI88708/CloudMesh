@@ -442,7 +442,15 @@ echo Expand-Archive -Path $zip -DestinationPath $out -Force >> "%TEMP%\cm_ex.ps1
 echo $d = Get-ChildItem -Path $out -Directory ^| Select-Object -First 1 >> "%TEMP%\cm_ex.ps1"
 echo $destPath = '%PROJECT_DIR%' >> "%TEMP%\cm_ex.ps1"
 echo if (Test-Path $destPath) { Remove-Item -Recurse -Force $destPath } >> "%TEMP%\cm_ex.ps1"
-echo Copy-Item -Path (Join-Path $d.FullName 'cloudmesh') -Destination $destPath -Recurse -Force >> "%TEMP%\cm_ex.ps1"
+REM Recreate the project root before copying. Copy-Item infers the destination
+REM name from whether the destination already exists: absent, the source
+REM directory *becomes* the destination, so the payload landed flat at
+REM project\main.py while the check below looks for project\cloudmesh\main.py.
+REM That failed every install with "Extract failed!" even though PowerShell
+REM exited 0. Name the destination explicitly, as the Linux installer does with
+REM `cp -r "$src_root/cloudmesh" "$PROJECT_DIR/cloudmesh"`.
+echo New-Item -ItemType Directory -Path $destPath -Force ^| Out-Null >> "%TEMP%\cm_ex.ps1"
+echo Copy-Item -Path (Join-Path $d.FullName 'cloudmesh') -Destination (Join-Path $destPath 'cloudmesh') -Recurse -Force >> "%TEMP%\cm_ex.ps1"
 REM pyproject.toml is what makes the directory an installable project.
 echo foreach ($f in @('pyproject.toml','README.md','License')) { >> "%TEMP%\cm_ex.ps1"
 echo     $src = Join-Path $d.FullName $f >> "%TEMP%\cm_ex.ps1"
