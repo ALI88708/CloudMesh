@@ -49,15 +49,21 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _extract_powershell(destination: Path) -> str:
-    """Rebuild the PowerShell that cm_for-windows.bat writes to cm_ex.ps1.
+def _extract_powershell(destination: Path, workdir: Path) -> str:
+    r"""Rebuild the PowerShell that cm_for-windows.bat writes to cm_ex.ps1.
 
     The batch file assembles the script with `echo ... >> "%TEMP%\\cm_ex.ps1"`,
     so the script under test is derived from the file itself rather than
     restated here. A restatement would pass while the real installer fails,
     which is exactly what happened.
+
+    `workdir` relocates the two scratch paths the script uses. Left alone they
+    are `%TEMP%\\cloudmesh.zip` and `%TEMP%\\cloudmesh_extract` -- the very paths
+    a real install uses, so a test run and an install (or two runs at once)
+    would trample each other's files.
     """
     text = WINDOWS_INSTALLER.read_text(encoding="utf-8", errors="replace")
+    quote = lambda p: str(p).replace("'", "''")  # noqa: E731
 
     lines: list[str] = []
     for raw in text.splitlines():
@@ -74,22 +80,32 @@ def _extract_powershell(destination: Path) -> str:
         body = body.replace('>> "%TEMP%\\cm_ex.ps1"', "")
         body = body.replace('> "%TEMP%\\cm_ex.ps1"', "")
         body = body.replace("^|", "|")
-        body = body.replace("%PROJECT_DIR%", str(destination).replace("'", "''"))
+        body = body.replace("%PROJECT_DIR%", quote(destination))
+        # Point the script's scratch paths at our own directory. The
+        # replacement goes through a lambda because re.sub would read the
+        # backslashes in a Windows path as group escapes.
+        body = re.sub(
+            r"Join-Path \$env:TEMP 'cloudmesh\.zip'",
+            lambda _m: f"'{quote(workdir / 'cloudmesh.zip')}'",
+            body,
+        )
+        body = re.sub(
+            r"Join-Path \$env:TEMP 'cloudmesh_extract'",
+            lambda _m: f"'{quote(workdir / 'cloudmesh_extract')}'",
+            body,
+        )
         lines.append(body)
 
     assert lines, "found no cm_ex.ps1 echo lines; the batch file changed shape"
     return "\n".join(lines)
 
 
-def _stage_zip() -> Path:
+def _stage_zip(workdir: Path) -> Path:
     """Build a zip shaped like `archive/refs/heads/main.zip`."""
-    zip_path = Path(os.environ["TEMP"]) / "cloudmesh.zip"
-    staging = Path(os.environ["TEMP"]) / "cloudmesh_zip_src"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
-
+    zip_path = workdir / "cloudmesh.zip"
+    staging = workdir / "zip_src"
     package = staging / "CloudMesh-main" / "cloudmesh" / "core"
-    package.mkdir(parents=True)
+    package.mkdir(parents=True, exist_ok=True)
     (staging / "CloudMesh-main" / "cloudmesh" / "main.py").write_text(
         "# extracted payload\n", encoding="utf-8"
     )
@@ -98,8 +114,6 @@ def _stage_zip() -> Path:
     (staging / "CloudMesh-main" / "README.md").write_text("# readme\n", encoding="utf-8")
     (staging / "CloudMesh-main" / "LICENSE").write_text("license\n", encoding="utf-8")
 
-    if zip_path.exists():
-        zip_path.unlink()
     with zipfile.ZipFile(zip_path, "w") as archive:
         for item in sorted(staging.rglob("*")):
             archive.write(item, item.relative_to(staging).as_posix())
@@ -107,6 +121,15 @@ def _stage_zip() -> Path:
     return zip_path
 
 
+# pytest.ini sets a 10-second per-test timeout. This test starts PowerShell and
+# runs `Expand-Archive`, which is comfortably slower than that on a loaded
+# Windows runner: it passed locally in about 2.5s and then timed out on
+# windows-latest / Python 3.13. The subprocess carries its own lower timeout so
+# a genuine hang still produces a readable error rather than pytest's.
+_EXTRACT_TIMEOUT = 240
+
+
+@pytest.mark.timeout(_EXTRACT_TIMEOUT + 60)
 def test_windows_installer_payload_lands_in_the_cloudmesh_subdirectory(tmp_path):
     """PROJECT_DIR must end up holding cloudmesh/, not the package itself.
 
@@ -116,10 +139,14 @@ def test_windows_installer_payload_lands_in_the_cloudmesh_subdirectory(tmp_path)
     """
     project_dir = tmp_path / "project"
     project_dir.mkdir()
+    workdir = tmp_path / "scratch"
+    workdir.mkdir()
 
-    _stage_zip()
+    _stage_zip(workdir)
     script = tmp_path / "cm_ex.ps1"
-    script.write_text(_extract_powershell(project_dir), encoding="utf-8")
+    script.write_text(
+        _extract_powershell(project_dir, workdir), encoding="utf-8"
+    )
 
     proc = subprocess.run(
         [
@@ -128,7 +155,7 @@ def test_windows_installer_payload_lands_in_the_cloudmesh_subdirectory(tmp_path)
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=_EXTRACT_TIMEOUT,
     )
 
     cloudmesh_dir = project_dir / "cloudmesh"
