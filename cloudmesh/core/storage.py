@@ -43,14 +43,35 @@ def _ensure_private_file(path: Path) -> None:
             logger.warning("Failed to set file permissions on %s: %s", path, e)
 
 
+def resolve_base_dir(explicit: Optional[Path] = None) -> Path:
+    """Where the database, key, and backups live.
+
+    Precedence: the explicit argument, then `CLOUDMESH_DIR`, then the directory
+    containing this package. The default is the package directory because that is
+    where an installed copy keeps its state, and changing it would strand every
+    existing user's data.
+
+    `CLOUDMESH_DIR` is a supported setting rather than a test hook -- it is how
+    a user sandboxes an install, and `cm doctor` reports the active value so a
+    wrong setting is visible instead of silently relocating the database and keys.
+
+    An empty variable is treated as unset: it is a mistake, not a request to
+    store in the working directory.
+    """
+    if explicit is not None:
+        return Path(explicit)
+    configured = os.environ.get("CLOUDMESH_DIR")
+    if configured:
+        return Path(configured)
+    return Path(__file__).parent.parent
+
+
 class StorageManager:
     """SQLite-based storage manager extending queue storage."""
     
     def __init__(self, base_dir: Optional[Path] = None):
-        if base_dir is None:
-            base_dir = Path(__file__).parent.parent
+        self.base_dir = resolve_base_dir(base_dir)
 
-        self.base_dir = Path(base_dir)
         self.db_path = self.base_dir / "cloudmesh.db"
         self.key_path = self.base_dir / ".secret.key"
         self.backups_dir = self.base_dir / "backups"
