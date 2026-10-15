@@ -7,6 +7,12 @@ from pathlib import Path
 
 import pytest
 
+# The node-agent test boots a real interpreter with `timeout=60`. `pytest.ini`'s
+# 10s cap was the tighter of the two bounds, so a slow machine failed here for a
+# reason that had nothing to do with the adapter. Raised above the subprocess's
+# own bound so the failure that does happen is the informative one.
+pytestmark = pytest.mark.timeout(120)
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT.parent) not in sys.path:
     sys.path.insert(0, str(ROOT.parent))

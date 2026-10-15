@@ -44,9 +44,19 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent.parent
 WINDOWS_INSTALLER = ROOT / "cm_for-windows.bat"
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "win32", reason="the batch installer is for Windows"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        sys.platform != "win32", reason="the batch installer is for Windows"
+    ),
+    # `pytest.ini` caps every test at 10s, but these tests shell out to a real
+    # PowerShell with its own `timeout=180`. Measured: 3.8s warm, 8.7s on the
+    # first run of the session, against that 10s cap -- so the suite failed here
+    # whenever the runner was cold or loaded. The cap is raised past the
+    # subprocess's own 180s bound on purpose: that way a genuinely hung
+    # PowerShell fails on its own timeout with the captured output attached,
+    # instead of being killed by pytest with nothing to show for it.
+    pytest.mark.timeout(200),
+]
 
 
 def _extract_powershell(destination: Path) -> str:

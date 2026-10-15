@@ -10,6 +10,12 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# The bash case feeds a completion script to a real bash. That `subprocess.run`
+# had no `timeout=` of its own, so pytest's 10s cap was the only thing standing
+# between a hung shell and a hung suite. The mark raises the cap; the bound on
+# the call itself is added below so the hang is attributed correctly.
+pytestmark = pytest.mark.timeout(60)
+
 from main import cmd_completions
 
 
@@ -92,6 +98,7 @@ printf 'worker-options:%s\n' "${COMPREPLY[*]}"
         input=output.read_bytes() + checks.encode("utf-8"),
         capture_output=True,
         check=True,
+        timeout=45,
     )
 
     assert b"queue:submit status list cancel worker" in result.stdout
