@@ -18,7 +18,9 @@ def test_completions_include_missing_top_level_command_and_queue_actions(
     shell, tmp_path
 ):
     output = tmp_path / f"completions.{shell}"
-    cmd_completions(argparse.Namespace(shell=shell, output=str(output)))
+    # nosec B604 -- false positive: `shell` is an argparse.Namespace keyword here,
+    # not a subprocess call. There is no subprocess in this expression.
+    cmd_completions(argparse.Namespace(shell=shell, output=str(output)))  # nosec B604
     script = output.read_text(encoding="utf-8")
 
     assert b"\r" not in output.read_bytes()
@@ -32,7 +34,8 @@ def test_completions_include_missing_top_level_command_and_queue_actions(
 
 def test_zsh_completion_uses_command_position_for_nested_actions(tmp_path):
     output = tmp_path / "completions.zsh"
-    cmd_completions(argparse.Namespace(shell="zsh", output=str(output)))
+    # nosec B604 -- argparse.Namespace keyword, not a subprocess call.
+    cmd_completions(argparse.Namespace(shell="zsh", output=str(output)))  # nosec B604
     script = output.read_text(encoding="utf-8")
 
     assert "for ((i=2; i<CURRENT; i++)); do" in script
@@ -42,7 +45,8 @@ def test_zsh_completion_uses_command_position_for_nested_actions(tmp_path):
 
 def test_powershell_completion_maps_subcommands_and_options(tmp_path):
     output = tmp_path / "completions.ps1"
-    cmd_completions(argparse.Namespace(shell="powershell", output=str(output)))
+    # nosec B604 -- argparse.Namespace keyword, not a subprocess call.
+    cmd_completions(argparse.Namespace(shell="powershell", output=str(output)))  # nosec B604
     script = output.read_text(encoding="utf-8")
 
     assert 'Register-ArgumentCompleter -Native -CommandName cm, cloudmesh' in script
@@ -72,7 +76,8 @@ def _native_bash() -> str | None:
 def test_bash_completion_returns_nested_commands_and_matching_options(tmp_path):
     """The generated bash script must complete subcommands and option names."""
     output = tmp_path / "completions.bash"
-    cmd_completions(argparse.Namespace(shell="bash", output=str(output)))
+    # nosec B604 -- argparse.Namespace keyword, not a subprocess call.
+    cmd_completions(argparse.Namespace(shell="bash", output=str(output)))  # nosec B604
     script = output.read_text(encoding="utf-8")
     checks = r'''
 COMP_WORDS=(cm queue ""); COMP_CWORD=2

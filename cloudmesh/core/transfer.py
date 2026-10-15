@@ -72,7 +72,9 @@ class FileTransfer:
                 remote_dir_path = os.path.dirname(remote_file)
                 try:
                     client = self.server_mgr.connect(server_name)
-                    client.exec_command(f"mkdir -p {shlex.quote(remote_dir_path)}")
+                    # nosec B601 -- the path is passed through shlex.quote, so
+                    # shell metacharacters cannot escape into the remote command.
+                    client.exec_command(f"mkdir -p {shlex.quote(remote_dir_path)}")  # nosec B601
                 except Exception:
                     pass
                 result = self.upload(server_name, local_file, remote_file)

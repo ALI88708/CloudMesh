@@ -9,7 +9,10 @@ class DirectorySync:
         self.server_mgr = server_manager
 
     def _md5(self, filepath):
-        h = hashlib.md5()
+        # nosec B324 -- file fingerprint for sync change detection, compared
+        # against remote `md5sum` output. It detects edits; it does not
+        # authenticate anything, so a collision would not cross a trust boundary.
+        h = hashlib.md5()  # nosec B324
         with open(filepath, "rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
                 h.update(chunk)

@@ -20,8 +20,10 @@ from cloudmesh.core.storage import StorageManager
 def _raw_secret(base: Path, table: str, column: str, name_col="name", name="srv1"):
     con = sqlite3.connect(base / "cloudmesh.db")
     try:
+        # nosec B608 -- test helper; table/column are passed as string literals
+        # by the callers below, and the value itself is bound, not interpolated.
         row = con.execute(
-            f"SELECT {column} FROM {table} WHERE {name_col} = ?", (name,)
+            f"SELECT {column} FROM {table} WHERE {name_col} = ?", (name,)  # nosec B608
         ).fetchone()
         return row[0] if row else None
     finally:

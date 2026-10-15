@@ -2,11 +2,12 @@ name: CloudMesh CI
 
 # Everything a pull request has to satisfy before it can be merged.
 #
-# Three layers, because each catches a different class of failure:
+# Four layers, because each catches a different class of failure:
 #   lint        undefined names, syntax errors, dead imports (ruff)
 #   test        the pytest suite with the coverage gate
 #   installed   the built wheel installed into a clean venv, then every one of
 #               the ~119 command paths asked for --help
+#   security    known-bad dependencies, leaked secrets, unsafe Python patterns
 #
 # The installed job exists because the suite runs against the source tree and
 # never touches the packaging. `cm api`, `cm panic rotate`, and `cm weather`
@@ -213,3 +214,74 @@ jobs:
           name: dist
           path: dist/
           retention-days: 7
+
+  security:
+    name: Security scanners
+    runs-on: ubuntu-latest
+    steps:
+      # gitleaks walks the commit history. A shallow clone would scan almost
+      # nothing and then report a clean bill of health for a secret that was
+      # committed in 2024 and deleted in 2025, which is the whole failure mode
+      # it exists to catch.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # bandit 1.8.6 reads ast.Num, which 3.14 removed, so it raises on every
+      # file under 3.14 and reports nothing. The 3.12 pin above is what keeps
+      # this job working; bump the interpreter and bandit together, never
+      # separately.
+      - name: Install scanners
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "bandit==1.8.6" "pip-audit==2.9.0"
+
+      # Deliberately not a gate yet. The tree is an SSH/remote-execution tool,
+      # so a large share of the output is subprocess and paramiko that exists
+      # on purpose; the useful question is which findings are reachable, and
+      # that needs a human reading the counts. `--exit-zero` keeps the job
+      # green while bandit.json stays uploaded and reviewable. The scanner
+      # counts below are the input to deciding whether this becomes a gate.
+      - name: Bandit static scan (reporting only)
+        run: |
+          python -m bandit -r cloudmesh scripts -f json -o bandit.json --exit-zero
+          python - <<'PY'
+          import collections, json, pathlib
+
+          data = json.loads(pathlib.Path("bandit.json").read_text(encoding="utf-8"))
+          results = data["results"]
+          counts = collections.Counter(r["issue_severity"] for r in results)
+          print("bandit findings by severity:", dict(sorted(counts.items())) or "none")
+          # Low is dominated by `assert` in the pytest suite; print the rest so
+          # the log leads with what actually needs a decision.
+          for r in sorted(results, key=lambda r: (r["issue_severity"], r["filename"])):
+              if r["issue_severity"] == "LOW":
+                  continue
+              print(f"  {r['issue_severity']:<6} {r['test_id']} {r['filename']}:{r['line_number']}")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit.json
+          retention-days: 7
+          if-no-files-found: error
+
+      # Hard gate. Unlike bandit, a published advisory against a runtime
+      # dependency is not a judgement call: `cm` holds SSH keys and runs
+      # commands on remote hosts, so a fixed-version bump is the expected
+      # response rather than a suppression.
+      - name: Dependency advisories must be clear
+        run: python -m pip_audit -r cloudmesh/requirements.txt
+
+      # Secrets in the history rather than in the working tree. No apt-get
+      # step: the action ships its own binary, and installing packages here has
+      # hung this repository's CI on a mirror lock before.
+      - name: Scan git history for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

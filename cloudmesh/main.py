@@ -2187,7 +2187,7 @@ def cmd_doctor(args):
     db_src = base / "core" / "database.py"
     if db_src.exists():
         dc = db_src.read_text()
-        checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))
+        checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))  # nosec B108 -- the literal is the subject of a self-diagnosis grep; no file is created
     else:
         checks.append(("Database", False, "database.py not found"))
 
@@ -3454,7 +3454,7 @@ def _alias_db_query(args):
 
 def _alias_db_backup(args):
     args.action = "backup"
-    args.path = "/tmp"
+    args.path = "/tmp"  # nosec B108 -- default for a remote destination directory, not a local temp file
     args.host = "127.0.0.1"
     args.port = None
     args.user = "root"
@@ -4571,7 +4571,7 @@ def main():
     dbb = db_sub.add_parser("backup", help="Backup database")
     dbb.add_argument("--server", "-s", required=True)
     dbb.add_argument("--database", "-d", required=True)
-    dbb.add_argument("--path", default="/tmp")
+    dbb.add_argument("--path", default="/tmp")  # nosec B108 -- argparse default for a remote destination, not a local temp file
     dbb.add_argument("--type", "-t", default="mysql")
     dbb.add_argument("--host", default="127.0.0.1")
     dbb.add_argument("--port", "-p", type=int)

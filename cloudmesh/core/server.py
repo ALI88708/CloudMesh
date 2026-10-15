@@ -226,7 +226,11 @@ class ServerManager:
 
     def execute(self, name, command):
         client = self.connect(name)
-        stdin, stdout, stderr = client.exec_command(command)
+        # nosec B601 -- this is the SSH administration tool's primary verb: the
+        # command comes from the operator, who already holds the key that
+        # authenticated the session. Reaching this line requires an existing
+        # authenticated session, not attacker-supplied input.
+        stdin, stdout, stderr = client.exec_command(command)  # nosec B601
         with ThreadPoolExecutor(max_workers=2) as executor:
             stdout_future = executor.submit(stdout.read)
             stderr_future = executor.submit(stderr.read)
