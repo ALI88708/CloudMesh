@@ -2158,6 +2158,30 @@ def cmd_doctor(args):
     except Exception as e:
         checks.append(("Git", False, f"check failed: {e}"))
 
+    # Where the database, key, and config actually live. Every other row in this
+    # table is the code inspecting itself, so a user with a wrong CLOUDMESH_DIR
+    # sees every check green while their data has quietly moved somewhere they
+    # did not choose. This row is the only one that can show them that.
+    #
+    # Deliberately `resolve_base_dir()` with no argument: `--base-dir` means
+    # "where the source tree is" -- it is used above to find core/*.py -- so
+    # feeding it here would report a source path as though it were the data
+    # directory.
+    try:
+        from cloudmesh.core.storage import resolve_base_dir
+
+        data_dir = resolve_base_dir()
+        configured = bool(os.environ.get("CLOUDMESH_DIR"))
+        checks.append((
+            "Data directory",
+            data_dir.is_dir(),
+            f"{data_dir}" + (
+                " (from CLOUDMESH_DIR)" if configured else " (package default)"
+            ),
+        ))
+    except Exception as e:
+        checks.append(("Data directory", False, f"check failed: {e}"))
+
     ssh_src = base / "core" / "ssh_util.py"
     if ssh_src.exists():
         try:

@@ -119,37 +119,56 @@ def test_security_manager_explicit_argument_still_wins(monkeypatch, tmp_path):
     assert manager.base_dir == tmp_path / "explicit"
 
 
-def test_doctor_reports_the_data_directory(monkeypatch, tmp_path, capsys):
-    """A wrong `CLOUDMESH_DIR` silently relocates a user's data.
+def _run_doctor(monkeypatch, capsys):
+    """Call `cm doctor` wide enough that a path is not truncated.
 
-    Every other check in `doctor` is self-diagnosis of the code; this one is the
-    only thing that would let a user see that their database, keys, and config
-    had quietly moved somewhere they did not choose.
+    `doctor` renders a rich table, and at the default width a long path is
+    folded and replaced with an ellipsis. Asserting on a path that the renderer
+    cut in half would test rich's layout, not the row -- so COLUMNS is widened
+    and the assertion stays exact.
     """
     import main as main_mod
 
+    monkeypatch.setenv("COLUMNS", "300")
+    main_mod.cmd_doctor(type("A", (), {"base_dir": None, "as_json": False})())
+    return capsys.readouterr().out
+
+
+def test_doctor_reports_the_data_directory(monkeypatch, tmp_path, capsys):
+    """A wrong `CLOUDMESH_DIR` silently relocates a user's data.
+
+    Every other row in `doctor` is the code inspecting itself, so a user with a
+    bad setting sees a green table while their database, key, and config have
+    quietly moved somewhere they did not choose. This row is the only one that
+    can show them that.
+    """
     monkeypatch.setenv("CLOUDMESH_DIR", str(tmp_path))
-    main_mod.cmd_doctor(type("A", (), {"base_dir": str(tmp_path), "as_json": False})())
-    out = capsys.readouterr().out
+    out = _run_doctor(monkeypatch, capsys)
     assert "Data directory" in out
     assert str(tmp_path) in out
 
 
 def test_doctor_row_names_the_source_of_the_data_directory(monkeypatch, tmp_path, capsys):
     """The row must say *why* the path is what it is, or a typo is unreadable."""
-    import main as main_mod
-
     monkeypatch.setenv("CLOUDMESH_DIR", str(tmp_path))
-    main_mod.cmd_doctor(type("A", (), {"base_dir": str(tmp_path), "as_json": False})())
-    assert "CLOUDMESH_DIR" in capsys.readouterr().out
+    assert "CLOUDMESH_DIR" in _run_doctor(monkeypatch, capsys)
 
 
 def test_doctor_labels_the_package_default_when_the_variable_is_unset(monkeypatch, capsys):
     """Without the variable the row must not imply one is in play."""
-    import main as main_mod
-
     monkeypatch.delenv("CLOUDMESH_DIR", raising=False)
-    main_mod.cmd_doctor(type("A", (), {"base_dir": str(PACKAGE_DIR), "as_json": False})())
-    out = capsys.readouterr().out
+    out = _run_doctor(monkeypatch, capsys)
     assert "package default" in out
     assert str(PACKAGE_DIR) in out
+
+
+def test_doctor_flags_a_data_directory_that_does_not_exist(monkeypatch, tmp_path, capsys):
+    """A typo in the setting must show as a failing row, not a silent path.
+
+    `is_dir()` is what turns this into a visible problem: without it the row
+    would report the configured path as healthy while every command failed.
+    """
+    monkeypatch.setenv("CLOUDMESH_DIR", str(tmp_path / "never-created"))
+    out = _run_doctor(monkeypatch, capsys)
+    data_row = next(line for line in out.splitlines() if "Data directory" in line)
+    assert "FAIL" in data_row, f"a missing data directory must not report healthy: {data_row}"
