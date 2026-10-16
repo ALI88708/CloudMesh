@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 class SecurityManager:
     def __init__(self, base_dir=None):
+        """Set config, encryption key, and backup paths and create backup directories.
+
+        Use an explicit `base_dir` when supplied; otherwise use a nonempty
+        CLOUDMESH_DIR, then the package directory. Create missing parent
+        directories, but defer key and config creation until needed. Directory
+        creation errors propagate as OSError.
+        """
         # Resolved through the same helper as the database rather than an inline
         # fallback, because this manager holds the Fernet key and `config.json`:
         # when `CLOUDMESH_DIR` moved the database but left the key behind, a

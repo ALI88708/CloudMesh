@@ -349,6 +349,9 @@ def get_version():
     is what a source checkout with no installed distribution reports, and it has
     to be kept in step with `pyproject.toml` by hand -- which is exactly why
     `test_release_metadata.py` pins the two against each other.
+
+    Metadata import or lookup errors fall back to 3.5.0. The returned dictionary
+    has `version`, `python` (major.minor.micro), and `platform` (sys.platform).
     """
     try:
         from importlib.metadata import version as _pkg_version

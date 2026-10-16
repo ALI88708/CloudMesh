@@ -469,6 +469,12 @@ class SpacListener:
         return True
 
     def _listen_loop(self):
+        """Listen for valid SPA knocks on all IPv4 interfaces until stopped.
+
+        Call on_open with the window in seconds and source IP for each valid
+        packet. Bind failures return; receive, validation, and callback errors
+        are suppressed while listening continues. Socket setup errors propagate.
+        """
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.settimeout(1.0)
@@ -513,7 +519,15 @@ class NodeAgent:
     def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",  # nosec B104 -- node agent must be reachable by design; every request is auth-gated
                  tls_cert=None, tls_key=None,
                  spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
-        """Initialize the node agent's listener, job store, and DDoS protection."""
+        """Initialize the node agent's listener, job store, and DDoS protection.
+
+        Use `auth_key` when nonempty, otherwise read or create the persistent
+        node key. Create the job directory and reload jobs, marking previously
+        running jobs unknown. Listener settings take effect when serve is called;
+        `spa_window` is the TCP access window in seconds after a valid knock.
+        Raise ValueError if only one TLS path is supplied. Auth-key and job
+        directory I/O errors propagate; errors reading individual jobs are skipped.
+        """
         if bool(tls_cert) != bool(tls_key):
             raise ValueError("--tls-cert and --tls-key must be supplied together")
         self.port = port
@@ -1048,6 +1062,13 @@ def _is_running(pid):
 
 def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0",  # nosec B104 -- default bind only; --bind overrides it, and requests are auth-gated
               tls_cert=None, tls_key=None, spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
+    """Run the node agent in the foreground unless its recorded PID is alive.
+
+    Pass listener, TLS, and SPA settings to NodeAgent; `spa_window` is the TCP
+    access window in seconds after a valid knock. Suppress KeyboardInterrupt
+    during serving. Construction and startup errors, including invalid TLS
+    pairs, propagate.
+    """
     existing = _read_pid()
     if existing and _is_running(existing):
         print(f"Already running (PID {existing})")
@@ -1104,6 +1125,11 @@ def cmd_status():
 
 
 def main():
+    """Parse node start/stop/status arguments and dispatch the selected command.
+
+    Print help when no command is given. Invalid arguments or incomplete TLS
+    pairs raise SystemExit; command handler errors propagate.
+    """
     import argparse
     p = argparse.ArgumentParser(description="CloudMesh Node")
     sub = p.add_subparsers(dest="command")

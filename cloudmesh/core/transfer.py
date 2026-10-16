@@ -63,6 +63,13 @@ class FileTransfer:
             sftp.close()
 
     def upload_directory(self, server_name, local_dir, remote_dir):
+        """Upload files recursively, preserving paths relative to `local_dir`.
+
+        Attempt to create remote parent directories and return a list of upload
+        results. Directory-creation exceptions are ignored; upload connection,
+        file, and SFTP errors propagate, leaving earlier uploads in place.
+        Empty or missing local directories return an empty list.
+        """
         results = []
         for root, dirs, files in os.walk(local_dir):
             for f in files:

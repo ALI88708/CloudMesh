@@ -225,6 +225,13 @@ class ServerManager:
             self.disconnect(name)
 
     def execute(self, name, command):
+        """Run a command over SSH on the named server and wait for completion.
+
+        Return `exit_code`, `stdout`, and `stderr`; decode both streams as UTF-8
+        and strip surrounding whitespace. Nonzero exit codes are returned.
+        An unknown server raises ValueError when connecting; connection,
+        configuration persistence, command execution, and decoding errors propagate.
+        """
         client = self.connect(name)
         # nosec B601 -- this is the SSH administration tool's primary verb: the
         # command comes from the operator, who already holds the key that

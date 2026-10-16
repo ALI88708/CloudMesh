@@ -2090,6 +2090,11 @@ def cmd_version(args):
 def cmd_doctor(args):
     """Print local source, configuration, storage, and Git/update health checks.
 
+    `args.base_dir`, when set, selects the source and storage-check directory.
+    The Data directory row independently reports CLOUDMESH_DIR or the package
+    default and fails when that path is not a directory. Resolution and stat
+    errors for that row become failed checks.
+
     Storage checks may initialize database/key files, import nodes, and
     refresh their mirror. Report storage and Git check failures in the table;
     source read and file stat errors outside those checks propagate. Failed
@@ -3477,6 +3482,11 @@ def _alias_db_query(args):
     cmd_database(args)
 
 def _alias_db_backup(args):
+    """Set database backup defaults on `args` and dispatch to cmd_database.
+
+    Use remote /tmp and database host 127.0.0.1 as root with the engine's
+    default port. Handler errors propagate.
+    """
     args.action = "backup"
     args.path = "/tmp"  # nosec B108 -- default for a remote destination directory, not a local temp file
     args.host = "127.0.0.1"
