@@ -355,9 +355,9 @@ def get_version():
         try:
             ver = _pkg_version("cloudmesh")
         except Exception:
-            ver = "3.5.2"
+            ver = "3.5.0"
     except Exception:
-        ver = "3.5.2"
+        ver = "3.5.0"
     return {
         "version": ver,
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",

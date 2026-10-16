@@ -4,66 +4,13 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
-## [3.5.2] - 2026-10-16
+## [3.5.0] - 2026-10-16
 
-### Security
-- **Ten dependency advisories cleared.** `pip-audit` reported 10 known
-  vulnerabilities across `cryptography==42.0.0` and `paramiko==3.4.0`, and the
-  CI security job gates on it, so every run was going to fail. Both move to
-  `cryptography==50.0.0` and `paramiko==5.0.0`; `pip-audit` now reports no known
-  vulnerabilities.
-- **Those two pins move as a pair, deliberately.** `cryptography` relocated
-  `TripleDES` into `hazmat.decrepit` in 48.0.0, and that is the algorithm
-  `paramiko`'s transport builds its cipher list from, so raising `cryptography`
-  under `paramiko` 3.4 raises at import. `pyproject.toml` records the reason
-  next to the dependency so a future bump does not split them.
-- **Static analysis, dependency audit, and secret scanning run in CI.** `bandit`
-  reports without gating while its findings are triaged, `pip-audit` is a hard
-  gate, and `gitleaks` scans the full commit history rather than a shallow
-  clone.
-
-### Fixed
-- **`SecurityManager` follows `CLOUDMESH_DIR`.** It resolved its base directory
-  with an inline fallback, so a sandboxed `CLOUDMESH_DIR` moved the database
-  while leaving `config.json` and the Fernet key behind in the package
-  directory — a harness run then read state the developer's real install had
-  written.
-- **`cm doctor` reports the active data directory.** Every other row is the code
-  inspecting itself, so a wrong `CLOUDMESH_DIR` produced an entirely green table
-  while the user's data had moved somewhere they did not choose. A directory that
-  does not exist renders `FAIL` rather than a healthy-looking path.
-- **A nested `CLOUDMESH_DIR` no longer raises `FileNotFoundError`.**
-  `backups_dir.mkdir(exist_ok=True)` had no `parents=True`, and
-  `resolve_base_dir` returns its path without creating it.
-- **Subprocess tests no longer race the 10-second cap.** Five test files spawned
-  real subprocesses under `pytest.ini`'s `timeout = 10` while carrying their own
-  `timeout=60`. `test_windows_installer_extract.py` measured 8.7s cold against
-  that cap and failed whenever the runner was loaded. One `subprocess.run` in
-  `test_completions.py` had no timeout at all.
-
-### Added
-- **Property-based fuzzing of argument parsing** (Hypothesis): no argument vector
-  may produce an uncaught traceback, and no path may crash storage resolution.
-- **The website's command reference is held to the real parser**, so the site
-  cannot become a third place advertising a command the CLI rejects.
-- **Scroll reveals on the site**, with the base rule keeping content visible so a
-  reduced-motion reader never gets content stuck at the start of an animation.
-- **Release metadata guards.** The advertised version, command count, and test
-  count are derived from `pyproject.toml`, the real parser, and a collection-only
-  pytest run, then compared. The README had claimed 206 tests against a suite of
-  826 and 155 commands against a parser exposing 286, and nothing failed because
-  the badges are not built from anything.
-
-### Changed
-- README, `CONTRIBUTING.md`, and the badges now state 286 command paths and the
-  Python floor is stated as 3.10+, matching `requires-python`.
-- Duplicated README badges (`Tests`, `Website`, `License`) removed; a duplicated
-  figure is a second thing to forget to update.
-
-## [Unreleased]
-
-This release is about making failures visible. Every item below shipped with a
-green test suite; the suite now covers them.
+The first release since 3.4.0, and the one that makes failures visible: the
+command surface, the installers, and the environment handling had all been
+shipping defects that no test could see. Every item below shipped with a green
+suite; the suite now covers them. It is also the release where the numbers this
+project advertises are derived rather than remembered.
 
 ### Fixed — the command surface
 
@@ -102,6 +49,39 @@ green test suite; the suite now covers them.
 - `cm doctor` inspects the loaded modules and `build_ssh_cmd`'s signature instead
   of grepping source files for magic strings. The SSH check looked for
   `"MITMWarning"` while the class is `SSHWarning`, so it always reported FAIL.
+- **Ten dependency advisories cleared.** `pip-audit` reported 10 known
+  vulnerabilities across `cryptography==42.0.0` and `paramiko==3.4.0`, and the
+  CI security job gates on it, so every run was going to fail. Both move to
+  `cryptography==50.0.0` and `paramiko==5.0.0`; `pip-audit` now reports no known
+  vulnerabilities.
+- **Those two pins move as a pair, deliberately.** `cryptography` relocated
+  `TripleDES` into `hazmat.decrepit` in 48.0.0, and that is the algorithm
+  `paramiko`'s transport builds its cipher list from, so raising `cryptography`
+  under `paramiko` 3.4 raises at import. `pyproject.toml` records the reason
+  next to the dependency so a future bump does not split them.
+
+### Fixed — storage and the environment
+
+- **`SecurityManager` follows `CLOUDMESH_DIR`.** It resolved its base directory
+  with an inline fallback, so a sandboxed `CLOUDMESH_DIR` moved the database
+  while leaving `config.json` and the Fernet key behind in the package
+  directory — a harness run then read state the developer's real install had
+  written.
+- **`cm doctor` reports the active data directory.** Every other row is the code
+  inspecting itself, so a wrong `CLOUDMESH_DIR` produced an entirely green table
+  while the user's data had moved somewhere they did not choose. A directory that
+  does not exist renders `FAIL` rather than a healthy-looking path.
+- **A nested `CLOUDMESH_DIR` no longer raises `FileNotFoundError`.**
+  `backups_dir.mkdir(exist_ok=True)` had no `parents=True`, and
+  `resolve_base_dir` returns its path without creating it.
+
+### Fixed — the test suite
+
+- **Subprocess tests no longer race the 10-second cap.** Five test files spawned
+  real subprocesses under `pytest.ini`'s `timeout = 10` while carrying their own
+  `timeout=60`. `test_windows_installer_extract.py` measured 8.7s cold against
+  that cap and failed whenever the runner was loaded. One `subprocess.run` in
+  `test_completions.py` had no timeout at all.
 
 ### Fixed — installers
 
@@ -136,16 +116,41 @@ green test suite; the suite now covers them.
   both were interactive-only.
 - **New `release.yml` workflow** builds and attaches artifacts on a version tag,
   taking the release notes from this file.
-- `scripts/smoke_cli.py` walks the whole command surface (119 paths) against
-  whatever `cm` is on `PATH`, so it verifies an installed release.
+- `scripts/smoke_cli.py` walks the whole command surface (286 paths) against
+  whatever `cm` is on `PATH`, so it verifies an installed release. It found 119
+  of them before the walker stopped mistaking option choices for subcommands.
 - `cloudmesh/tests/test_installers.py` pins the installer contracts above.
 - `test_cli_regressions.py`, `test_cli_no_tracebacks.py`, and
   `test_panic_rotation.py` cover the dispatch, first-use, and key-rotation bugs.
+- **Static analysis, dependency audit, and secret scanning run in CI.** `bandit`
+  reports without gating while its findings are triaged, `pip-audit` is a hard
+  gate, and `gitleaks` scans the full commit history rather than a shallow
+  clone.
+- **Release metadata guards.** The advertised version, command count, and test
+  count are derived from `pyproject.toml`, the real parser, and a collection-only
+  pytest run, then compared. The README had claimed 206 tests against a suite of
+  826 and 155 commands against a parser exposing 286, and nothing failed because
+  the badges are not built from anything. The CHANGELOG's own structure is held
+  to the same standard, because this release was written under two `[Unreleased]`
+  headings at once and numbered `3.5.2` without a `3.5.0` beneath it.
+
+### Added
+
+- **Property-based fuzzing of argument parsing** (Hypothesis): no argument vector
+  may produce an uncaught traceback, and no path may crash storage resolution.
+- **The website's command reference is held to the real parser**, so the site
+  cannot become a third place advertising a command the CLI rejects.
+- **Scroll reveals on the site**, with the base rule keeping content visible so a
+  reduced-motion reader never gets content stuck at the start of an animation.
 
 ### Changed
 
 - The dispatch destination is `cmd_name`; handlers read the command to run from
   `args.command` as before.
+- README, `CONTRIBUTING.md`, and the badges now state 286 command paths, and the
+  Python floor is stated as 3.10+, matching `requires-python`.
+- Duplicated README badges (`Tests`, `Website`, `License`) removed; a duplicated
+  figure is a second thing to forget to update.
 
 ## [3.4.0] - 2026-10-05 — Enterprise (stable)
 
@@ -153,12 +158,14 @@ This is the Enterprise stable release: SQLite is the source of truth for all
 operational data, every CLI command is smoke-tested, and the suite holds
 206 passed / 1 skipped with the 25% coverage gate at ~40%.
 
-### Added (since 3.3.0)
-- Smart diagnostics (`cm diagnose`) and drift detection (`cm drift`).
-- Repaired command groups: `cm docker`, `cm firewall`, `cm ssl`, `cm logagg`.
-- Standalone node agent boots without `core/` via embedded DDoS fallback.
-
-## [Unreleased]
+### Added
+- **Smart diagnostics**: `cm diagnose` inspects resources, SSL expiries,
+  watcher alerts, backup freshness, and drift, then prints severity-ranked
+  findings with fix suggestions (`--json` for scripting, exit 2 on critical).
+- **Drift detection**: `cm drift snapshot` records a baseline of managed
+  state (servers, nodes, groups, schedules, templates, aliases, alert rules,
+  never secrets); `cm drift check` reports added/removed/modified entries
+  (exit 1 on drift); `cm drift list/clear` manage the baseline.
 
 ### Fixed
 - **Broken command groups repaired**: `cm docker`, `cm firewall`, `cm ssl`,
@@ -173,15 +180,6 @@ operational data, every CLI command is smoke-tested, and the suite holds
   interface.
 - **Import sweep test**: `test_main_absolute_imports_resolve` fails the suite
   if any `from cloudmesh.* import` in `main.py` stops resolving.
-
-### Added
-- **Smart diagnostics**: `cm diagnose` inspects resources, SSL expiries,
-  watcher alerts, backup freshness, and drift, then prints severity-ranked
-  findings with fix suggestions (`--json` for scripting, exit 2 on critical).
-- **Drift detection**: `cm drift snapshot` records a baseline of managed
-  state (servers, nodes, groups, schedules, templates, aliases, alert rules,
-  never secrets); `cm drift check` reports added/removed/modified entries
-  (exit 1 on drift); `cm drift list/clear` manage the baseline.
 
 ## [3.3.0] - 2026-10-04
 
