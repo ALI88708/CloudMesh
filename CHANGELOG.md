@@ -4,6 +4,62 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [3.5.2] - 2026-10-16
+
+### Security
+- **Ten dependency advisories cleared.** `pip-audit` reported 10 known
+  vulnerabilities across `cryptography==42.0.0` and `paramiko==3.4.0`, and the
+  CI security job gates on it, so every run was going to fail. Both move to
+  `cryptography==50.0.0` and `paramiko==5.0.0`; `pip-audit` now reports no known
+  vulnerabilities.
+- **Those two pins move as a pair, deliberately.** `cryptography` relocated
+  `TripleDES` into `hazmat.decrepit` in 48.0.0, and that is the algorithm
+  `paramiko`'s transport builds its cipher list from, so raising `cryptography`
+  under `paramiko` 3.4 raises at import. `pyproject.toml` records the reason
+  next to the dependency so a future bump does not split them.
+- **Static analysis, dependency audit, and secret scanning run in CI.** `bandit`
+  reports without gating while its findings are triaged, `pip-audit` is a hard
+  gate, and `gitleaks` scans the full commit history rather than a shallow
+  clone.
+
+### Fixed
+- **`SecurityManager` follows `CLOUDMESH_DIR`.** It resolved its base directory
+  with an inline fallback, so a sandboxed `CLOUDMESH_DIR` moved the database
+  while leaving `config.json` and the Fernet key behind in the package
+  directory — a harness run then read state the developer's real install had
+  written.
+- **`cm doctor` reports the active data directory.** Every other row is the code
+  inspecting itself, so a wrong `CLOUDMESH_DIR` produced an entirely green table
+  while the user's data had moved somewhere they did not choose. A directory that
+  does not exist renders `FAIL` rather than a healthy-looking path.
+- **A nested `CLOUDMESH_DIR` no longer raises `FileNotFoundError`.**
+  `backups_dir.mkdir(exist_ok=True)` had no `parents=True`, and
+  `resolve_base_dir` returns its path without creating it.
+- **Subprocess tests no longer race the 10-second cap.** Five test files spawned
+  real subprocesses under `pytest.ini`'s `timeout = 10` while carrying their own
+  `timeout=60`. `test_windows_installer_extract.py` measured 8.7s cold against
+  that cap and failed whenever the runner was loaded. One `subprocess.run` in
+  `test_completions.py` had no timeout at all.
+
+### Added
+- **Property-based fuzzing of argument parsing** (Hypothesis): no argument vector
+  may produce an uncaught traceback, and no path may crash storage resolution.
+- **The website's command reference is held to the real parser**, so the site
+  cannot become a third place advertising a command the CLI rejects.
+- **Scroll reveals on the site**, with the base rule keeping content visible so a
+  reduced-motion reader never gets content stuck at the start of an animation.
+- **Release metadata guards.** The advertised version, command count, and test
+  count are derived from `pyproject.toml`, the real parser, and a collection-only
+  pytest run, then compared. The README had claimed 206 tests against a suite of
+  826 and 155 commands against a parser exposing 286, and nothing failed because
+  the badges are not built from anything.
+
+### Changed
+- README, `CONTRIBUTING.md`, and the badges now state 286 command paths and the
+  Python floor is stated as 3.10+, matching `requires-python`.
+- Duplicated README badges (`Tests`, `Website`, `License`) removed; a duplicated
+  figure is a second thing to forget to update.
+
 ## [Unreleased]
 
 This release is about making failures visible. Every item below shipped with a
