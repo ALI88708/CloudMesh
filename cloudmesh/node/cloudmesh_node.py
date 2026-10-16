@@ -473,7 +473,10 @@ class SpacListener:
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.settimeout(1.0)
         try:
-            self._sock.bind(("0.0.0.0", self.spa_port))
+            # nosec B104 -- SPA knock listener. Every packet is HMAC-validated with
+            # compare_digest before it can open the TCP port, and the listener must
+            # be reachable off-host for knocks to arrive at all.
+            self._sock.bind(("0.0.0.0", self.spa_port))  # nosec B104
         except OSError as e:
             _log(f"SPA: Failed to bind UDP port {self.spa_port}: {e}")
             return
@@ -507,7 +510,7 @@ class SpacListener:
 
 
 class NodeAgent:
-    def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",
+    def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",  # nosec B104 -- node agent must be reachable by design; every request is auth-gated
                  tls_cert=None, tls_key=None,
                  spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
         """Initialize the node agent's listener, job store, and DDoS protection."""
@@ -1043,8 +1046,8 @@ def _is_running(pid):
             return False
 
 
-def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0", tls_cert=None, tls_key=None,
-              spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
+def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0",  # nosec B104 -- default bind only; --bind overrides it, and requests are auth-gated
+              tls_cert=None, tls_key=None, spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
     existing = _read_pid()
     if existing and _is_running(existing):
         print(f"Already running (PID {existing})")
@@ -1106,7 +1109,7 @@ def main():
     sub = p.add_subparsers(dest="command")
     start_p = sub.add_parser("start")
     start_p.add_argument("--port", "-p", type=int, default=DEFAULT_PORT)
-    start_p.add_argument("--bind", "-b", default="0.0.0.0")
+    start_p.add_argument("--bind", "-b", default="0.0.0.0")  # nosec B104 -- operator-settable default for a deliberately network-facing agent
     start_p.add_argument("--tls-cert", default=None)
     start_p.add_argument("--tls-key", default=None)
     start_p.add_argument("--spa", action="store_true",

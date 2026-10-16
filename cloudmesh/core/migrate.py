@@ -593,7 +593,9 @@ class MigrationManager:
         table must be a trusted SQL identifier, not user input.
         """
         with self.storage._get_connection() as conn:
-            row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+            # nosec B608 -- single call site passes the literal "acl_users";
+            # see the docstring above. Not reachable with attacker-controlled input.
+            row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()  # nosec B608
             return int(row["n"])
 
     def migrate_all(self, dry_run: bool = False) -> Dict[str, int]:

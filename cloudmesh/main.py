@@ -2158,6 +2158,30 @@ def cmd_doctor(args):
     except Exception as e:
         checks.append(("Git", False, f"check failed: {e}"))
 
+    # Where the database, key, and config actually live. Every other row in this
+    # table is the code inspecting itself, so a user with a wrong CLOUDMESH_DIR
+    # sees every check green while their data has quietly moved somewhere they
+    # did not choose. This row is the only one that can show them that.
+    #
+    # Deliberately `resolve_base_dir()` with no argument: `--base-dir` means
+    # "where the source tree is" -- it is used above to find core/*.py -- so
+    # feeding it here would report a source path as though it were the data
+    # directory.
+    try:
+        from cloudmesh.core.storage import resolve_base_dir
+
+        data_dir = resolve_base_dir()
+        configured = bool(os.environ.get("CLOUDMESH_DIR"))
+        checks.append((
+            "Data directory",
+            data_dir.is_dir(),
+            f"{data_dir}" + (
+                " (from CLOUDMESH_DIR)" if configured else " (package default)"
+            ),
+        ))
+    except Exception as e:
+        checks.append(("Data directory", False, f"check failed: {e}"))
+
     ssh_src = base / "core" / "ssh_util.py"
     if ssh_src.exists():
         try:
@@ -2187,7 +2211,7 @@ def cmd_doctor(args):
     db_src = base / "core" / "database.py"
     if db_src.exists():
         dc = db_src.read_text()
-        checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))
+        checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))  # nosec B108 -- the literal is the subject of a self-diagnosis grep; no file is created
     else:
         checks.append(("Database", False, "database.py not found"))
 
@@ -3454,7 +3478,7 @@ def _alias_db_query(args):
 
 def _alias_db_backup(args):
     args.action = "backup"
-    args.path = "/tmp"
+    args.path = "/tmp"  # nosec B108 -- default for a remote destination directory, not a local temp file
     args.host = "127.0.0.1"
     args.port = None
     args.user = "root"
@@ -4571,7 +4595,7 @@ def main():
     dbb = db_sub.add_parser("backup", help="Backup database")
     dbb.add_argument("--server", "-s", required=True)
     dbb.add_argument("--database", "-d", required=True)
-    dbb.add_argument("--path", default="/tmp")
+    dbb.add_argument("--path", default="/tmp")  # nosec B108 -- argparse default for a remote destination, not a local temp file
     dbb.add_argument("--type", "-t", default="mysql")
     dbb.add_argument("--host", default="127.0.0.1")
     dbb.add_argument("--port", "-p", type=int)

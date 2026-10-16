@@ -26,6 +26,14 @@ from pathlib import Path
 
 import pytest
 
+# Several of these run the installers and the shell for real, with `timeout=60`
+# on the subprocess. Under `pytest.ini`'s 10s cap that bound was unreachable:
+# a loaded runner would trip pytest first and report a bare Timeout instead of
+# the installer's own failure. Raised above 60 so the informative timeout wins.
+pytestmark = pytest.mark.timeout(120)
+
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 LINUX_INSTALLER = ROOT / "cm_for-linux.sh"
 WINDOWS_INSTALLER = ROOT / "cm_for-windows.bat"

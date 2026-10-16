@@ -190,6 +190,15 @@ h1 {
   font-size: 1.03rem;
 }
 
+.hero-description code,
+.release-intro code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(32, 215, 232, 0.1);
+  color: #b9e9ee;
+  font: 0.86em var(--mono);
+}
+
 .hero-actions {
   display: flex;
   flex-wrap: wrap;
@@ -509,6 +518,138 @@ h2 {
     rgba(10, 20, 30, 0.42);
 }
 
+/* --- Command reference -------------------------------------------------- */
+
+.command-section {
+  padding: 88px 0 96px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(10, 24, 34, 0.5), rgba(7, 16, 25, 0.18));
+}
+
+.command-section .release-intro {
+  max-width: 640px;
+}
+
+.command-section code {
+  font-family: var(--mono);
+}
+
+.command-tour {
+  overflow: hidden;
+  margin-bottom: 22px;
+  border: 1px solid rgba(170, 205, 220, 0.17);
+  border-radius: 12px;
+  background: #080f17;
+  box-shadow: 0 22px 58px rgba(0, 0, 0, 0.28), 0 0 46px rgba(19, 179, 200, 0.06);
+}
+
+.command-tour-code {
+  overflow-x: auto;
+  margin: 0;
+  padding: 18px 20px;
+  color: #dceaf0;
+  font: 0.79rem/1.85 var(--mono);
+}
+
+.command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.command-group {
+  padding: 22px 22px 20px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: linear-gradient(155deg, rgba(18, 35, 48, 0.86), rgba(9, 19, 29, 0.82));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.15);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.command-group:hover {
+  border-color: rgba(32, 215, 232, 0.3);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.2);
+}
+
+.command-group-head {
+  margin-bottom: 18px;
+}
+
+.command-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  margin-bottom: 16px;
+  border: 1px solid rgba(32, 215, 232, 0.2);
+  border-radius: 8px;
+  background: rgba(32, 215, 232, 0.08);
+  color: var(--cyan);
+  font-size: 1.1rem;
+}
+
+.command-group-head h3 {
+  margin-bottom: 7px;
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.command-group-head p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.command-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.command-item {
+  padding: 13px 0 0;
+}
+
+.command-item + .command-item {
+  border-top: 1px solid rgba(170, 205, 220, 0.07);
+}
+
+.command-chip {
+  overflow-x: auto;
+  margin: 0 0 6px;
+  padding: 7px 10px;
+  border: 1px solid rgba(32, 215, 232, 0.14);
+  border-radius: 6px;
+  background: rgba(3, 10, 16, 0.62);
+  color: #b9e9ee;
+  font: 0.74rem/1.55 var(--mono);
+}
+
+.command-item p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.65;
+}
+
+.command-item p code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(32, 215, 232, 0.1);
+  color: #b9e9ee;
+  font-size: 0.9em;
+}
+
+.command-note {
+  margin: 22px 0 0;
+  color: var(--muted);
+  font-size: 0.79rem;
+}
+
 .docs-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -518,6 +659,10 @@ h2 {
 @media (max-width: 920px) {
   .docs-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .command-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -946,9 +1091,14 @@ h2 {
   }
 
   .feature-section,
+  .command-section,
   .release-section {
     padding-top: 68px;
     padding-bottom: 72px;
+  }
+
+  .command-group {
+    padding: 19px 18px 17px;
   }
 
   .feature-grid {
@@ -1112,8 +1262,86 @@ h2 {
     display: none;
   }
 
+  /* The nav grew by one link; at 380px the second word goes too, so the
+     header keeps fitting rather than wrapping. */
+  .site-header nav > a[href="#commands"] {
+    display: none;
+  }
+
   .site-header .nav-github {
     padding: 5px 7px;
+  }
+}
+
+/* --- Motion ---------------------------------------------------------------
+   Content is VISIBLE in the base rules here. Everything that hides or moves
+   content lives inside `prefers-reduced-motion: no-preference`, and that is
+   load-bearing rather than cosmetic: the global reduced-motion block at the
+   foot of this file only shortens durations, so an animation that defines its
+   end state would freeze a reduced-motion reader at the invisible start value.
+   The base rule is what they get instead, and it shows everything.
+   ------------------------------------------------------------------------ */
+
+/* The opt-in is the attribute itself, not a class: the observer queries
+   `[data-reveal]`, so keying the CSS on the same selector means there is one
+   mechanism rather than two that can drift apart. `.is-revealed` is the only
+   class involved, and it is added by the observer. This base rule is what
+   shows content before any script runs. */
+[data-reveal] {
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-reveal]:not(.is-revealed) {
+    opacity: 0;
+    transform: translateY(14px);
+    transition: opacity 520ms ease, transform 520ms ease;
+  }
+
+  [data-reveal].is-revealed {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* The hero plays once on load. The stagger is an animation-delay in CSS
+     rather than a timer in JS, so it costs no main-thread work. `backwards`
+     holds the from-state through the delay, which is what makes each element
+     arrive in sequence instead of all at once -- and is exactly why this rule
+     cannot live outside the guard. */
+  .hero-enter {
+    animation: hero-rise 560ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+  }
+
+  .hero-enter-1 {
+    animation-delay: 0ms;
+  }
+
+  .hero-enter-2 {
+    animation-delay: 70ms;
+  }
+
+  .hero-enter-3 {
+    animation-delay: 150ms;
+  }
+
+  .hero-enter-4 {
+    animation-delay: 230ms;
+  }
+
+  .hero-enter-5 {
+    animation-delay: 300ms;
   }
 }
 

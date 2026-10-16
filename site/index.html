@@ -26,6 +26,7 @@
       </a>
       <nav aria-label="Main navigation">
         <a href="#features">Features</a>
+        <a href="#commands">Commands</a>
         <a href="#docs">Docs</a>
         <a href="#releases">Releases</a>
         <a class="nav-github" href="https://github.com/ALI88708/CloudMesh" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
@@ -35,20 +36,21 @@
     <main id="main-content">
       <section class="hero" id="home">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="status-dot"></span> OPEN-SOURCE SERVER ORCHESTRATION</p>
-          <h1>One console.<br>All your <span class="accent">servers.</span></h1>
-          <p class="hero-description">Connect your machines into one resource pool. Monitor, manage, and distribute workloads from a single terminal.</p>
-          <div class="hero-actions">
+          <p class="hero-enter hero-enter-1 eyebrow"><span class="status-dot"></span> OPEN-SOURCE SERVER ORCHESTRATION</p>
+          <h1 class="hero-enter hero-enter-2">One console.<br>All your <span class="accent">servers.</span></h1>
+          <p class="hero-description hero-enter hero-enter-3">Connect your machines into one resource pool. Every command on this page is checked against the shipped parser in CI, so the reference below cannot drift from what <code>cm</code> actually accepts.</p>
+          <div class="hero-actions hero-enter hero-enter-4">
             <a class="button button-primary" href="#start">Get started <span aria-hidden="true">↓</span></a>
             <a class="button button-secondary" href="https://github.com/ALI88708/CloudMesh" target="_blank" rel="noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
           </div>
-          <div class="hero-facts" aria-label="Project facts">
+          <div class="hero-facts hero-enter hero-enter-5" aria-label="Project facts">
+            <span><strong>286</strong> command paths</span>
             <span><strong>Windows</strong> &amp; Linux</span>
             <span><strong>Python</strong> 3.10+</span>
-            <span><strong>CLI-first</strong> by design</span>
+            <span><strong>CI</strong> on both platforms</span>
           </div>
         </div>
-        <div class="hero-art" aria-label="CloudMesh network logo">
+        <div class="hero-art hero-enter hero-enter-3" aria-label="CloudMesh network logo">
           <div class="art-glow"></div>
           <img src="./assets/logo.png" alt="CloudMesh network logo" width="512" height="512">
           <div class="art-caption"><span class="status-dot"></span> YOUR FLEET · ONE CONSOLE</div>
@@ -56,7 +58,7 @@
         <div class="hero-grid" aria-hidden="true"></div>
       </section>
 
-      <section class="feature-section section-wrap" id="features">
+      <section class="feature-section section-wrap" id="features" data-reveal>
         <div class="section-heading">
           <p class="eyebrow">BUILT FOR THE TERMINAL</p>
           <h2>Your fleet, <span class="accent">in sync.</span></h2>
@@ -81,7 +83,7 @@
         </div>
       </section>
 
-      <section class="start-section" id="start">
+      <section class="start-section" id="start" data-reveal>
         <div class="section-wrap start-layout">
           <div class="start-copy">
             <p class="eyebrow"><span class="status-dot"></span> UP AND RUNNING</p>
@@ -106,7 +108,352 @@
         </div>
       </section>
 
-      <section class="docs-section" id="docs">
+      <section class="command-section" id="commands" data-reveal>
+        <div class="section-wrap">
+          <div class="release-heading">
+            <div>
+              <p class="eyebrow">THE COMMAND REFERENCE</p>
+              <h2>Every example here <span class="accent">runs.</span></h2>
+              <p class="release-intro">CloudMesh 3.5.1 exercises all 286 command paths in a sandbox on every CI run. The invocations below are taken from that verified surface, not from memory, and <code>tests/test_site_commands.py</code> re-checks each one against the real argparse parser so this page cannot drift.</p>
+            </div>
+            <a class="text-link" href="https://github.com/ALI88708/CloudMesh/blob/main/README.md" target="_blank" rel="noreferrer">Full CLI reference <span aria-hidden="true">↗</span></a>
+          </div>
+
+          <div class="command-tour">
+            <div class="terminal-topbar">
+              <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span>THE FIVE-MINUTE TOUR</span>
+            </div>
+            <pre class="command-tour-code"><code>cm server add --name web-1 --host 192.168.1.10 --user deploy --port 2222
+cm server test --name web-1
+cm run "uptime"
+cm node add --name edge-1 --host 10.0.0.5 --port 8443 --auth-key NODE_KEY --tls
+cm status --json</code></pre>
+          </div>
+
+          <div class="command-grid">
+            <article class="command-group" group="servers">
+              <header class="command-group-head">
+                <span class="command-icon" aria-hidden="true">▤</span>
+                <h3>Servers</h3>
+                <p>Register machines, then address them by name for everything that follows.</p>
+              </header>
+              <ul class="command-list">
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm server add --name web-1 --host 192.168.1.10 --user deploy --port 2222</code></pre>
+                  <p>Register one machine. A non-default SSH port and an explicit user are both accepted here.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm server list</code></pre>
+                  <p>Show every registered server with its host, port, and authentication method.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm server info --name web-1</code></pre>
+                  <p>Full detail for a single server, including the key material in use.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm server test --name web-1</code></pre>
+                  <p>Check that the machine answers on SSH before you depend on it.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm ssh --name web-1</code></pre>
+                  <p>Open an interactive session using the stored connection settings.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm run "uptime"</code></pre>
+                  <p>Run one command across the fleet and collect the output per server.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm run --best 'uptime'</code></pre>
+                  <p>Run against the single machine with the most free resources rather than all of them.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm exec --all "uptime"</code></pre>
+                  <p>Batch execution across every registered node at once.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm group add --group webservers --device web-1</code></pre>
+                  <p>Put a machine into a named group so you can address the group instead.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm group run --group webservers "uptime"</code></pre>
+                  <p>Run one command against every member of a group.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm profile save --name edge</code></pre>
+                  <p>Capture the current connection set as a reusable profile.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm profile list</code></pre>
+                  <p>List the saved profiles and the server count in each.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm server remove --name web-1</code></pre>
+                  <p>Forget a machine. Stored credentials for it go with the entry.</p>
+                </li>
+              </ul>
+            </article>
+
+            <article class="command-group" group="nodes">
+              <header class="command-group-head">
+                <span class="command-icon" aria-hidden="true">◈</span>
+                <h3>Nodes</h3>
+                <p>Autonomous agents you install on remote machines, with job control and checkpointing.</p>
+              </header>
+              <ul class="command-list">
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node add --name edge-1 --host 10.0.0.5 --port 8443 --auth-key NODE_KEY --tls</code></pre>
+                  <p>Register an agent. The auth key is required, and <code>--tls</code> opts into certificate-verified transport.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node list</code></pre>
+                  <p>Every registered node with its reachability state.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node info --name edge-1</code></pre>
+                  <p>Capabilities, load, and last-seen time for one node.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node test --name edge-1</code></pre>
+                  <p>Round-trip a health check to the agent before scheduling work on it.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node exec --name edge-1 "uptime"</code></pre>
+                  <p>Run a shell command on one node and return its output.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node job start --name edge-1 "python train.py"</code></pre>
+                  <p>Start a tracked job. The agent keeps running it if the controller disconnects.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node job list --name edge-1</code></pre>
+                  <p>Jobs known to one node, with their state and exit status.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node job checkpoints</code></pre>
+                  <p>Every checkpoint written across the fleet, newest first.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node job recover --relaunch</code></pre>
+                  <p>Resume interrupted jobs from their last checkpoint and relaunch them.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node install --host 10.0.0.5 --user node</code></pre>
+                  <p>Install and start the agent on a remote host in one step.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm gpunode --name edge-1</code></pre>
+                  <p>GPU telemetry for a node, so you can place work where the hardware is.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm node remove --name edge-1</code></pre>
+                  <p>Remove a node registration. Running jobs on it stop being tracked.</p>
+                </li>
+              </ul>
+            </article>
+
+            <article class="command-group" group="files">
+              <header class="command-group-head">
+                <span class="command-icon" aria-hidden="true">▧</span>
+                <h3>Files</h3>
+                <p>Move bytes, search logs, and keep a restorable copy of the local database.</p>
+              </header>
+              <ul class="command-list">
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm transfer --file ./release.tar.gz --to-server web-1</code></pre>
+                  <p>Push a local file to a server over the stored connection.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm transfer --file ./dist/app.zip --from-server web-1 --to ./downloads</code></pre>
+                  <p>Pull a file back. Give both ends explicitly when the remote path is not implied.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm sync --local ./logs --to-server web-1</code></pre>
+                  <p>Mirror a directory to a server instead of copying single files.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm find --name web-1 --path /var/log '*.log'</code></pre>
+                  <p>Search for a filename pattern on a remote machine.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm logs --name web-1 --file /var/log/syslog --lines 50</code></pre>
+                  <p>Read the tail of a log file on a server.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm logsearch --pattern error --source web-1</code></pre>
+                  <p>Search aggregated log sources rather than one file at a time.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm logagg sources</code></pre>
+                  <p>Every log source currently registered with the aggregator.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm logagg search --pattern ERROR --source web-1</code></pre>
+                  <p>Grep one source directly, without pulling the whole aggregate back.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm backup --restore BACKUP_PATH</code></pre>
+                  <p>Restore from a named backup. The path is required, so this cannot restore the wrong one by accident.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm storage backup</code></pre>
+                  <p>Snapshot the local database and key material.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm storage list</code></pre>
+                  <p>List the backups you can restore from.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm cp --file ./db.sql --to-server web-1 --to /tmp/db.sql</code></pre>
+                  <p>Copy to an explicit destination path on the server.</p>
+                </li>
+              </ul>
+            </article>
+
+            <article class="command-group" group="security">
+              <header class="command-group-head">
+                <span class="command-icon" aria-hidden="true">⛨</span>
+                <h3>Security</h3>
+                <p>Keys, roles, firewall rules, and the emergency rotation when a host is compromised.</p>
+              </header>
+              <ul class="command-list">
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm keys generate --name deploy --bits 4096</code></pre>
+                  <p>Create a managed SSH key pair and register it under a name.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm keys list</code></pre>
+                  <p>Every managed key, its fingerprint, and where it has been deployed.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm keys deploy ./id_ed25519.pub --server web-1</code></pre>
+                  <p>Push a public key to a server so it stops accepting password logins.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm panic --dry-run</code></pre>
+                  <p>Show exactly what an emergency rotation would touch. Nothing is changed.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm panic rotate</code></pre>
+                  <p>Rotate every key locally and remotely in one step. Stored passwords become undecryptable afterwards.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm panic shares</code></pre>
+                  <p>The Shamir shares that let you recover access after a rotation.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm acl users</code></pre>
+                  <p>List accounts and their roles.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm acl roles</code></pre>
+                  <p>List the roles available to assign.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm acl add-role --name ops --perms read</code></pre>
+                  <p>Define a role and what it is permitted to do.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm firewall add-rule --port 22 --proto tcp --action allow --server web-1</code></pre>
+                  <p>Open a port on one server, with the protocol and action stated explicitly.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm tripwire check</code></pre>
+                  <p>Verify planted tripwires are still intact. A changed one means tampering.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm tripwire plant --node edge-1 --host 10.0.0.5</code></pre>
+                  <p>Plant a tripwire on a machine you want to detect changes on.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm cmdlog --verify</code></pre>
+                  <p>Walk the command-log hash chain and report tampering.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm trust --scan</code></pre>
+                  <p>Score the trust relationship across the fleet and flag weak links.</p>
+                </li>
+              </ul>
+            </article>
+
+            <article class="command-group" group="monitoring">
+              <header class="command-group-head">
+                <span class="command-icon" aria-hidden="true">◐</span>
+                <h3>Monitoring</h3>
+                <p>Live resource views, history, forecasting, and the queue that places work by headroom.</p>
+              </header>
+              <ul class="command-list">
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm status --json</code></pre>
+                  <p>Fleet status as JSON, so another tool can consume it.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm doctor</code></pre>
+                  <p>Self-check the install: dependencies, SSH, data directory, and version.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm watch --interval 5</code></pre>
+                  <p>Refresh a live dashboard every five seconds.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm top --name web-1 --limit 10</code></pre>
+                  <p>The ten heaviest processes on one machine.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm df --name web-1</code></pre>
+                  <p>Disk usage on a server, including mounts you did not choose.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm reshistory show web-1 --metric cpu --limit 24</code></pre>
+                  <p>The last 24 recorded CPU samples, which is what forecasting learns from.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm weather --server web-1 --hour 6</code></pre>
+                  <p>Predict resource pressure six hours out from recorded history.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm queue list</code></pre>
+                  <p>Queued and running jobs, with their state and priority.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm queue status JOB_ID</code></pre>
+                  <p>Everything known about one job.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm slice --files ./tasks --servers 4 --execute yes</code></pre>
+                  <p>Split a set of tasks across four servers by measured headroom. <code>--execute</code> takes a value, so nothing runs until you say so.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm notify send "Disk usage above 85% on web-1"</code></pre>
+                  <p>Send one alert through whichever channels you configured.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm webhooks add --name ops --url https://hooks.example.com/cm --type slack</code></pre>
+                  <p>Register an outbound webhook for a named event stream.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm watcher add --name nginx --process nginx --server web-1</code></pre>
+                  <p>Watch a process and alert when it stops.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm drift list</code></pre>
+                  <p>Configuration that has drifted away from the recorded snapshot.</p>
+                </li>
+                <li class="command-item">
+                  <pre class="command-chip"><code>cm completions --shell bash</code></pre>
+                  <p>Print shell completions for the shell you actually use.</p>
+                </li>
+              </ul>
+            </article>
+          </div>
+
+          <p class="command-note">
+            Every block above is a real invocation. The suite builds the parser in-process, aborts before dispatch, and fails if any example is rejected — which is how this page stays honest as the CLI changes.
+          </p>
+        </div>
+      </section>
+
+      <section class="docs-section" id="docs" data-reveal>
         <div class="section-wrap">
           <div class="release-heading">
             <div>
@@ -149,7 +496,7 @@
         </div>
       </section>
 
-      <section class="release-section" id="releases">
+      <section class="release-section" id="releases" data-reveal>
         <div class="section-wrap">
           <div class="release-heading">
             <div>

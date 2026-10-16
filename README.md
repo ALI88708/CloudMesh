@@ -17,22 +17,19 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Commands](https://img.shields.io/badge/Commands-155+-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-3.4.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-206%20Passed-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Commands](https://img.shields.io/badge/Commands-286-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
+[![Version](https://img.shields.io/badge/Version-3.5.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-875-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
 [![Issues](https://img.shields.io/github/issues/ALI88708/CloudMesh?style=for-the-badge&color=orange)](https://github.com/ALI88708/CloudMesh/issues)
-[![License](https://img.shields.io/github/license/ALI88708/CloudMesh?style=for-the-badge&color=green)](License)
 [![Security](https://img.shields.io/badge/Security-Hardened-red?style=for-the-badge)](SECURITY.md)
 [![Status](https://img.shields.io/badge/Auth-bcrypt%20%2B%20Lockout-purple?style=for-the-badge)](SECURITY.md)
 
 <br>
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
-[![Tests](https://img.shields.io/badge/tests-206_passed-brightgreen?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
-[![Website](https://img.shields.io/badge/website-GitHub%20Pages-20d7e8?style=flat-square)](https://ALI88708.github.io/CloudMesh/)
 [![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Lint](https://img.shields.io/badge/linting-ok-green?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
@@ -49,7 +46,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 <br>
 
-**155+ commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **DDoS protection** | **Ghost Ports** | **Tripwire Keys** | **Shamir Panic** | **Remote Panic** | **Shell Completions**
+**286 commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **DDoS protection** | **Ghost Ports** | **Tripwire Keys** | **Shamir Panic** | **Remote Panic** | **Shell Completions**
 
 </div>
 
@@ -126,7 +123,7 @@ pip install --upgrade cloudmesh  # Or via pip
 
 ### First Steps
 ```bash
-cm --help              # Show all 155+ commands
+cm --help              # Show all 286 commands
 cm status              # Quick overview of all servers/nodes
 cm interactive         # Interactive TUI menu
 cm mon --local         # Monitor this machine
@@ -877,7 +874,7 @@ TLS requires both `--tls-cert` and `--tls-key`; the node refuses partial TLS con
 
 ```
 cloudmesh/
-  main.py              # CLI entry point (155+ commands)
+  main.py              # CLI entry point (286 commands)
   requirements.txt     # Python dependencies
   core/
     server.py          # SSH server management

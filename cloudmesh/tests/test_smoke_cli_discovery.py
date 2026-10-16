@@ -24,6 +24,17 @@ import argparse
 import io
 import os
 import re
+
+import pytest
+
+# `pytest.ini` caps every test at 10s. These walk the surface by shelling out to
+# the real CLI, and each spawn pays ~1.5s importing cryptography and paramiko.
+# Measured here: the slowest case is 2.55s, so 10s has roughly 4x headroom on
+# this machine -- but the cap is raised anyway, because these tests already
+# carry their own `timeout=60` on the subprocess, and the 10s cap was racing
+# that bound rather than replacing it. A hang should be reported by the
+# subprocess timeout, with its output attached, not by pytest.
+pytestmark = pytest.mark.timeout(120)
 import subprocess
 import sys
 import time

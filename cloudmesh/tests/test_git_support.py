@@ -20,6 +20,13 @@ if str(ROOT) not in sys.path:
 
 from cloudmesh.core import git_support
 
+# Deliberately not a version-shaped string. A test that stubs the version and
+# then asserts it appears is only meaningful if the stubbed value cannot
+# coincide with the real one -- otherwise the assertion passes on a match it
+# never caused, which is how the two `update_advice` tests below stayed green
+# through a release bump while verifying nothing.
+SENTINEL_VERSION = "sentinel-not-a-real-version"
+
 
 # --- detection ----------------------------------------------------------
 
@@ -164,22 +171,39 @@ def test_latest_version_returns_empty_when_metadata_is_missing(monkeypatch):
 def test_advice_names_git_when_it_is_missing(monkeypatch):
     """The whole point: tell the user what is missing and what it costs them."""
     monkeypatch.setattr(git_support, "_which", lambda _name: None)
-    monkeypatch.setattr(git_support, "_installed_version", lambda: "3.4.0")
+    # `update_advice` calls `installed_version`, which reads pyproject.toml and
+    # returns before `_installed_version` is ever reached -- so stubbing the
+    # latter did nothing here. It passed only because the declared version
+    # happened to equal the stubbed string, and failed the moment the release
+    # number moved. The sentinel cannot match a real version, so this now
+    # actually verifies that the version is threaded through.
+    monkeypatch.setattr(git_support, "installed_version", lambda *a, **k: SENTINEL_VERSION)
 
     message = git_support.update_advice(tmp_path_with_git=False)
 
     assert "Git" in message or "git" in message
-    assert "3.4.0" in message
+    assert SENTINEL_VERSION in message
 
 
 def test_advice_confirms_a_working_setup(monkeypatch):
     monkeypatch.setattr(git_support, "_which", lambda _name: "/usr/bin/git")
-    monkeypatch.setattr(git_support, "_installed_version", lambda: "3.4.0")
+    monkeypatch.setattr(git_support, "installed_version", lambda *a, **k: SENTINEL_VERSION)
 
     message = git_support.update_advice(tmp_path_with_git=True)
 
-    assert "3.4.0" in message
+    assert SENTINEL_VERSION in message
     assert "not found" not in message.lower()
+
+
+def test_advice_reports_unknown_when_the_version_cannot_be_read(monkeypatch):
+    """A missing version must still produce usable advice, not a blank."""
+    monkeypatch.setattr(git_support, "_which", lambda _name: None)
+    monkeypatch.setattr(git_support, "installed_version", lambda *a, **k: "")
+
+    message = git_support.update_advice(tmp_path_with_git=False)
+
+    assert "unknown" in message
+    assert "git not found" in message
 
 
 def test_advice_handles_missing_git_and_missing_version(monkeypatch):

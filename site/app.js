@@ -382,3 +382,43 @@ copyButton.addEventListener("click", async () => {
     copyButton.textContent = "Copy";
   }, 2200);
 });
+
+// Reveal each section as it enters the viewport.
+//
+// Two things matter here and neither is cosmetic:
+//
+// 1. The hiding state lives behind a `prefers-reduced-motion: no-preference`
+//    guard in the stylesheet, so content is already visible before any of this
+//    runs. A reader with reduced motion sees the page fully, immediately, and
+//    this code simply finds no work to do.
+// 2. IntersectionObserver rather than a scroll listener. A scroll handler runs
+//    on every frame for the life of the page; the observer runs when the
+//    intersection actually changes. Each target is unobserved the moment it is
+//    revealed, so scrolling back up does not replay it.
+if (window.IntersectionObserver) {
+  const revealTargets = document.querySelectorAll("[data-reveal]");
+
+  if (revealTargets.length > 0) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) {
+            continue;
+          }
+          entry.target.classList.add("is-revealed");
+          observer.unobserve(entry.target);
+        }
+      },
+      { rootMargin: "0px 0px -10% 0px", threshold: 0.08 },
+    );
+
+    revealTargets.forEach((target) => observer.observe(target));
+  }
+} else {
+  // No observer: mark everything revealed rather than reaching for a scroll
+  // fallback, so a browser without IntersectionObserver gets the same page
+  // everyone else sees instead of sections that never animate in.
+  document
+    .querySelectorAll("[data-reveal]")
+    .forEach((element) => element.classList.add("is-revealed"));
+}

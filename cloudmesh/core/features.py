@@ -343,16 +343,21 @@ def remove_alias(name, aliases_file=None, storage=None):
 def get_version():
     """Return package version, Python version, and platform information.
 
-    Use 3.3.0 when installed package metadata cannot be read.
+    The version comes from the *installed* package metadata, not from
+    `pyproject.toml`, so bumping the declared version does not change what
+    `cm --version` prints until the package is reinstalled. The fallback below
+    is what a source checkout with no installed distribution reports, and it has
+    to be kept in step with `pyproject.toml` by hand -- which is exactly why
+    `test_release_metadata.py` pins the two against each other.
     """
     try:
         from importlib.metadata import version as _pkg_version
         try:
             ver = _pkg_version("cloudmesh")
         except Exception:
-            ver = "3.4.0"
+            ver = "3.5.0"
     except Exception:
-        ver = "3.4.0"
+        ver = "3.5.0"
     return {
         "version": ver,
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",

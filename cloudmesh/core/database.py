@@ -46,7 +46,7 @@ def _postgres_cmd(user, host, port, password, database, sql):
     cleanup = f"rm -f {remote_pgpass}"
     return f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
 
-def list_databases(server_name, db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):
+def list_databases(server_name, db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -64,7 +64,7 @@ def list_databases(server_name, db_type="mysql", host="127.0.0.1", port=None, us
     out, rc = run_ssh(ssh_host, ssh_user, ssh_key, cmd)
     return _remote_result("list", out, rc)
 
-def db_status(server_name, db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):
+def db_status(server_name, db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -84,7 +84,7 @@ def db_status(server_name, db_type="mysql", host="127.0.0.1", port=None, user="r
     out, rc = run_ssh(ssh_host, ssh_user, ssh_key, cmd)
     return _remote_result("status", out, rc)
 
-def db_query(server_name, query, db_type="mysql", database="mysql", host="127.0.0.1", port=None, user="root", password=""):
+def db_query(server_name, query, db_type="mysql", database="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -102,7 +102,11 @@ def db_query(server_name, query, db_type="mysql", database="mysql", host="127.0.
     out, rc = run_ssh(ssh_host, ssh_user, ssh_key, cmd)
     return _remote_result("query", out, rc)
 
-def db_backup(server_name, database, backup_path="/tmp", db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):
+# `backup_path` is a remote destination directory that gets shlex.quote()d into
+# the remote command, not a local temp file, and the password default is an empty
+# string rather than a secret. Note the spaces around the comma: bandit's nosec
+# regex uses a repeating group, so `B108,B107` silently records only B107.
+def db_backup(server_name, database, backup_path="/tmp", db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B108 , B107
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -134,7 +138,7 @@ def db_backup(server_name, database, backup_path="/tmp", db_type="mysql", host="
         return f"Backup saved: {backup_path}/{filename}"
     return f"Backup failed: {out}"
 
-def db_check_all(db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):
+def db_check_all(db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
     cfg = _load_config()
     results = []
     for section in ["servers", "nodes"]:

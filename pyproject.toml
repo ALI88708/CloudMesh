@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudmesh"
-version = "3.4.0"
+version = "3.5.0"
 description = "Unified multi-cloud resource manager — CLI tool connecting servers into one pool"
 readme = "README.md"
 license = {text = "MIT"}
@@ -30,8 +30,15 @@ classifiers = [
 dependencies = [
     "psutil>=5.9",
     "rich>=13.0",
-    "cryptography>=41.0",
-    "paramiko>=3.0",
+    # These two move together and cannot be split. cryptography relocated
+    # TripleDES into `hazmat.decrepit` in 48.0.0, which is the algorithm
+    # paramiko's transport still builds its cipher list from, so raising
+    # cryptography under paramiko 3.4 raises at import. paramiko 5.0.0 is
+    # also the first release past PYSEC-2026-2858 ("through 4.0.0"), and
+    # cryptography 50.0.0 past PYSEC-2026-3552 -- together they take
+    # `pip-audit` from 10 advisories to none.
+    "cryptography>=50.0.0",
+    "paramiko>=5.0.0",
     "pycryptodome>=3.20",
     "bcrypt>=4.0",
 ]

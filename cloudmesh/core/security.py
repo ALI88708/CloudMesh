@@ -11,13 +11,25 @@ logger = logging.getLogger(__name__)
 
 class SecurityManager:
     def __init__(self, base_dir=None):
-        if base_dir is None:
-            base_dir = Path(__file__).parent.parent
-        self.base_dir = Path(base_dir)
+        # Resolved through the same helper as the database rather than an inline
+        # fallback, because this manager holds the Fernet key and `config.json`:
+        # when `CLOUDMESH_DIR` moved the database but left the key behind, a
+        # sandboxed run read the developer's real secrets. Imported lazily and
+        # with the `core`-first fallback the rest of the package uses, since
+        # `core/__init__.py` imports this module while still initialising.
+        try:
+            from cloudmesh.core.storage import resolve_base_dir
+        except ImportError:
+            from core.storage import resolve_base_dir
+
+        self.base_dir = resolve_base_dir(base_dir)
         self.config_path = self.base_dir / "config.json"
         self.key_path = self.base_dir / ".secret.key"
         self.backups_dir = self.base_dir / "backups"
-        self.backups_dir.mkdir(exist_ok=True)
+        # `parents=True` because `resolve_base_dir` returns the path without
+        # creating it, so a first-time nested `CLOUDMESH_DIR` (or an explicit
+        # nested base) would otherwise raise FileNotFoundError on this line.
+        self.backups_dir.mkdir(parents=True, exist_ok=True)
         self._fernet = None
 
     def _get_or_create_key(self):
