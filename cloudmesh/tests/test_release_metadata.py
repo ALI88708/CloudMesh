@@ -50,6 +50,48 @@ def _declared_version() -> str:
     return declared.group(1)
 
 
+def test_runtime_version_uses_installed_metadata(monkeypatch):
+    import importlib.metadata
+    from unittest.mock import Mock
+
+    from cloudmesh.core.features import get_version
+
+    lookup = Mock(return_value="9.8.7+installed")
+    monkeypatch.setattr(importlib.metadata, "version", lookup)
+
+    assert get_version() == {
+        "version": "9.8.7+installed",
+        "python": ".".join(map(str, sys.version_info[:3])),
+        "platform": sys.platform,
+    }
+    lookup.assert_called_once_with("cloudmesh")
+
+
+@pytest.mark.parametrize("failure", ["missing-distribution", "broken-metadata"])
+def test_runtime_version_fallback_matches_declared_release(monkeypatch, failure):
+    import importlib.metadata
+    from unittest.mock import Mock
+
+    from cloudmesh.core.features import get_version
+
+    error = (
+        importlib.metadata.PackageNotFoundError("cloudmesh")
+        if failure == "missing-distribution"
+        else RuntimeError("metadata is unreadable")
+    )
+    monkeypatch.setattr(importlib.metadata, "version", Mock(side_effect=error))
+
+    assert get_version()["version"] == _declared_version()
+
+
+def test_runtime_version_fallback_when_metadata_cannot_be_imported(monkeypatch):
+    from cloudmesh.core.features import get_version
+
+    monkeypatch.setitem(sys.modules, "importlib.metadata", None)
+
+    assert get_version()["version"] == _declared_version()
+
+
 def _sections() -> list[str]:
     """The bracketed heading of every `##` section, in file order."""
     return _H2.findall(_read("CHANGELOG.md"))

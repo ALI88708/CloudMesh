@@ -6,18 +6,150 @@ state and the duration is forced to 0.01ms, a reduced-motion user gets content
 frozen at the start value, which is invisible. So a reveal must default to
 visible and animate only on the way in.
 
-These are static checks on the source. The suite has no browser and adding one
-is out of scope, so what is verified is the shape of the code -- that the two
-rules above hold, and that a future edit cannot quietly undo them.
+Static checks guard the CSS and markup. The observer is also exercised in Node
+with browser APIs stubbed, without a browser or network requests.
 """
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 SITE = Path(__file__).resolve().parent.parent.parent / "site"
 HTML = (SITE / "index.html").read_text(encoding="utf-8")
 CSS = (SITE / "styles.css").read_text(encoding="utf-8")
 JS = (SITE / "app.js").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def run_reveal_script():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the site's JavaScript")
+
+    def run(assertions, *, supported=True, target_count=3):
+        harness = r"""
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const events = [];
+const observers = [];
+const targets = Array.from({length: Number(process.argv[3])}, (_, id) => ({
+  id,
+  classes: new Set(),
+  classList: {
+    add(name) {
+      targets[id].classes.add(name);
+      events.push(["add", id, name]);
+    },
+  },
+}));
+class Observer {
+  constructor(callback, options) {
+    this.callback = callback;
+    this.options = options;
+    this.observed = [];
+    observers.push(this);
+  }
+  observe(target) { this.observed.push(target); }
+  unobserve(target) { events.push(["unobserve", target.id]); }
+}
+const element = () => ({
+  replaceChildren() {},
+  append() {},
+  setAttribute() {},
+  addEventListener() {},
+  classList: { toggle() {} },
+});
+const elements = new Map([
+  ["#release-list", element()],
+  ["#release-status", element()],
+  [".copy-button", element()],
+  ["#copy-status", element()],
+]);
+const context = {
+  window: {},
+  document: {
+    querySelector: (selector) => {
+      assert.ok(elements.has(selector), `Unexpected selector: ${selector}`);
+      return elements.get(selector);
+    },
+    querySelectorAll: (selector) => {
+      assert.equal(selector, "[data-reveal]");
+      return targets;
+    },
+    createElement: element,
+  },
+  // Leave the unrelated release request pending so no network or rendering runs.
+  fetch: () => new Promise(() => {}),
+};
+if (process.argv[2] === "supported") {
+  context.window.IntersectionObserver = Observer;
+  context.IntersectionObserver = Observer;
+}
+vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), context, {timeout: 1000});
+"""
+        result = subprocess.run(
+            [
+                node, "-e", harness + assertions, str(SITE / "app.js"),
+                "supported" if supported else "unsupported", str(target_count),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    return run
+
+
+def test_observer_registers_each_target_without_revealing_it(run_reveal_script):
+    run_reveal_script(r"""
+assert.equal(observers.length, 1);
+assert.deepEqual(observers[0].observed, targets);
+assert.equal(events.length, 0);
+assert.ok(targets.every(target => target.classes.size === 0));
+""")
+
+
+def test_observer_ignores_non_intersecting_entries_and_reveals_in_order(run_reveal_script):
+    run_reveal_script(r"""
+assert.equal(observers.length, 1);
+const observer = observers[0];
+observer.callback([
+  {target: targets[0], isIntersecting: false},
+  {target: targets[1], isIntersecting: true},
+  {target: targets[2], isIntersecting: true},
+]);
+assert.deepEqual(events, [
+  ["add", 1, "is-revealed"], ["unobserve", 1],
+  ["add", 2, "is-revealed"], ["unobserve", 2],
+]);
+assert.equal(targets[0].classes.size, 0);
+observer.callback([{target: targets[0], isIntersecting: true}]);
+assert.deepEqual(events.slice(-2), [["add", 0, "is-revealed"], ["unobserve", 0]]);
+observer.callback([{target: targets[1], isIntersecting: false}]);
+assert.equal(events.length, 6);
+assert.ok(targets.every(target => target.classes.has("is-revealed")));
+""")
+
+
+@pytest.mark.parametrize("supported", [True, False], ids=["observer", "fallback"])
+def test_reveal_handles_no_targets_without_creating_an_observer(run_reveal_script, supported):
+    run_reveal_script(r"""
+assert.equal(observers.length, 0);
+assert.equal(events.length, 0);
+""", supported=supported, target_count=0)
+
+
+def test_observer_fallback_reveals_every_target_immediately(run_reveal_script):
+    run_reveal_script(r"""
+assert.equal(observers.length, 0);
+assert.deepEqual(events, targets.map(target => ["add", target.id, "is-revealed"]));
+assert.ok(targets.every(target => target.classes.has("is-revealed")));
+""", supported=False)
 
 
 def _reduced_motion_block() -> str:
