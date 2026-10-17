@@ -22,9 +22,22 @@ project advertises are derived rather than remembered.
 - **`cm node job start` reaches its handler.** `node`'s sub-subparsers shared
   `dest="action"` with `node`'s own, so `start` was looked up in the node table,
   missed, and printed node help.
+- **`cm node job checkpoint`, `recover`, and `checkpoints` answer again.** They
+  exited 0 with no output after the job sub-subparsers moved to `job_action`,
+  leaving `args.action` as `job`, which `cmd_node_job` did not handle — the same
+  silent-exit class this release set out to remove. `cm node job` with no
+  subcommand now reports usage and exits 2 instead of saying nothing.
 - **A group with no subcommand prints help** (`cm server`, `cm node`, `cm queue`).
   The dispatch fallback took no arguments and raised `TypeError`.
 - **An unknown command exits 1** with a message instead of exiting 0 silently.
+- **Aliases are clones of their canonical parsers, not hand copies.** Each alias
+  restated its canonical command's arguments by hand and had drifted: `cm mon
+  --local`, advertised in the README, failed with "unrecognized arguments", and
+  `cm cp` declared `--server`, `--local`, and `--direction`, none of which
+  `cmd_transfer` reads, so it could not have worked at all. `_alias_of` now
+  clones the canonical parser's actions, README and `CONTRIBUTING.md` examples
+  were corrected to the forms the CLI accepts, and `test_alias_parity.py`,
+  `test_documented_commands.py`, and `test_readme_commands.py` hold both.
 
 ### Fixed — crashes on first use
 
@@ -44,6 +57,10 @@ project advertises are derived rather than remembered.
   the pre-panic keys. The emergency rotation did not stick.
 - `.secret.key` is replaced atomically with owner-only permissions instead of a
   plain `write_bytes`, which created it world-readable on first use.
+- **The SSH key registry `cm keys` writes at runtime is no longer committed.**
+  `cloudmesh/.ssh_keys.json` was picked up by a test run and swept into the
+  Git-detection commit. It is ignored alongside the rest of the runtime state
+  the CLI writes next to the package.
 - `cm panic --dry-run` and the rotation output now state that stored server
   passwords and node auth keys become undecryptable afterwards.
 - `cm doctor` inspects the loaded modules and `build_ssh_cmd`'s signature instead
@@ -82,6 +99,11 @@ project advertises are derived rather than remembered.
   `timeout=60`. `test_windows_installer_extract.py` measured 8.7s cold against
   that cap and failed whenever the runner was loaded. One `subprocess.run` in
   `test_completions.py` had no timeout at all.
+- **A test file that no runner could collect is gone.**
+  `cloudmesh/core/test_storage.py` sat outside `pytest.ini`'s `testpaths`, so it
+  never ran in CI, and it crashed on a Windows console besides.
+  `cloudmesh/tests/test_storage.py` covers the same operations in the official
+  suite.
 
 ### Fixed — installers
 
@@ -91,6 +113,14 @@ project advertises are derived rather than remembered.
   the README could never run. `.gitattributes` now pins the endings.
 - **The Windows installer stops truncating `cloudmesh/core/__init__.py`.** It ran
   `echo. > core\__init__.py`, replacing the package re-exports with a blank line.
+- **The Windows installer's extract step produces a project again.** `Copy-Item`
+  into a destination that does not exist renames the source directory instead of
+  nesting it, and the check that followed asserted the other shape — a fresh
+  install put `main.py` flat at the project root with no `cloudmesh\`
+  subdirectory, so every run reported "Extract failed!" over a copy PowerShell
+  called successful. The destination is named explicitly now, and
+  `test_windows_installer_extract.py` rebuilds the generated PowerShell and runs
+  it against a staged zip rather than trusting the batch file's own wording.
 - **The Windows installer installs every declared dependency.** Its hard-coded
   list named five packages and omitted `bcrypt`, so ACL commands raised
   `ImportError` on any machine installed that way.
@@ -104,6 +134,12 @@ project advertises are derived rather than remembered.
 - Both accept `CM_SOURCE_DIR` / `--source=` to install from a checkout instead of
   downloading `main`, which is how CI verifies a branch under test.
 - Temp files moved to `mktemp` instead of a fixed world-writable `/tmp` path.
+- **An update keeps the keys an existing install already has.** Moving the
+  package to `$INSTALL_DIR/project/cloudmesh` left the update path looking for
+  `.node_keys.json` only in the new location, and staging clears the project
+  directory, which takes `.secret.key` with it — either loss makes every stored
+  password and node auth key undecryptable. The update path now backs up both
+  files from either layout and restores them after staging.
 
 ### Added — verification
 
@@ -114,8 +150,14 @@ project advertises are derived rather than remembered.
 - **New `installers.yml` workflow** installs from the checkout on each platform and
   asserts the result works. Neither installer could be verified before, because
   both were interactive-only.
-- **New `release.yml` workflow** builds and attaches artifacts on a version tag,
-  taking the release notes from this file.
+- **New `release.yml` workflow** builds and attaches artifacts on a version tag.
+  The release notes are cut from this file by `scripts/release_notes.py`, which
+  strips the tag's leading `v` before matching the `## [3.5.0]` heading — the
+  inline match it replaces compared `v3.5.0` against a heading that carries no
+  `v`, so it never matched and an empty section fell back to "See CHANGELOG.md".
+  A missing section now fails the job instead, and
+  `cloudmesh/tests/test_release_notes.py` verifies the extraction against this
+  file.
 - `scripts/smoke_cli.py` walks the whole command surface (286 paths) against
   whatever `cm` is on `PATH`, so it verifies an installed release. It found 119
   of them before the walker stopped mistaking option choices for subcommands.
@@ -136,10 +178,20 @@ project advertises are derived rather than remembered.
 
 ### Added
 
+- **`cm` checks for Git everywhere it is needed, and names what depends on it.**
+  `cm update` is git-based (`fetch` + `rev-list` + `pull`) and so is pushing your
+  own work, but nothing said so: neither installer looked for git, `cm doctor`
+  had no row for it, and the failure only surfaced as `Update failed: [Errno 2]
+  No such file or directory: 'git'`. Both installers now detect git and offer to
+  install it (declining continues the install and points at `pip`), `cm doctor`
+  gains `Git` and `Update path` rows, `cm update` auto-detects with `--git` and
+  `--pip`, and `cloudmesh/core/git_support.py` centralises detection so a missing
+  git is a reported state rather than an exception.
 - **Property-based fuzzing of argument parsing** (Hypothesis): no argument vector
   may produce an uncaught traceback, and no path may crash storage resolution.
-- **The website's command reference is held to the real parser**, so the site
-  cannot become a third place advertising a command the CLI rejects.
+- **The website's command reference is held to the real parser, and its version
+  claim to `pyproject.toml`**, so the site cannot become a third place
+  advertising a command — or a release — the CLI is not.
 - **Scroll reveals on the site**, with the base rule keeping content visible so a
   reduced-motion reader never gets content stuck at the start of an animation.
 
