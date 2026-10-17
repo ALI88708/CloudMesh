@@ -25,7 +25,10 @@ _ANY_HEADING = re.compile(r"^##\s+\[", re.MULTILINE)
 
 
 def version_from_tag(tag: str) -> str:
-    """`v3.5.0` and `3.5.0` both name the version `3.5.0`."""
+    """Remove one leading `v` or `V`, leaving the rest of the tag unchanged.
+
+    `v3.5.0` and `3.5.0` both name the version `3.5.0`.
+    """
     return tag[1:] if tag[:1] in ("v", "V") else tag
 
 
@@ -34,6 +37,8 @@ def extract_section(changelog: str, version: str) -> str | None:
 
     The body ends at the next `## [...]` heading. The version is matched
     exactly, so asking for `3.5.0` cannot pick up `## [3.5.01]`.
+    Only leading and trailing newline characters are stripped; an empty
+    section returns an empty string, while other whitespace is preserved.
     """
     heading = re.compile(rf"^##\s+\[{re.escape(version)}\][^\n]*\n?", re.MULTILINE)
     match = heading.search(changelog)
@@ -47,6 +52,17 @@ def extract_section(changelog: str, version: str) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Print the tag's changelog section to stdout and return 0 on success.
+
+    Parse argv, or sys.argv[1:] when None, accepting a tag and an optional
+    --changelog path (default: the repository's CHANGELOG.md). A missing or
+    empty section prints an error to stderr and returns 1; a section that
+    contains only spaces or tabs is printed as-is.
+
+    Argument parsing raises SystemExit for help or invalid arguments. File
+    access errors (OSError) and UTF-8 decoding errors (UnicodeDecodeError)
+    propagate to the caller.
+    """
     parser = argparse.ArgumentParser(
         description="Print one version's CHANGELOG.md section for a release.",
     )
