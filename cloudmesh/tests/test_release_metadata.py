@@ -122,6 +122,39 @@ def test_the_readme_version_badge_agrees_with_pyproject():
     )
 
 
+def _site_versions() -> list[str]:
+    """Every version literal the site states in its own markup.
+
+    The release cards are fetched from the GitHub API at runtime, so the static
+    page carries no historical versions: anything version-shaped here is a claim
+    about the current release. Four-part dotted numbers are IPv4 addresses from
+    the command examples, not versions.
+    """
+    text = _read("site/index.html")
+    return [
+        match.group(0)
+        for match in _VERSION.finditer(text)
+        if not re.match(r"\.\d", text[match.end() : match.end() + 2])
+    ]
+
+
+def test_the_site_version_claim_agrees_with_pyproject():
+    """The site stated 3.5.1 while every other surface said 3.5.0.
+
+    `test_site_commands.py` re-checks the commands the page shows against the
+    parser, but says nothing about the version in the prose introducing them, so
+    that number drifted with nothing to catch it.
+    """
+    stated = _site_versions()
+    assert stated, "site/index.html states no version to check"
+    declared = _declared_version()
+    stale = sorted({version for version in stated if version != declared})
+    assert not stale, (
+        f"site/index.html advertises {', '.join(stale)} but pyproject "
+        f"declares {declared}"
+    )
+
+
 def test_the_changelog_documents_the_current_version():
     """A release without a changelog entry is a release nobody can audit."""
     declared = _declared_version()
