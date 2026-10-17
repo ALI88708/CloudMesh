@@ -9,6 +9,7 @@ release went out anyway. The extraction now lives in
 """
 
 import re
+import runpy
 import sys
 from pathlib import Path
 
@@ -47,14 +48,13 @@ def test_the_heading_and_its_date_stay_out_of_the_body():
     assert body == "### Fixed\n\n- the thing that broke."
 
 
-def test_the_tag_may_carry_a_leading_v(tmp_path, capsys):
+@pytest.mark.parametrize("tag", ["3.5.0", "v3.5.0", "V3.5.0"])
+def test_the_tag_may_carry_a_leading_v(tmp_path, capsys, tag):
     changelog = _write(tmp_path, SAMPLE)
-    with_v = release_notes.main(["v3.5.0", "--changelog", changelog])
-    output = capsys.readouterr().out
-    bare = release_notes.main(["3.5.0", "--changelog", changelog])
-    assert with_v == bare == 0
-    assert capsys.readouterr().out == output
-    assert output.strip()
+    assert release_notes.main([tag, "--changelog", changelog]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "### Fixed\n\n- the thing that broke.\n"
+    assert captured.err == ""
 
 
 def test_a_missing_section_fails_instead_of_falling_back(tmp_path, capsys):
@@ -65,20 +65,155 @@ def test_a_missing_section_fails_instead_of_falling_back(tmp_path, capsys):
     assert "no usable '## [9.9.9]'" in captured.err
 
 
-def test_an_empty_section_fails_too(tmp_path, capsys):
+@pytest.mark.parametrize("body", ["", "\n", "\n\n"])
+@pytest.mark.parametrize("following", ["", "## [3.4.0]\n\n- old\n"])
+def test_an_empty_section_fails_too(tmp_path, capsys, body, following):
     changelog = _write(
-        tmp_path, "## [3.5.0] - 2026-10-16\n\n## [3.4.0] - 2026-10-05\n\n- old\n"
+        tmp_path, f"## [3.5.0] - 2026-10-16\n{body}{following}"
     )
     assert release_notes.main(["v3.5.0", "--changelog", changelog]) == 1
-    assert "no usable '## [3.5.0]'" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no usable '## [3.5.0]'" in captured.err
+    assert changelog in captured.err
 
 
-@pytest.mark.parametrize("heading", ["## [3.5.01] - x", "## [13.5.0] - x"])
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## [3.5.01] - x",
+        "## [13.5.0] - x",
+        "## [3x5x0] - x",
+        "## [3.5.0-rc.1] - x",
+        "## [3.5.0+build.1] - x",
+        "### [3.5.0] - x",
+        "- See ## [3.5.0] - x",
+    ],
+)
 def test_a_version_does_not_match_a_neighbouring_heading(heading):
     assert release_notes.extract_section(f"{heading}\n\n- body\n", "3.5.0") is None
 
 
-def test_the_current_release_extracts_from_the_real_changelog(capsys):
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        ("v3.5.0", "3.5.0"),
+        ("V3.5.0", "3.5.0"),
+        ("3.5.0", "3.5.0"),
+        ("v3.5.0-rc.1+build.7", "3.5.0-rc.1+build.7"),
+        ("vv3.5.0", "v3.5.0"),
+        ("release-v3.5.0", "release-v3.5.0"),
+        ("", ""),
+    ],
+)
+def test_version_normalization_removes_only_one_leading_v(tag, expected):
+    assert release_notes.version_from_tag(tag) == expected
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("Unreleased", "- pending"),
+        ("3.5.0", "### Fixed\n\n- the thing that broke."),
+        ("3.4.0", "### Fixed\n\n- the older thing."),
+    ],
+)
+def test_sections_are_selected_at_the_start_middle_and_end(version, expected):
+    changelog = SAMPLE.replace(
+        "# Changelog\n", "# Changelog\n\n## [Unreleased]\n\n- pending\n"
+    )
+    assert release_notes.extract_section(changelog, version) == expected
+
+
+@pytest.mark.parametrize(
+    ("changelog", "expected"),
+    [
+        ("", None),
+        ("# Changelog\n\n- no releases yet\n", None),
+        ("## [3.5.0]", ""),
+        ("## [3.5.0] - 2026-10-16\n\n", ""),
+        ("## [3.5.0]\n- final note", "- final note"),
+        ("## [3.5.0]\n- current\n## [3.4.0]\n- old", "- current"),
+        ("##\t[3.5.0]\n- current\n##\t[Unreleased]\n- next", "- current"),
+    ],
+    ids=[
+        "empty-changelog", "no-heading", "heading-at-eof", "blank-body-at-eof",
+        "body-without-final-newline", "adjacent-sections", "tabbed-headings",
+    ],
+)
+def test_section_boundaries_and_absent_bodies(changelog, expected):
+    assert release_notes.extract_section(changelog, "3.5.0") == expected
+
+
+def test_the_body_preserves_markdown_indentation_and_unicode():
+    body = (
+        "### Fixed\n\n"
+        "- Keep trailing spaces for a Markdown line break.  \n"
+        "  - nested item: café — 修复\n\n"
+        "```python\n    print('ready')\n```\n\n"
+        "See [3.4.0] for context; ## [3.4.0] here is inline text."
+    )
+    changelog = f"## [3.5.0] - today\n\n{body}\n\n## [3.4.0]\n- old\n"
+
+    assert release_notes.extract_section(changelog, "3.5.0") == body
+
+
+def test_prerelease_and_build_identifiers_are_matched_literally():
+    version = "3.5.0-rc.1+build.7"
+    changelog = (
+        "## [3.5.0-rc.1build.7]\n- a different version\n\n"
+        f"## [{version}] - today\n\n- release candidate\n\n"
+        "## [3.5.0]\n- stable\n"
+    )
+    assert release_notes.extract_section(changelog, version) == "- release candidate"
+
+
+def test_main_reads_process_arguments_and_a_utf8_changelog(tmp_path, monkeypatch, capsys):
+    changelog = _write(tmp_path, "## [3.5.0-rc.1+build.7]\n\n- café — 修复\n")
+    monkeypatch.setattr(
+        sys, "argv",
+        ["release_notes.py", "V3.5.0-rc.1+build.7", "--changelog", changelog],
+    )
+
+    assert release_notes.main() == 0
+    captured = capsys.readouterr()
+    assert captured.out == "- café — 修复\n"
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    ("changelog_text", "status", "stdout"),
+    [
+        ("## [3.5.0]\n\n- ready\n", 0, "- ready\n"),
+        ("## [3.4.0]\n\n- old\n", 1, ""),
+        ("## [3.5.0]\n", 1, ""),
+    ],
+    ids=["success", "missing-section", "empty-section"],
+)
+def test_script_exits_with_the_extraction_status(
+    tmp_path, monkeypatch, capsys, changelog_text, status, stdout,
+):
+    changelog = _write(tmp_path, changelog_text)
+    script = ROOT / "scripts" / "release_notes.py"
+    monkeypatch.setattr(
+        sys, "argv", [str(script), "v3.5.0", "--changelog", changelog],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(script), run_name="__main__")
+
+    assert exc.value.code == status
+    captured = capsys.readouterr()
+    assert captured.out == stdout
+    if status:
+        assert "no usable '## [3.5.0]'" in captured.err
+    else:
+        assert captured.err == ""
+
+
+def test_the_current_release_extracts_from_the_real_changelog(
+    tmp_path, monkeypatch, capsys,
+):
     declared = re.search(
         r'^version\s*=\s*"([^"]+)"',
         (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
@@ -86,6 +221,9 @@ def test_the_current_release_extracts_from_the_real_changelog(capsys):
     )
     assert declared, "pyproject.toml has no version field"
     version = declared.group(1)
+
+    _write(tmp_path, "# An unrelated working directory's changelog\n")
+    monkeypatch.chdir(tmp_path)
 
     assert release_notes.main([f"v{version}"]) == 0
     body = capsys.readouterr().out
@@ -108,3 +246,16 @@ def test_the_release_workflow_uses_the_tested_extractor():
         "instead of its notes"
     )
     assert "awk" not in workflow
+
+
+def test_the_release_workflow_classifies_the_selected_tag_as_prerelease():
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    prerelease = re.search(r"^\s+prerelease:\s*(.+)$", workflow, re.M)
+    assert prerelease, "the release action has no prerelease setting"
+    assert prerelease.group(1) == "${{ contains(steps.notes.outputs.tag, '-') }}", (
+        "a dispatch from a branch must classify the selected release tag"
+    )
+    assert "tag_name: ${{ steps.notes.outputs.tag }}" in workflow
+    assert "body: ${{ steps.notes.outputs.notes }}" in workflow
