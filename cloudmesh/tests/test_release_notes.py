@@ -38,18 +38,21 @@ SAMPLE = """\
 
 
 def _write(tmp_path, text: str) -> str:
+    """Write a UTF-8 changelog fixture and return its path for CLI arguments."""
     path = tmp_path / "CHANGELOG.md"
     path.write_text(text, encoding="utf-8")
     return str(path)
 
 
 def test_the_heading_and_its_date_stay_out_of_the_body():
+    """Extract only the release body, excluding its version heading and date."""
     body = release_notes.extract_section(SAMPLE, "3.5.0")
     assert body == "### Fixed\n\n- the thing that broke."
 
 
 @pytest.mark.parametrize("tag", ["3.5.0", "v3.5.0", "V3.5.0"])
 def test_the_tag_may_carry_a_leading_v(tmp_path, capsys, tag):
+    """Accept bare versions and either case of the optional leading v."""
     changelog = _write(tmp_path, SAMPLE)
     assert release_notes.main([tag, "--changelog", changelog]) == 0
     captured = capsys.readouterr()
@@ -58,6 +61,7 @@ def test_the_tag_may_carry_a_leading_v(tmp_path, capsys, tag):
 
 
 def test_a_missing_section_fails_instead_of_falling_back(tmp_path, capsys):
+    """Report a missing version on stderr without publishing fallback notes."""
     changelog = _write(tmp_path, SAMPLE)
     assert release_notes.main(["v9.9.9", "--changelog", changelog]) == 1
     captured = capsys.readouterr()
@@ -68,6 +72,7 @@ def test_a_missing_section_fails_instead_of_falling_back(tmp_path, capsys):
 @pytest.mark.parametrize("body", ["", "\n", "\n\n"])
 @pytest.mark.parametrize("following", ["", "## [3.4.0]\n\n- old\n"])
 def test_an_empty_section_fails_too(tmp_path, capsys, body, following):
+    """Reject empty release bodies at EOF or before the next release heading."""
     changelog = _write(
         tmp_path, f"## [3.5.0] - 2026-10-16\n{body}{following}"
     )
@@ -91,6 +96,7 @@ def test_an_empty_section_fails_too(tmp_path, capsys, body, following):
     ],
 )
 def test_a_version_does_not_match_a_neighbouring_heading(heading):
+    """Reject similar versions and headings outside the release heading format."""
     assert release_notes.extract_section(f"{heading}\n\n- body\n", "3.5.0") is None
 
 
@@ -107,6 +113,7 @@ def test_a_version_does_not_match_a_neighbouring_heading(heading):
     ],
 )
 def test_version_normalization_removes_only_one_leading_v(tag, expected):
+    """Strip a single v or V prefix while preserving the remaining tag text."""
     assert release_notes.version_from_tag(tag) == expected
 
 
@@ -119,6 +126,7 @@ def test_version_normalization_removes_only_one_leading_v(tag, expected):
     ],
 )
 def test_sections_are_selected_at_the_start_middle_and_end(version, expected):
+    """Select the requested release regardless of its position in the changelog."""
     changelog = SAMPLE.replace(
         "# Changelog\n", "# Changelog\n\n## [Unreleased]\n\n- pending\n"
     )
@@ -142,10 +150,12 @@ def test_sections_are_selected_at_the_start_middle_and_end(version, expected):
     ],
 )
 def test_section_boundaries_and_absent_bodies(changelog, expected):
+    """Distinguish missing and empty sections while respecting release boundaries."""
     assert release_notes.extract_section(changelog, "3.5.0") == expected
 
 
 def test_the_body_preserves_markdown_indentation_and_unicode():
+    """Preserve Markdown formatting and Unicode within the extracted body."""
     body = (
         "### Fixed\n\n"
         "- Keep trailing spaces for a Markdown line break.  \n"
@@ -159,6 +169,7 @@ def test_the_body_preserves_markdown_indentation_and_unicode():
 
 
 def test_prerelease_and_build_identifiers_are_matched_literally():
+    """Match prerelease and build punctuation literally in version headings."""
     version = "3.5.0-rc.1+build.7"
     changelog = (
         "## [3.5.0-rc.1build.7]\n- a different version\n\n"
@@ -169,6 +180,7 @@ def test_prerelease_and_build_identifiers_are_matched_literally():
 
 
 def test_main_reads_process_arguments_and_a_utf8_changelog(tmp_path, monkeypatch, capsys):
+    """Read process arguments by default and print UTF-8 release notes intact."""
     changelog = _write(tmp_path, "## [3.5.0-rc.1+build.7]\n\n- café — 修复\n")
     monkeypatch.setattr(
         sys, "argv",
@@ -193,6 +205,7 @@ def test_main_reads_process_arguments_and_a_utf8_changelog(tmp_path, monkeypatch
 def test_script_exits_with_the_extraction_status(
     tmp_path, monkeypatch, capsys, changelog_text, status, stdout,
 ):
+    """Propagate extraction success or failure through the script exit status."""
     changelog = _write(tmp_path, changelog_text)
     script = ROOT / "scripts" / "release_notes.py"
     monkeypatch.setattr(
@@ -214,6 +227,7 @@ def test_script_exits_with_the_extraction_status(
 def test_the_current_release_extracts_from_the_real_changelog(
     tmp_path, monkeypatch, capsys,
 ):
+    """Resolve the repository changelog independently of the working directory."""
     declared = re.search(
         r'^version\s*=\s*"([^"]+)"',
         (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
@@ -237,6 +251,7 @@ def test_the_current_release_extracts_from_the_real_changelog(
 
 
 def test_the_release_workflow_uses_the_tested_extractor():
+    """Keep the release workflow on the tested extractor without silent fallbacks."""
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
     )
@@ -249,6 +264,7 @@ def test_the_release_workflow_uses_the_tested_extractor():
 
 
 def test_the_release_workflow_classifies_the_selected_tag_as_prerelease():
+    """Use the selected tag for prerelease classification and release outputs."""
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
     )

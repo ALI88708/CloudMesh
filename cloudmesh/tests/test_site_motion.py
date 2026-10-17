@@ -32,11 +32,13 @@ JS = (SITE / "app.js").read_text(encoding="utf-8")
 
 @pytest.fixture
 def run_reveal_script():
+    """Return a Node runner for reveal assertions, skipping when Node is absent."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required to execute the site's JavaScript")
 
     def run(assertions, *, supported=True, target_count=3):
+        """Execute assertions against the site script with stubbed browser APIs."""
         harness = r"""
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
