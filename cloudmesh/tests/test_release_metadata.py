@@ -284,6 +284,11 @@ def test_the_commands_badge_matches_the_real_parser():
     )
 
 
+# `pytest.ini` caps every test at 10s. This one collects the whole suite in a
+# subprocess bounded at 300s, a budget the cap made unreachable: the guard timed
+# out on a loaded machine while its own bound sat untouched. One test needs the
+# longer budget, not the file.
+@pytest.mark.timeout(300)
 def test_the_tests_badge_matches_the_real_suite():
     """The advertised test count is derived, so it cannot quietly rot again.
 

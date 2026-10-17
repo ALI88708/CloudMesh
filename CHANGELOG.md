@@ -98,8 +98,11 @@ project advertises are derived rather than remembered.
 - **Subprocess tests no longer race the 10-second cap.** Five test files spawned
   real subprocesses under `pytest.ini`'s `timeout = 10` while carrying their own
   `timeout=60`. `test_windows_installer_extract.py` measured 8.7s cold against
-  that cap and failed whenever the runner was loaded. One `subprocess.run` in
-  `test_completions.py` had no timeout at all.
+  that cap and failed whenever the runner was loaded, and the suite badge guard
+  in `test_release_metadata.py` collects the entire suite through a subprocess
+  under the same cap while its own bound is 300 seconds. All of them carry their
+  own `timeout` markers now. One `subprocess.run` in `test_completions.py` had no
+  timeout at all.
 - **A test file that no runner could collect is gone.**
   `cloudmesh/core/test_storage.py` sat outside `pytest.ini`'s `testpaths`, so it
   never ran in CI, and it crashed on a Windows console besides.
