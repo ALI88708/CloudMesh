@@ -8,10 +8,10 @@ The format follows the [SemVer](https://semver.org/) versioning scheme implement
 
 This is the Enterprise stable release. The first release since 3.4.0, and the
 one that makes failures visible: the command surface, the installers, and the
-environment handling had all been
-shipping defects that no test could see. Every item below shipped with a green
-suite; the suite now covers them. It is also the release where the numbers this
-project advertises are derived rather than remembered.
+environment handling had all been shipping defects that no test could see.
+Every item below shipped with a green suite; the suite now covers them. It is
+also the release where the numbers this project advertises are derived rather
+than remembered.
 
 ### Fixed — the command surface
 
