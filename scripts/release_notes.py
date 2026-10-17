@@ -33,12 +33,12 @@ def version_from_tag(tag: str) -> str:
 
 
 def extract_section(changelog: str, version: str) -> str | None:
-    """The body under `## [version]`, heading excluded, or None if absent.
+    """The body under `## [version]`, or None if absent or whitespace-only.
 
     The body ends at the next `## [...]` heading. The version is matched
     exactly, so asking for `3.5.0` cannot pick up `## [3.5.01]`.
-    Only leading and trailing newline characters are stripped; an empty
-    section returns an empty string, while other whitespace is preserved.
+    Only leading and trailing newline characters are stripped from nonempty
+    notes; other whitespace is preserved.
     """
     heading = re.compile(rf"^##\s+\[{re.escape(version)}\][^\n]*\n?", re.MULTILINE)
     match = heading.search(changelog)
@@ -48,7 +48,7 @@ def extract_section(changelog: str, version: str) -> str | None:
     following = _ANY_HEADING.search(rest)
     if following is not None:
         rest = rest[: following.start()]
-    return rest.strip("\n")
+    return rest.strip("\n") if rest.strip() else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,8 +56,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Parse argv, or sys.argv[1:] when None, accepting a tag and an optional
     --changelog path (default: the repository's CHANGELOG.md). A missing or
-    empty section prints an error to stderr and returns 1; a section that
-    contains only spaces or tabs is printed as-is.
+    whitespace-only section prints an error to stderr and returns 1.
 
     Argument parsing raises SystemExit for help or invalid arguments. File
     access errors (OSError) and UTF-8 decoding errors (UnicodeDecodeError)

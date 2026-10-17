@@ -69,10 +69,13 @@ def test_a_missing_section_fails_instead_of_falling_back(tmp_path, capsys):
     assert "no usable '## [9.9.9]'" in captured.err
 
 
-@pytest.mark.parametrize("body", ["", "\n", "\n\n"])
+@pytest.mark.parametrize("body", ["", "\n", "\n\n", "   \n", "\t\n", "\n \t\n\t \n"])
 @pytest.mark.parametrize("following", ["", "## [3.4.0]\n\n- old\n"])
 def test_an_empty_section_fails_too(tmp_path, capsys, body, following):
-    """Reject empty release bodies at EOF or before the next release heading."""
+    """Reject blank release bodies at EOF or before the next release heading."""
+    assert release_notes.extract_section(
+        f"## [3.5.0] - 2026-10-16\n{body}{following}", "3.5.0"
+    ) is None
     changelog = _write(
         tmp_path, f"## [3.5.0] - 2026-10-16\n{body}{following}"
     )
@@ -138,8 +141,8 @@ def test_sections_are_selected_at_the_start_middle_and_end(version, expected):
     [
         ("", None),
         ("# Changelog\n\n- no releases yet\n", None),
-        ("## [3.5.0]", ""),
-        ("## [3.5.0] - 2026-10-16\n\n", ""),
+        ("## [3.5.0]", None),
+        ("## [3.5.0] - 2026-10-16\n\n", None),
         ("## [3.5.0]\n- final note", "- final note"),
         ("## [3.5.0]\n- current\n## [3.4.0]\n- old", "- current"),
         ("##\t[3.5.0]\n- current\n##\t[Unreleased]\n- next", "- current"),
@@ -150,7 +153,7 @@ def test_sections_are_selected_at_the_start_middle_and_end(version, expected):
     ],
 )
 def test_section_boundaries_and_absent_bodies(changelog, expected):
-    """Distinguish missing and empty sections while respecting release boundaries."""
+    """Reject unusable sections while respecting release boundaries."""
     assert release_notes.extract_section(changelog, "3.5.0") == expected
 
 
@@ -165,6 +168,13 @@ def test_the_body_preserves_markdown_indentation_and_unicode():
     )
     changelog = f"## [3.5.0] - today\n\n{body}\n\n## [3.4.0]\n- old\n"
 
+    assert release_notes.extract_section(changelog, "3.5.0") == body
+
+
+def test_nonempty_notes_preserve_surrounding_spaces_and_tabs():
+    """Trim boundary newlines without stripping spaces or tabs from notes."""
+    body = " \t- release note\t  "
+    changelog = f"## [3.5.0]\n\n{body}\n\n"
     assert release_notes.extract_section(changelog, "3.5.0") == body
 
 
