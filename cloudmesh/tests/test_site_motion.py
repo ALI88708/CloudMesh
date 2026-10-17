@@ -17,6 +17,13 @@ from pathlib import Path
 
 import pytest
 
+# `pytest.ini` caps every test at 10s. The observer cases start Node under a
+# 60-second subprocess bound (see the fixture below); a loaded Windows CI runner
+# pushed Node's cold start past the original 5s. The cap is raised past the
+# subprocess's 60s so a hung Node fails on its own timeout with the captured
+# output attached, not on pytest's with nothing to show.
+pytestmark = pytest.mark.timeout(120)
+
 SITE = Path(__file__).resolve().parent.parent.parent / "site"
 HTML = (SITE / "index.html").read_text(encoding="utf-8")
 CSS = (SITE / "styles.css").read_text(encoding="utf-8")
@@ -25,11 +32,13 @@ JS = (SITE / "app.js").read_text(encoding="utf-8")
 
 @pytest.fixture
 def run_reveal_script():
+    """Return a Node runner for reveal assertions, skipping when Node is absent."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required to execute the site's JavaScript")
 
     def run(assertions, *, supported=True, target_count=3):
+        """Execute assertions against the site script with stubbed browser APIs."""
         harness = r"""
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -98,7 +107,7 @@ vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), context, {timeout: 
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=60,
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
