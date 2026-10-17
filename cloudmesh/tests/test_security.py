@@ -155,6 +155,129 @@ class TestSecurityDataDirectory:
         assert manager.base_dir == target
         assert manager_class().load_config() == {"servers": {"source": {}}}
 
+    def test_construction_defers_key_and_config_creation(
+        self, manager_class, monkeypatch, tmp_path
+    ):
+        target = tmp_path / "nested" / "data"
+        monkeypatch.setenv("CLOUDMESH_DIR", str(target))
+
+        manager_class()
+        manager_class(base_dir=target)
+
+        assert (target / "backups").is_dir()
+        assert list((target / "backups").iterdir()) == []
+        assert not (target / "config.json").exists()
+        assert not (target / ".secret.key").exists()
+
+    def test_construction_preserves_existing_key_config_and_backups(
+        self, manager_class, tmp_path
+    ):
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        files = {
+            tmp_path / ".secret.key": b"existing key bytes",
+            tmp_path / "config.json": b"existing encrypted config",
+            backup_dir / "saved.json": b"existing backup",
+        }
+        for path, content in files.items():
+            path.write_bytes(content)
+
+        manager_class(base_dir=tmp_path)
+
+        assert {path: path.read_bytes() for path in files} == files
+
+
+class TestSpaListenLoop:
+    @pytest.fixture
+    def listener_socket(self, monkeypatch):
+        from node import cloudmesh_node as node
+
+        listener = node.SpacListener("synthetic-key", 12346, 12345, 17, Mock())
+        listener._running = True
+        sock = Mock()
+        monkeypatch.setattr(node.socket, "socket", Mock(return_value=sock))
+        monkeypatch.setattr(node, "_log", Mock())
+        return node, listener, sock
+
+    def test_only_valid_packets_open_tcp_access_for_the_source(self, listener_socket):
+        node, listener, sock = listener_socket
+        source = "192.0.2.10"
+        listener._validate_packet = Mock(side_effect=[False, True])
+        packets = iter([b"invalid", b"valid"])
+
+        def receive(size):
+            assert size == 1024
+            try:
+                return next(packets), (source, 40000)
+            except StopIteration:
+                listener._running = False
+                raise node.socket.timeout()
+
+        sock.recvfrom.side_effect = receive
+
+        listener._listen_loop()
+
+        sock.bind.assert_called_once_with(("0.0.0.0", 12346))
+        sock.settimeout.assert_called_once_with(1.0)
+        assert [call.args for call in listener._validate_packet.call_args_list] == [
+            (b"invalid", source), (b"valid", source)
+        ]
+        listener.on_open.assert_called_once_with(17, source)
+        sock.close.assert_called_once_with()
+
+    @pytest.mark.parametrize("stage", ["timeout", "receive", "validate", "callback"])
+    def test_listening_continues_after_packet_processing_errors(self, listener_socket, stage):
+        node, listener, sock = listener_socket
+        source = "192.0.2.10"
+        listener._validate_packet = Mock(return_value=True)
+        if stage == "validate":
+            listener._validate_packet.side_effect = [ValueError("bad packet"), True]
+        if stage == "callback":
+            listener.on_open.side_effect = [RuntimeError("callback failed"), None]
+        attempts = iter([0, 1])
+
+        def receive(_size):
+            try:
+                attempt = next(attempts)
+            except StopIteration:
+                listener._running = False
+                raise node.socket.timeout()
+            if attempt == 0 and stage == "timeout":
+                raise node.socket.timeout()
+            if attempt == 0 and stage == "receive":
+                raise OSError("receive failed")
+            return b"packet", (source, 40000)
+
+        sock.recvfrom.side_effect = receive
+
+        listener._listen_loop()
+
+        assert listener.on_open.call_count == (2 if stage == "callback" else 1)
+        assert listener.on_open.call_args.args == (17, source)
+        assert sock.recvfrom.call_count == 3
+        sock.close.assert_called_once_with()
+
+    def test_bind_failure_returns_without_processing_packets(self, listener_socket):
+        _, listener, sock = listener_socket
+        sock.bind.side_effect = OSError("address in use")
+
+        listener._listen_loop()
+
+        sock.recvfrom.assert_not_called()
+        listener.on_open.assert_not_called()
+
+    def test_socket_setup_error_propagates(self, listener_socket):
+        _, listener, sock = listener_socket
+        failure = OSError("cannot configure socket")
+        sock.setsockopt.side_effect = failure
+
+        with pytest.raises(OSError) as exc:
+            listener._listen_loop()
+
+        assert exc.value is failure
+        sock.bind.assert_not_called()
+        listener.on_open.assert_not_called()
+
 
 # ─────────────────────────────────────────────
 # 1. REST API Auth Tests

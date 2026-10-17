@@ -81,7 +81,11 @@ def test_runtime_version_fallback_matches_declared_release(monkeypatch, failure)
     )
     monkeypatch.setattr(importlib.metadata, "version", Mock(side_effect=error))
 
-    assert get_version()["version"] == _declared_version()
+    assert get_version() == {
+        "version": _declared_version(),
+        "python": ".".join(map(str, sys.version_info[:3])),
+        "platform": sys.platform,
+    }
 
 
 def test_runtime_version_fallback_when_metadata_cannot_be_imported(monkeypatch):
@@ -89,7 +93,23 @@ def test_runtime_version_fallback_when_metadata_cannot_be_imported(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "importlib.metadata", None)
 
-    assert get_version()["version"] == _declared_version()
+    assert get_version() == {
+        "version": _declared_version(),
+        "python": ".".join(map(str, sys.version_info[:3])),
+        "platform": sys.platform,
+    }
+
+
+def test_runtime_version_does_not_hide_keyboard_interrupt(monkeypatch):
+    import importlib.metadata
+    from unittest.mock import Mock
+
+    from cloudmesh.core.features import get_version
+
+    monkeypatch.setattr(importlib.metadata, "version", Mock(side_effect=KeyboardInterrupt))
+
+    with pytest.raises(KeyboardInterrupt):
+        get_version()
 
 
 def _sections() -> list[str]:
@@ -136,6 +156,29 @@ def _site_versions() -> list[str]:
         for match in _VERSION.finditer(text)
         if not re.match(r"\.\d", text[match.end() : match.end() + 2])
     ]
+
+
+@pytest.mark.parametrize(
+    ("markup", "expected"),
+    [
+        ("<p>No version yet</p>", []),
+        ("<p>CloudMesh 3.5.0</p>", ["3.5.0"]),
+        ("<code>127.0.0.1 192.168.1.10</code>", []),
+        ("<p>v3.5.0</p><code>10.0.0.1</code>", ["3.5.0"]),
+        ("<p>3.5.0</p><footer>3.5.1</footer>", ["3.5.0", "3.5.1"]),
+    ],
+    ids=["missing", "version", "ipv4-only", "version-and-ipv4", "conflicting-claims"],
+)
+def test_site_version_extraction_distinguishes_release_claims_from_ipv4(
+    monkeypatch, markup, expected
+):
+    def read_site(name):
+        assert name == "site/index.html"
+        return markup
+
+    monkeypatch.setattr(sys.modules[__name__], "_read", read_site)
+
+    assert _site_versions() == expected
 
 
 def test_the_site_version_claim_agrees_with_pyproject():

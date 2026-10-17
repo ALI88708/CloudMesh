@@ -442,3 +442,29 @@ def test_time_and_datetime_are_imported_at_module_scope():
     from datetime import datetime as _dt
 
     assert cloudmesh_main.datetime is _dt
+
+
+@pytest.mark.parametrize("handler_fails", [False, True], ids=["success", "error"])
+def test_database_backup_alias_sets_defaults_and_preserves_selected_database(
+    monkeypatch, handler_fails
+):
+    args = SimpleNamespace(
+        name="server", database="app", type="postgres", password="synthetic-secret",
+        action="query", path="old-path", host="old-host", port=1234, user="old-user",
+    )
+    failure = OSError("backup failed")
+    handler = Mock(side_effect=failure if handler_fails else None)
+    monkeypatch.setattr(cloudmesh_main, "cmd_database", handler)
+
+    if handler_fails:
+        with pytest.raises(OSError) as exc:
+            cloudmesh_main._alias_db_backup(args)
+        assert exc.value is failure
+    else:
+        cloudmesh_main._alias_db_backup(args)
+
+    handler.assert_called_once_with(args)
+    assert vars(args) == {
+        "name": "server", "database": "app", "type": "postgres", "password": "synthetic-secret",
+        "action": "backup", "path": "/tmp", "host": "127.0.0.1", "port": None, "user": "root",
+    }
