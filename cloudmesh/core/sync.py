@@ -9,6 +9,10 @@ class DirectorySync:
         self.server_mgr = server_manager
 
     def _md5(self, filepath):
+        """Return a local file's hexadecimal MD5 fingerprint for change detection.
+
+        File open/read errors and unavailable-MD5 errors propagate.
+        """
         # nosec B324 -- file fingerprint for sync change detection, compared
         # against remote `md5sum` output. It detects edits; it does not
         # authenticate anything, so a collision would not cross a trust boundary.

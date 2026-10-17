@@ -47,6 +47,14 @@ def _postgres_cmd(user, host, port, password, database, sql):
     return f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
 
 def list_databases(server_name, db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
+    """List MySQL or PostgreSQL databases through a configured server's SSH host.
+
+    `host`, `port`, `user`, and `password` address the database from the SSH
+    host; a falsey port selects 3306 for mysql or 5432 for postgres. Return
+    command output on success, or a diagnostic for an unknown server,
+    unsupported type, or SSH/remote command failure. Configuration read and
+    JSON decoding errors propagate.
+    """
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -65,6 +73,14 @@ def list_databases(server_name, db_type="mysql", host="127.0.0.1", port=None, us
     return _remote_result("list", out, rc)
 
 def db_status(server_name, db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
+    """Fetch database connection counts and uptime through a configured SSH host.
+
+    `host`, `port`, `user`, and `password` address the database from that host;
+    a falsey port selects 3306 for mysql or 5432 for postgres. MySQL also
+    reports its Questions counter. Return command output or a diagnostic for
+    an unknown server, unsupported type, or SSH/remote command failure.
+    Configuration read and JSON decoding errors propagate.
+    """
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -85,6 +101,14 @@ def db_status(server_name, db_type="mysql", host="127.0.0.1", port=None, user="r
     return _remote_result("status", out, rc)
 
 def db_query(server_name, query, db_type="mysql", database="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
+    """Execute SQL through a configured SSH host and return output or a diagnostic.
+
+    `host`, `port`, `user`, and `password` address the database from that host;
+    a falsey port selects 3306 for mysql or 5432 for postgres. Only those two
+    database types are supported. The query may modify the selected database.
+    Unknown servers and SSH/remote command failures return diagnostics;
+    configuration read and JSON decoding errors propagate.
+    """
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -107,6 +131,15 @@ def db_query(server_name, query, db_type="mysql", database="mysql", host="127.0.
 # string rather than a secret. Note the spaces around the comma: bandit's nosec
 # regex uses a repeating group, so `B108,B107` silently records only B107.
 def db_backup(server_name, database, backup_path="/tmp", db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B108 , B107
+    """Write a timestamped SQL dump on the configured server's SSH host.
+
+    `backup_path` is an existing remote directory, not a local destination.
+    `host`, `port`, `user`, and `password` address the database from that host;
+    a falsey port selects 3306 for mysql or 5432 for postgres. Return a message
+    containing the remote dump path on success, or a diagnostic for an unknown
+    server, unsupported type, or SSH/remote command failure. A failed dump may
+    leave a partial file. Configuration read and JSON decoding errors propagate.
+    """
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -139,6 +172,15 @@ def db_backup(server_name, database, backup_path="/tmp", db_type="mysql", host="
     return f"Backup failed: {out}"
 
 def db_check_all(db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
+    """Collect database status through each configured server and node's SSH host.
+
+    Pass the same database connection settings to db_status for every entry.
+    Return a list of dictionaries with `server`, `status`, and `details` (at
+    most 200 characters). Status is unreachable for empty output or a remote
+    status failure, and ok otherwise, including unsupported-type diagnostics.
+    Return an empty list if none are configured. Configuration read and JSON
+    decoding errors propagate.
+    """
     cfg = _load_config()
     results = []
     for section in ["servers", "nodes"]:

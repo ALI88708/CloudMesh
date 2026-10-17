@@ -50,6 +50,12 @@ def discover_network(subnet="192.168.1", port=9999, timeout=0.3):
 # === 2. BENCHMARK ===
 
 def benchmark_cpu(duration=3):
+    """Return CPU hashing throughput over the requested duration in seconds.
+
+    The result contains a rounded operations-per-second `score` and the
+    requested `duration`. Zero duration raises ZeroDivisionError; a negative
+    duration skips the workload and returns a zero score.
+    """
     import time as _t
     start = _t.time()
     count = 0
@@ -376,6 +382,11 @@ class NotifyManager:
         self._save()
 
     def send_telegram(self, message):
+        """Send a message to the configured Telegram chat with a 10-second timeout.
+
+        Return True when the request succeeds, or False when credentials are
+        missing or request preparation or delivery raises an exception.
+        """
         t = self._config.get("telegram", {})
         if not t.get("bot_token") or not t.get("chat_id"):
             return False
@@ -392,6 +403,11 @@ class NotifyManager:
             return False
 
     def send_discord(self, message):
+        """Post a message to the configured Discord webhook with a 10-second timeout.
+
+        Return True when the request succeeds, or False when the webhook URL is
+        missing or request preparation or delivery raises an exception.
+        """
         d = self._config.get("discord", {})
         if not d.get("webhook_url"):
             return False

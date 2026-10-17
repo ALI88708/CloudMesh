@@ -9,6 +9,7 @@ Tests critical security invariants:
 
 import hashlib
 import hmac
+import importlib
 import json
 import os
 import secrets
@@ -24,6 +25,135 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+class TestSecurityDataDirectory:
+    @pytest.fixture(params=["cloudmesh.core.security", "core.security"])
+    def manager_class(self, request):
+        return importlib.import_module(request.param).SecurityManager
+
+    def test_relocated_config_and_backups_survive_new_managers(
+        self, manager_class, monkeypatch, tmp_path
+    ):
+        target = tmp_path / "nested data" / "private"
+        monkeypatch.setenv("CLOUDMESH_DIR", str(target))
+        original = {"servers": {"web": {"password": "synthetic-password"}}}
+        first = manager_class()
+        first.save_config(original)
+        encrypted = (target / "config.json").read_bytes()
+        key = (target / ".secret.key").read_bytes()
+
+        second = manager_class()
+        assert second.load_config() == original
+        second.save_config({"servers": {}})
+        backups = list((target / "backups").glob("config_backup_*.json"))
+        assert len(backups) == 1
+        assert backups[0].read_bytes() == encrypted
+        assert b"synthetic-password" not in encrypted
+
+        second.restore_backup(backups[0].name)
+        assert manager_class().load_config() == original
+        assert (target / ".secret.key").read_bytes() == key
+        assert {p.name for p in target.iterdir()} == {
+            "config.json", ".secret.key", "backups"
+        }
+
+    @pytest.mark.parametrize("path_type", [str, Path], ids=["string", "path"])
+    def test_explicit_nested_directory_ignores_unusable_environment(
+        self, manager_class, monkeypatch, tmp_path, path_type
+    ):
+        blocked = tmp_path / "environment-is-a-file"
+        blocked.write_bytes(b"preserve unrelated data")
+        monkeypatch.setenv("CLOUDMESH_DIR", str(blocked))
+        target = tmp_path / "explicit" / "nested"
+
+        manager = manager_class(base_dir=path_type(target))
+        manager.save_config({"servers": {"explicit": {}}})
+
+        assert manager.base_dir == target
+        assert (target / "backups").is_dir()
+        assert (target / "config.json").is_file()
+        assert (target / ".secret.key").is_file()
+        assert manager_class(base_dir=target).load_config() == {
+            "servers": {"explicit": {}}
+        }
+        assert blocked.read_bytes() == b"preserve unrelated data"
+
+    def test_environment_changes_keep_existing_managers_in_their_own_directory(
+        self, manager_class, monkeypatch, tmp_path
+    ):
+        first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+        monkeypatch.setenv("CLOUDMESH_DIR", str(first_dir))
+        first = manager_class()
+        first.save_config({"servers": {"first": {}}})
+        monkeypatch.setenv("CLOUDMESH_DIR", str(second_dir))
+        second = manager_class()
+        second.save_config({"servers": {"second": {}}})
+
+        first.save_config({"servers": {"first-updated": {}}})
+
+        assert manager_class(base_dir=first_dir).load_config() == {
+            "servers": {"first-updated": {}}
+        }
+        assert manager_class().load_config() == {"servers": {"second": {}}}
+        assert (first_dir / ".secret.key").read_bytes() != (
+            second_dir / ".secret.key"
+        ).read_bytes()
+        assert len(first.list_backups()) == 1
+        assert second.list_backups() == []
+
+    @pytest.mark.parametrize("blocked_part", ["base", "backups"])
+    def test_unusable_directory_raises_without_overwriting_files(
+        self, manager_class, monkeypatch, tmp_path, blocked_part
+    ):
+        target = tmp_path / "configured"
+        blocker = target if blocked_part == "base" else target / "backups"
+        blocker.parent.mkdir(parents=True, exist_ok=True)
+        blocker.write_bytes(b"keep this file")
+        monkeypatch.setenv("CLOUDMESH_DIR", str(target))
+
+        with pytest.raises(OSError):
+            manager_class()
+
+        assert blocker.read_bytes() == b"keep this file"
+        assert not (target / "config.json").exists()
+        assert not (target / ".secret.key").exists()
+
+    @pytest.mark.parametrize("configured", [None, ""], ids=["unset", "empty"])
+    def test_default_directory_comes_from_storage_resolver(
+        self, manager_class, monkeypatch, tmp_path, configured
+    ):
+        from cloudmesh.core import storage
+
+        if configured is None:
+            monkeypatch.delenv("CLOUDMESH_DIR", raising=False)
+        else:
+            monkeypatch.setenv("CLOUDMESH_DIR", configured)
+        package = tmp_path / "package"
+        monkeypatch.setattr(storage, "__file__", str(package / "core" / "storage.py"))
+
+        manager = manager_class()
+
+        assert manager.base_dir == package
+        assert manager.config_path == package / "config.json"
+        assert manager.key_path == package / ".secret.key"
+        assert manager.backups_dir == package / "backups"
+        assert manager.backups_dir.is_dir()
+
+    def test_source_import_falls_back_when_qualified_storage_is_unavailable(
+        self, manager_class, monkeypatch, tmp_path
+    ):
+        import core.storage  # noqa: F401
+
+        monkeypatch.setitem(sys.modules, "cloudmesh.core.storage", None)
+        target = tmp_path / "source" / "data"
+        monkeypatch.setenv("CLOUDMESH_DIR", str(target))
+
+        manager = manager_class()
+        manager.save_config({"servers": {"source": {}}})
+
+        assert manager.base_dir == target
+        assert manager_class().load_config() == {"servers": {"source": {}}}
 
 
 # ─────────────────────────────────────────────

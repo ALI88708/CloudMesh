@@ -12,7 +12,10 @@ must simply work, and a path that cannot be created must fail legibly.
 """
 
 import os
+import io
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -172,3 +175,95 @@ def test_doctor_flags_a_data_directory_that_does_not_exist(monkeypatch, tmp_path
     out = _run_doctor(monkeypatch, capsys)
     data_row = next(line for line in out.splitlines() if "Data directory" in line)
     assert "FAIL" in data_row, f"a missing data directory must not report healthy: {data_row}"
+
+
+@pytest.fixture
+def doctor_data_row(monkeypatch, tmp_path):
+    import main as main_mod
+    from cloudmesh.core import git_support
+    from rich.console import Console
+
+    source = tmp_path / "source-tree"
+    source.mkdir()
+    monkeypatch.setattr(git_support, "git_available", lambda: False)
+    monkeypatch.setattr(git_support, "update_support", lambda: "pip")
+    monkeypatch.setattr(git_support, "installed_version", lambda: "test-version")
+    # Other doctor checks initialize storage; isolate the diagnostic row from them.
+    monkeypatch.setattr(
+        storage_mod, "StorageManager",
+        Mock(side_effect=RuntimeError("storage health check stubbed")),
+    )
+
+    def run():
+        output = io.StringIO()
+        monkeypatch.setattr(main_mod, "console", Console(file=output, width=500))
+        main_mod.cmd_doctor(SimpleNamespace(base_dir=str(source)))
+        return next(
+            line for line in output.getvalue().splitlines() if "Data directory" in line
+        )
+
+    return run
+
+
+@pytest.mark.parametrize("state", ["directory", "missing", "file"])
+def test_doctor_data_directory_status_matches_filesystem(
+    monkeypatch, tmp_path, doctor_data_row, state
+):
+    target = tmp_path / "data with spaces"
+    if state == "directory":
+        target.mkdir()
+    elif state == "file":
+        target.write_text("not a directory")
+    monkeypatch.setenv("CLOUDMESH_DIR", str(target))
+
+    row = doctor_data_row()
+
+    assert ("PASS" if state == "directory" else "FAIL") in row
+    assert str(target) in row
+    assert "(from CLOUDMESH_DIR)" in row
+    if state == "missing":
+        assert not target.exists()
+    elif state == "file":
+        assert target.read_text() == "not a directory"
+
+
+@pytest.mark.parametrize("configured", [None, ""], ids=["unset", "empty"])
+def test_doctor_source_override_does_not_replace_default_data_directory(
+    monkeypatch, doctor_data_row, configured
+):
+    if configured is None:
+        monkeypatch.delenv("CLOUDMESH_DIR", raising=False)
+    else:
+        monkeypatch.setenv("CLOUDMESH_DIR", configured)
+
+    row = doctor_data_row()
+
+    assert "PASS" in row
+    assert str(PACKAGE_DIR) in row
+    assert "(package default)" in row
+    assert "from CLOUDMESH_DIR" not in row
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, PermissionError])
+def test_doctor_reports_data_directory_resolution_errors(
+    monkeypatch, doctor_data_row, error_type
+):
+    monkeypatch.setattr(
+        storage_mod, "resolve_base_dir", Mock(side_effect=error_type("cannot resolve data"))
+    )
+
+    row = doctor_data_row()
+
+    assert "FAIL" in row
+    assert "check failed: cannot resolve data" in row
+
+
+def test_doctor_reports_data_directory_probe_errors(monkeypatch, doctor_data_row):
+    target = Mock(spec=Path)
+    target.is_dir.side_effect = PermissionError("cannot inspect data")
+    monkeypatch.setattr(storage_mod, "resolve_base_dir", Mock(return_value=target))
+
+    row = doctor_data_row()
+
+    assert "FAIL" in row
+    assert "check failed: cannot inspect data" in row

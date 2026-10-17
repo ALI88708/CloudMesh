@@ -50,6 +50,48 @@ def _declared_version() -> str:
     return declared.group(1)
 
 
+def test_runtime_version_uses_installed_metadata(monkeypatch):
+    import importlib.metadata
+    from unittest.mock import Mock
+
+    from cloudmesh.core.features import get_version
+
+    lookup = Mock(return_value="9.8.7+installed")
+    monkeypatch.setattr(importlib.metadata, "version", lookup)
+
+    assert get_version() == {
+        "version": "9.8.7+installed",
+        "python": ".".join(map(str, sys.version_info[:3])),
+        "platform": sys.platform,
+    }
+    lookup.assert_called_once_with("cloudmesh")
+
+
+@pytest.mark.parametrize("failure", ["missing-distribution", "broken-metadata"])
+def test_runtime_version_fallback_matches_declared_release(monkeypatch, failure):
+    import importlib.metadata
+    from unittest.mock import Mock
+
+    from cloudmesh.core.features import get_version
+
+    error = (
+        importlib.metadata.PackageNotFoundError("cloudmesh")
+        if failure == "missing-distribution"
+        else RuntimeError("metadata is unreadable")
+    )
+    monkeypatch.setattr(importlib.metadata, "version", Mock(side_effect=error))
+
+    assert get_version()["version"] == _declared_version()
+
+
+def test_runtime_version_fallback_when_metadata_cannot_be_imported(monkeypatch):
+    from cloudmesh.core.features import get_version
+
+    monkeypatch.setitem(sys.modules, "importlib.metadata", None)
+
+    assert get_version()["version"] == _declared_version()
+
+
 def _sections() -> list[str]:
     """The bracketed heading of every `##` section, in file order."""
     return _H2.findall(_read("CHANGELOG.md"))
@@ -77,6 +119,39 @@ def test_the_readme_version_badge_agrees_with_pyproject():
     assert badge, "the README has no Version badge"
     assert badge.group(1) == declared, (
         f"the README badge says {badge.group(1)} but pyproject says {declared}"
+    )
+
+
+def _site_versions() -> list[str]:
+    """Every version literal the site states in its own markup.
+
+    The release cards are fetched from the GitHub API at runtime, so the static
+    page carries no historical versions: anything version-shaped here is a claim
+    about the current release. Four-part dotted numbers are IPv4 addresses from
+    the command examples, not versions.
+    """
+    text = _read("site/index.html")
+    return [
+        match.group(0)
+        for match in _VERSION.finditer(text)
+        if not re.match(r"\.\d", text[match.end() : match.end() + 2])
+    ]
+
+
+def test_the_site_version_claim_agrees_with_pyproject():
+    """The site stated 3.5.1 while every other surface said 3.5.0.
+
+    `test_site_commands.py` re-checks the commands the page shows against the
+    parser, but says nothing about the version in the prose introducing them, so
+    that number drifted with nothing to catch it.
+    """
+    stated = _site_versions()
+    assert stated, "site/index.html states no version to check"
+    declared = _declared_version()
+    stale = sorted({version for version in stated if version != declared})
+    assert not stale, (
+        f"site/index.html advertises {', '.join(stale)} but pyproject "
+        f"declares {declared}"
     )
 
 
