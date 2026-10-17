@@ -103,6 +103,11 @@ than remembered.
   under the same cap while its own bound is 300 seconds. All of them carry their
   own `timeout` markers now. One `subprocess.run` in `test_completions.py` had no
   timeout at all.
+- **The site motion tests no longer race Node's cold start.** The observer cases
+  start `node` under a 5-second subprocess timeout, which a loaded Windows
+  runner exceeded while the rest of the matrix was green. They now carry the
+  same 60-second budget as the other tests that shell out, and a `pytest` bound
+  to match.
 - **A test file that no runner could collect is gone.**
   `cloudmesh/core/test_storage.py` sat outside `pytest.ini`'s `testpaths`, so it
   never ran in CI, and it crashed on a Windows console besides.
