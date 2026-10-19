@@ -1,6 +1,6 @@
 # CloudMesh 4.0.0 — BSD Family Support Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make CloudMesh manage FreeBSD, OpenBSD and NetBSD machines and run on FreeBSD itself, through one OS-profile layer, shipping as 4.0.0.
 
@@ -48,7 +48,7 @@
     `class WindowsProfile(OsProfile)` (`key="windows"`, `family="windows"`).
   - `get_profile(os_type: str | None) -> OsProfile` — never raises.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # cloudmesh/tests/test_osprofile.py
@@ -77,21 +77,21 @@ def test_windows_profile_uses_powershell():
     assert "powershell" in p.cpu_cmd().lower()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest cloudmesh/tests/test_osprofile.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'cloudmesh.core.osprofile'`
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Move the exact command literals from `cloudmesh/core/monitor.py` (`LINUX_CPU_CMD`, `LINUX_RAM_CMD`, `LINUX_DISK_CMD`, `WINDOWS_CPU_CMD`, `WINDOWS_RAM_CMD`, `WINDOWS_DISK_CMD`) into `osprofile.py` as module constants, and have the profile methods return them. Parsers: `float(raw)`/`json.loads(raw)` wrapped in try/except returning `None`, matching `ResourceMonitor` today. `_PROFILES = {"linux": LinuxProfile(), "windows": WindowsProfile()}`; `get_profile` lowercases and strips, then `_PROFILES.get(value, _PROFILES["linux"])`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest cloudmesh/tests/test_osprofile.py -q`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/osprofile.py cloudmesh/tests/test_osprofile.py
@@ -111,7 +111,7 @@ git commit -m "feat: add OS profile layer with Linux and Windows resource comman
 - Produces: `FreeBsdProfile`, `OpenBsdProfile`, `NetBsdProfile` registered under
   `"freebsd"`, `"openbsd"`, `"netbsd"`; all with `family="posix"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # appended to test_osprofile.py
@@ -163,12 +163,12 @@ def test_commands_work_against_the_real_freebsd_host(os_type):
     assert disk and disk["total_gb"] > 0
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_osprofile.py -q`
 Expected: FAIL — `get_profile("freebsd").key == "linux"`
 
-- [ ] **Step 3: Implement the BSD profiles**
+- [x] **Step 3: Implement the BSD profiles**
 
 `BsdProfile(OsProfile)` base plus three subclasses. Commands:
 - CPU (all): `vmstat 1 2` — parser takes the last non-empty line, last whitespace
@@ -187,12 +187,12 @@ The FreeBSD OIDs are pinned by the live test in the CI VM (Task 16). For
 OpenBSD/NetBSD, if a sysctl name differs on a live host later, update the command
 and its fixture together — the fixture is the contract.
 
-- [ ] **Step 4: Run to verify pass**
+- [x] **Step 4: Run to verify pass**
 
 Run: `python -m pytest cloudmesh/tests/test_osprofile.py -q`
 Expected: PASS (live test skipped on Windows)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/osprofile.py cloudmesh/tests/test_osprofile.py cloudmesh/tests/test_osprofile_live.py
@@ -211,7 +211,7 @@ git commit -m "feat: add FreeBSD, OpenBSD and NetBSD resource profiles"
 - Consumes: `get_profile` from Task 1.
 - Produces: `ResourceMonitor.get_cpu/get_ram/get_disk` unchanged signatures.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # cloudmesh/tests/test_bsd_monitor.py
@@ -247,12 +247,12 @@ def test_unknown_os_type_still_uses_the_linux_command():
     assert "/proc/stat" in mgr.commands[0]
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_monitor.py -q`
 Expected: FAIL — the BSD command is not used (Linux command runs instead)
 
-- [ ] **Step 3: Rewire `ResourceMonitor`**
+- [x] **Step 3: Rewire `ResourceMonitor`**
 
 Replace the `WINDOWS_* if os_type == "windows" else LINUX_*` selections with
 `profile = get_profile(os_type)`; call `profile.cpu_cmd()` / `profile.parse_cpu(raw)`
@@ -260,12 +260,12 @@ etc. Delete the now-duplicated constants from `monitor.py` (they live in
 `osprofile.py`); check with `rg "LINUX_CPU_CMD|WINDOWS_CPU_CMD" cloudmesh` that
 nothing else imports them, and update any importer to pull from `osprofile`.
 
-- [ ] **Step 4: Run the new test and the existing suite**
+- [x] **Step 4: Run the new test and the existing suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_monitor.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/monitor.py cloudmesh/core/osprofile.py cloudmesh/tests/test_bsd_monitor.py
@@ -284,7 +284,7 @@ git commit -m "refactor: select monitor commands through the OS profile layer"
 - Produces: `ServerManager.detect_os(name) -> str` returning `"linux"`,
   `"windows"`, `"freebsd"`, `"openbsd"`, `"netbsd"` or `"unknown"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # cloudmesh/tests/test_bsd_detect.py
@@ -330,24 +330,24 @@ def test_uname_mapping(uname, expected):
     assert mgr.detect_os("node1") == expected
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_detect.py -q`
 Expected: FAIL — FreeBSD/OpenBSD/NetBSD report `"windows"`
 
-- [ ] **Step 3: Extend the mapping**
+- [x] **Step 3: Extend the mapping**
 
 In `detect_os`, lower-case the stdout and check, in order: `freebsd` →
 `"freebsd"`, `openbsd` → `"openbsd"`, `netbsd` → `"netbsd"`, `linux` or
 `darwin` → `"linux"`, else `"windows"`. Keep the storage update and `_save()`
 lines untouched.
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_detect.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/server.py cloudmesh/tests/test_bsd_detect.py
@@ -377,7 +377,7 @@ git commit -m "feat: detect FreeBSD, OpenBSD and NetBSD in detect_os"
   `_profile_for(server_mgr, name) -> OsProfile`; `get_recent_logs(..., log_file=None, ...)`
   now resolves the default from the profile.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # cloudmesh/tests/test_bsd_features.py
@@ -417,12 +417,12 @@ def test_freebsd_uptime_has_no_gnu_dash_p():
     assert mgr.commands[0].strip() == "uptime"
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_features.py -q`
 Expected: FAIL — FreeBSD still gets the Linux commands
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add the methods to `LinuxProfile`/`WindowsProfile` returning today's exact
 strings, and to `BsdProfile`: `uptime` → `"uptime"`; top →
@@ -441,12 +441,12 @@ through `_profile_for`. `get_recent_logs`: when `log_file` is falsy, build
 (`help` text keeps working; grep the test suite for tests pinning the old
 default and update them).
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_features.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/features.py cloudmesh/core/osprofile.py cloudmesh/main.py cloudmesh/tests/test_bsd_features.py
@@ -469,7 +469,7 @@ git commit -m "feat: serve feature commands through the OS profile layer"
   (`"sudo"`, `"doas"`, or `""`), and `_detect_cmds`/`_install_cmds` entries for
   `"pkg"` and `"pkg_add"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # cloudmesh/tests/test_bsd_deploy.py
@@ -522,12 +522,12 @@ def test_run_script_uses_sh_on_bsd(monkeypatch, tmp_path):
     assert "sh /tmp/s.sh" in uploaded["run"]
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_deploy.py -q`
 Expected: FAIL — no package manager detected, `bash` used
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `_detect_package_manager`: for BSD os_types probe `pkg` then `pkg_add`
 (`which X >/dev/null 2>&1 && echo X || echo none`), else keep the current
@@ -540,12 +540,12 @@ install `{priv} pkg install -y {pkg}`;
 `profile.nodejs_package()`; `run_script` uses `profile.script_shell()` for the
 POSIX branch.
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_deploy.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/deploy.py cloudmesh/core/osprofile.py cloudmesh/tests/test_bsd_deploy.py
@@ -566,7 +566,7 @@ git commit -m "feat: support pkg and pkg_add package deployment"
   `"md5sum {quoted} 2>/dev/null || echo none"`, BSD
   `"md5 -q {quoted} 2>/dev/null || echo none"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # cloudmesh/tests/test_bsd_sync.py
@@ -592,23 +592,23 @@ def test_freebsd_uses_md5_q():
     assert "'/tmp/a file.txt'" in mgr.commands[0]  # quoted
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_sync.py -q`
 Expected: FAIL — `md5sum` is used
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add `md5_cmd` to the base/linux/windows/BSD profiles; in `sync.py` resolve the
 profile from `server_mgr.get_server_info(server_name)` and execute
 `profile.md5_cmd(remote_path)` (the profile does the `shlex.quote`).
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_sync.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/sync.py cloudmesh/core/osprofile.py cloudmesh/tests/test_bsd_sync.py
@@ -631,7 +631,7 @@ git commit -m "feat: use md5 on BSD family systems for directory sync"
 - Existing `firewall_list` / `firewall_add_rule` / `firewall_delete_rule` /
   `firewall_check_all` keep their names and return strings.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # cloudmesh/tests/test_bsd_firewall.py
@@ -682,12 +682,12 @@ def test_ipfw_reports_explicit_limitation(monkeypatch):
     assert "ipfw" in msg and "not supported" in msg.lower()
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_firewall.py -q`
 Expected: FAIL — `_detect_backend` does not exist
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Backend order: `which ufw` → ufw; `pfctl -s info` non-empty → pf;
 `ipfw list` non-empty → ipfw; `iptables -L -n` non-empty → iptables; else none.
@@ -699,12 +699,12 @@ pf rules live in anchor `cloudmesh`; add/delete do read-modify-write over
 ipfw mutations: `"ipfw rule management is not supported yet; use pf"`. Keep
 ufw and iptables behaviour byte-identical (existing tests must pass).
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_firewall.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/firewall.py cloudmesh/tests/test_bsd_firewall.py
@@ -725,7 +725,7 @@ git commit -m "feat: add pf firewall backend for the BSD family"
   `logagg.follow_log(server_name, log_file=None)` resolve `None` to the first
   path the profile declares for that server's `os_type`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # cloudmesh/tests/test_bsd_logagg.py
@@ -746,24 +746,24 @@ def test_freebsd_default_source_is_messages(monkeypatch):
     assert "/var/log/syslog" not in seen["cmd"]
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_logagg.py -q`
 Expected: FAIL — `/var/log/syslog` is used
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add a `_default_log_path(server)` helper that reads `os_type` from the server
 record (missing → linux) and returns `get_profile(...).log_paths()[0]`. Use it
 whenever `log_file` is `None`; keep the existing explicit-path behaviour and
 source-discovery command unchanged.
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_logagg.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/logagg.py cloudmesh/tests/test_bsd_logagg.py
@@ -783,7 +783,7 @@ git commit -m "feat: resolve default log paths from the OS profile"
 - Produces: `snapshot(server_name=None)` unchanged signature; history entries keep
   the `{"time", "cpu", "ram", "disk"}` shape.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # cloudmesh/tests/test_bsd_reshistory.py
@@ -811,24 +811,24 @@ def test_freebsd_snapshot_uses_profile_commands(monkeypatch, tmp_path):
     assert entry["ram"] > 0
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_reshistory.py -q`
 Expected: FAIL — the Linux one-liner runs and parsing yields nothing useful
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Replace the single `top/free/df` one-liner with three profile-driven calls:
 `profile.cpu_cmd()` → `parse_cpu`, `profile.ram_cmd()` → `parse_ram`,
 `profile.disk_cmd()` → `parse_disk` (percent). Append an entry only when all
 three parsed; keep the 1000-entry cap and the return string.
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_reshistory.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/reshistory.py cloudmesh/tests/test_bsd_reshistory.py
@@ -850,7 +850,7 @@ git commit -m "refactor: snapshot resource history through the OS profile layer"
   BSD lists replace the systemd and LUKS rows with `pfctl`/`ipfw`, `geli` (FreeBSD)
   and `freebsd-update`/`syspatch` (OpenBSD) equivalents.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # cloudmesh/tests/test_bsd_audit.py
@@ -877,12 +877,12 @@ def test_freebsd_audit_never_runs_systemd_commands():
     assert checks and all({"check", "result", "risk"} <= set(c) for c in checks)
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_audit.py -q`
 Expected: FAIL — `systemctl` appears in the executed commands
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Move the eight current tuples into `LinuxProfile.audit_checks()` verbatim (same
 labels, same order). BSD variants: firewall row tries
@@ -894,12 +894,12 @@ labels, same order). BSD variants: firewall row tries
 `echo 'Not configured'` (NetBSD). Rewire `audit_server` to iterate
 `get_profile(os_type).audit_checks()` with the existing risk heuristic untouched.
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_audit.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/advanced.py cloudmesh/core/osprofile.py cloudmesh/tests/test_bsd_audit.py
@@ -918,7 +918,7 @@ git commit -m "feat: OS-specific security audit checks"
 - Produces: `docker.unsupported_on_bsd(server_name) -> str | None` — the message
   for `freebsd`/`openbsd`/`netbsd`, `None` otherwise.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # cloudmesh/tests/test_bsd_docker.py
@@ -936,23 +936,23 @@ def test_linux_servers_are_untouched(monkeypatch):
     assert docker.unsupported_on_bsd("web1") is None
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_docker.py -q`
 Expected: FAIL — `unsupported_on_bsd` does not exist
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add the helper; call it at the top of every `DockerManager` method that receives
 a server (return the string instead of executing) and skip BSD targets inside
 `docker_list` with the same message in the `error` field.
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_docker.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/core/docker.py cloudmesh/tests/test_bsd_docker.py
@@ -976,7 +976,7 @@ git commit -m "feat: report Docker as unsupported on BSD instead of failing obsc
   - `_spa_guard(system_name: str) -> str | None` — the fatal message for any
     non-Linux system, `None` on Linux.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # cloudmesh/tests/test_bsd_agent.py
@@ -1012,12 +1012,12 @@ def test_spa_guard_refuses_non_linux():
     assert cloudmesh_node._spa_guard("Linux") is None
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_agent.py -q`
 Expected: FAIL — helpers do not exist
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add the three helpers. Use `_system_os_type()` where `platform.system()` is
 already read. In `_collect_metrics`, when `HAS_PSUTIL` is false and the OS is
@@ -1029,12 +1029,12 @@ today. In `_safe_open_write`, replace the inline `/proc` check with
 (fail closed, no exposed port). The per-knock iptables add/remove stays
 Linux-only and is unreachable when the guard fired.
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_bsd_agent.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/node/cloudmesh_node.py cloudmesh/tests/test_bsd_agent.py
@@ -1055,7 +1055,7 @@ git commit -m "feat: make the node agent BSD-safe (metrics, safe writes, SPA gua
   `pkg_add`; rc.d units; `ifconfig`-based IP detection; generated helper scripts
   with `#!/bin/sh`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # appended to cloudmesh/tests/test_installers.py
@@ -1080,12 +1080,12 @@ def test_node_installer_posix_parses(tmp_path):
     assert result.returncode == 0, result.stderr
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_installers.py -q -k bsd or posix`
 Expected: FAIL on the missing markers
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Rewrite the script as POSIX `sh` (shebang `#!/bin/sh`, no `&>`, no `[[`, no
 arrays), keeping the existing Linux behaviour: same package-manager order, same
@@ -1101,12 +1101,12 @@ and the existing `hostname -I` on Linux; generated helper scripts use
 `#!/bin/sh`. Keep the printed summary useful on BSD (start/stop/status paths,
 `service cloudmesh_node start` vs `rcctl start cloudmesh_node`).
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_installers.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cloudmesh/node/node-install.sh cloudmesh/tests/test_installers.py
@@ -1125,7 +1125,7 @@ git commit -m "feat: install the node agent on FreeBSD, OpenBSD and NetBSD"
 - Produces: `sh cm_for-bsd.sh --yes [--source=DIR]`, `--help`, `--verify-only`;
   exits non-zero when `cm --version` fails after install.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # appended to cloudmesh/tests/test_installers.py
@@ -1148,12 +1148,12 @@ def test_bsd_installer_parses_and_detects_bsd():
     assert "--verify-only" in text
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest cloudmesh/tests/test_installers.py -q -k bsd_installer`
 Expected: FAIL — the file does not exist
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 POSIX sh installer modelled on `cm_for-linux.sh`: `--help` without a TTY,
 `--yes` scripted path, `--source=DIR` installs from a checkout
@@ -1163,12 +1163,12 @@ prints the same style of summary. `chmod +x cm_for-bsd.sh` and confirm the
 committed mode is `100755` (the repo pins shell scripts to LF via
 `.gitattributes`).
 
-- [ ] **Step 4: Run to verify pass, then the suite**
+- [x] **Step 4: Run to verify pass, then the suite**
 
 Run: `python -m pytest cloudmesh/tests/test_installers.py -q` → PASS
 Run: `python -m pytest cloudmesh/tests -q` → no new failures
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add cm_for-bsd.sh cloudmesh/tests/test_installers.py .gitattributes
@@ -1188,7 +1188,7 @@ git commit -m "feat: add a BSD controller installer"
 - Consumes: the running suite, `cm`, the node agent, `scripts/bsd_e2e.sh`.
 - Produces: a required check for the branch; the acceptance evidence for the spec.
 
-- [ ] **Step 1: Write the workflow and the E2E script**
+- [x] **Step 1: Write the workflow and the E2E script**
 
 ```yaml
 # .github/workflows/bsd.yml
@@ -1246,24 +1246,24 @@ the VM. It runs in four phases and prints `BSD E2E OK` as its last line:
    `cm deploy --install nano` (exercises the pkg path from Task 6),
    `cm firewall status -s localssh`, `cm audit -n localssh`.
 
-- [ ] **Step 2: Push the branch and run it (ask the human first)**
+- [x] **Step 2: Push the branch and run it (ask the human first)**
 
 Pushing is a user-gated action; ask before `git push -u origin feature/bsd-support`.
 Then trigger with `gh workflow run bsd.yml --ref feature/bsd-support` (or the
 web UI) and record the run URL.
 
-- [ ] **Step 3: Fix what reality disagrees with, in the same task**
+- [x] **Step 3: Fix what reality disagrees with, in the same task**
 
 The live FreeBSD host is the arbiter for command strings and parsers. Every fix
 lands with its fixture updated in the same commit (`git commit -m "fix: <what the
 FreeBSD host corrected>"`).
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: the workflow is green end-to-end.
 Expected: suite passes inside FreeBSD and `BSD E2E OK` appears in the log.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .github/workflows/bsd.yml scripts/bsd_e2e.sh
@@ -1283,14 +1283,14 @@ git commit -m "ci: verify CloudMesh inside a FreeBSD VM"
 - Produces: `cm --version` reports `4.0.0`; the release-metadata tests pass with
   `RELEASE = "4.0.0"`.
 
-- [ ] **Step 1: Write the failing change first**
+- [x] **Step 1: Write the failing change first**
 
 Set `RELEASE = "4.0.0"` in `test_release_metadata.py`, then run:
 `python -m pytest cloudmesh/tests/test_release_metadata.py -q`
 Expected: FAIL — pyproject still says 3.5.0, the README badge too, and
 `get_version()`'s fallback too.
 
-- [ ] **Step 2: Update the metadata**
+- [x] **Step 2: Update the metadata**
 
 `pyproject.toml`: `version = "4.0.0"`; add classifiers
 `Operating System :: POSIX :: BSD :: FreeBSD`, `... :: OpenBSD`, `... :: NetBSD`.
@@ -1305,14 +1305,14 @@ paths are verified by the `bsd.yml` CI job; document the `osprofile.py` rule
 `scripts/bsd_e2e.sh`: tighten the version check to
 `cm --version | grep -q "4.0.0"`.
 
-- [ ] **Step 3: Run the full verification**
+- [x] **Step 3: Run the full verification**
 
 Run: `python -m pytest cloudmesh/tests -q`
 Expected: all green (the metadata tests now agree).
 Then re-run the FreeBSD workflow (Task 16) to confirm the 4.0.0 assertion passes
 on the real host.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add pyproject.toml cloudmesh/core/features.py cloudmesh/tests/test_release_metadata.py README.md CHANGELOG.md CONTRIBUTING.md
