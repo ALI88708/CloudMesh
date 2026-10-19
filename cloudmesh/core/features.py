@@ -353,7 +353,7 @@ def get_version():
     to be kept in step with `pyproject.toml` by hand -- which is exactly why
     `test_release_metadata.py` pins the two against each other.
 
-    Metadata import or lookup errors fall back to 3.5.0. The returned dictionary
+    Metadata import or lookup errors fall back to 4.0.0. The returned dictionary
     has `version`, `python` (major.minor.micro), and `platform` (sys.platform).
     """
     try:
@@ -361,9 +361,9 @@ def get_version():
         try:
             ver = _pkg_version("cloudmesh")
         except Exception:
-            ver = "3.5.0"
+            ver = "4.0.0"
     except Exception:
-        ver = "3.5.0"
+        ver = "4.0.0"
     return {
         "version": ver,
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",
