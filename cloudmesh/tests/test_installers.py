@@ -621,6 +621,19 @@ def test_node_installer_posix_parses():
     assert result.returncode == 0, result.stderr
 
 
+def test_node_installer_rc_units_do_not_block():
+    """`cloudmesh_node.py start` serves in the foreground, so a boot unit that
+    runs it without backgrounding would hang `service ... start` until the agent
+    exits -- which on a server it never does."""
+    text = _node_install_text()
+    assert "-p \\$pidfile -f" not in text, (
+        "FreeBSD daemon(8) must fork; -f keeps the agent attached and blocks start"
+    )
+    assert text.count("start.sh >/dev/null 2>&1 &") == 2, (
+        "the OpenBSD and NetBSD units must background the start script"
+    )
+
+
 # --- the BSD controller installer ---------------------------------------
 
 BSD_SH = ROOT / "cm_for-bsd.sh"

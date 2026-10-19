@@ -188,6 +188,8 @@ EOF
 chmod +x "$INSTALL_DIR/restart.sh"
 
 # Create the boot unit for this platform.
+# `cloudmesh_node.py start` serves in the foreground, so every unit below either
+# lets daemon(8) fork (FreeBSD) or backgrounds the start script itself.
 if [ "$OS_TYPE" = "FreeBSD" ]; then
     $PRIV tee /usr/local/etc/rc.d/cloudmesh_node > /dev/null << SERVICEEOF
 #!/bin/sh
@@ -201,7 +203,7 @@ name="cloudmesh_node"
 rcvar="cloudmesh_node_enable"
 pidfile="$INSTALL_DIR/cloudmesh_node.pid"
 command="/usr/sbin/daemon"
-command_args="-p \$pidfile -f $(command -v python3) $INSTALL_DIR/$NODE_SCRIPT start"
+command_args="-p \$pidfile $(command -v python3) $INSTALL_DIR/$NODE_SCRIPT start"
 
 load_rc_config \$name
 : \${cloudmesh_node_enable:="NO"}
@@ -218,11 +220,11 @@ daemon_user="$(id -un)"
 . /etc/rc.d/rc.subr
 
 rc_start() {
-    $INSTALL_DIR/start.sh
+    $INSTALL_DIR/start.sh >/dev/null 2>&1 &
 }
 
 rc_stop() {
-    $INSTALL_DIR/stop.sh
+    $INSTALL_DIR/stop.sh >/dev/null 2>&1
 }
 
 rc_check() {
@@ -240,8 +242,8 @@ name="cloudmesh_node"
 rcvar=\$name
 command="$INSTALL_DIR/start.sh"
 required_files="$INSTALL_DIR/$NODE_SCRIPT"
-start_cmd="$INSTALL_DIR/start.sh"
-stop_cmd="$INSTALL_DIR/stop.sh"
+start_cmd="$INSTALL_DIR/start.sh >/dev/null 2>&1 &"
+stop_cmd="$INSTALL_DIR/stop.sh >/dev/null 2>&1"
 status_cmd="$INSTALL_DIR/status.sh"
 pidfile="$INSTALL_DIR/cloudmesh_node.pid"
 
