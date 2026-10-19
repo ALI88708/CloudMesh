@@ -4142,7 +4142,7 @@ def main():
 
     lgs = subparsers.add_parser("logs", help="Recent server logs")
     lgs.add_argument("--name", "-n", required=True)
-    lgs.add_argument("--file", "-f", default="/var/log/syslog")
+    lgs.add_argument("--file", "-f", default=None, help="Log file to read (default: the server profile's log paths)")
     lgs.add_argument("--lines", "-l", type=int, default=20)
 
     exp = subparsers.add_parser("export", help="Export config")

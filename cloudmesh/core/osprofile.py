@@ -58,6 +58,13 @@ WINDOWS_RAM_CMD = """powershell -Command "$os=Get-CimInstance Win32_OperatingSys
 WINDOWS_DISK_CMD = """powershell -Command "$d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; $t=[math]::Round($d.Size/1GB,1); $f=[math]::Round($d.FreeSpace/1GB,1); $u=$t-$f; $p=[math]::Round(($u/$t)*100,1); @{total_gb=$t;used_gb=$u;free_gb=$f;percent=$p}|ConvertTo-Json" """
 
 
+def _as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class OsProfile:
     """Command strings and output parsers for one operating system."""
 
@@ -90,6 +97,54 @@ class OsProfile:
             return json.loads(raw)
         except (TypeError, json.JSONDecodeError):
             return None
+
+    def uptime_cmd(self):
+        return "uptime -p 2>/dev/null || uptime"
+
+    def top_cmd(self, sort_by, limit):
+        flag = "-o %cpu" if sort_by == "cpu" else "-o %mem"
+        column = "pcpu" if sort_by == "cpu" else "pmem"
+        return f"ps {flag} --sort=-{column} --no-headers -A | head -n {limit}"
+
+    def parse_top(self, raw, sort_by, limit):
+        procs = []
+        for line in (raw or "").strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 2:
+                procs.append({"pid": parts[0], "usage": parts[1], "name": " ".join(parts[2:])})
+        return procs
+
+    def disk_detail_cmd(self):
+        return (
+            "df -h --output=source,size,used,avail,pcent,target 2>/dev/null | grep -E '^/'"
+            " || df -h 2>/dev/null | grep -E '^/'"
+        )
+
+    def parse_disk_detail(self, raw):
+        disks = []
+        for line in (raw or "").strip().split("\n")[1:]:
+            parts = line.split()
+            if len(parts) >= 6:
+                disks.append(
+                    {
+                        "device": parts[0],
+                        "size": parts[1],
+                        "used": parts[2],
+                        "avail": parts[3],
+                        "use%": parts[4],
+                        "mount": parts[5],
+                    }
+                )
+        return disks
+
+    def network_cmd(self):
+        return "ip -4 addr show 2>/dev/null | grep -E 'inet ' || ipconfig 2>/dev/null"
+
+    def who_cmd(self):
+        return "who 2>/dev/null || query user 2>/dev/null"
+
+    def log_paths(self):
+        return ("/var/log/syslog", "/var/log/auth.log", "/var/log/messages")
 
 
 class LinuxProfile(OsProfile):
@@ -180,6 +235,58 @@ class BsdProfile(OsProfile):
             "percent": pct,
         }
 
+    def uptime_cmd(self):
+        return "uptime"
+
+    def top_cmd(self, sort_by, limit):
+        return "ps -axo pid,pcpu,pmem,command"
+
+    def parse_top(self, raw, sort_by, limit):
+        column = 1 if sort_by == "cpu" else 2
+        rows = []
+        for line in (raw or "").splitlines():
+            parts = line.split()
+            if len(parts) < 4 or not parts[0].isdigit():
+                continue
+            rows.append((_as_float(parts[column]), parts[0], parts[column], " ".join(parts[3:])))
+        rows.sort(key=lambda row: row[0], reverse=True)
+        return [
+            {"pid": pid, "usage": usage, "name": name}
+            for _, pid, usage, name in rows[:limit]
+        ]
+
+    def disk_detail_cmd(self):
+        return "df -h"
+
+    def parse_disk_detail(self, raw):
+        disks = []
+        for line in (raw or "").splitlines():
+            if line.startswith("Filesystem"):
+                continue
+            parts = line.split()
+            if len(parts) < 6 or not parts[0].startswith("/"):
+                continue
+            disks.append(
+                {
+                    "device": parts[0],
+                    "size": parts[1],
+                    "used": parts[2],
+                    "avail": parts[3],
+                    "use%": parts[4],
+                    "mount": parts[5],
+                }
+            )
+        return disks
+
+    def network_cmd(self):
+        return "ifconfig -a"
+
+    def who_cmd(self):
+        return "who"
+
+    def log_paths(self):
+        return ("/var/log/messages", "/var/log/auth.log")
+
 
 class FreeBsdProfile(BsdProfile):
     key = "freebsd"
@@ -197,12 +304,18 @@ class OpenBsdProfile(BsdProfile):
     def ram_cmd(self):
         return "sysctl -n hw.physmem hw.pagesize vm.uvmexp.free"
 
+    def log_paths(self):
+        return ("/var/log/messages", "/var/log/authlog")
+
 
 class NetBsdProfile(BsdProfile):
     key = "netbsd"
 
     def ram_cmd(self):
         return "sysctl -n hw.physmem64 hw.pagesize vm.uvmexp.free vm.uvmexp.inactive"
+
+    def log_paths(self):
+        return ("/var/log/messages", "/var/log/authlog")
 
 
 _PROFILES = {
