@@ -11,6 +11,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 from .features import get_version
+from .osprofile import get_profile
 
 
 # === 1. AUTO-DISCOVERY ===
@@ -593,17 +594,11 @@ class ProfileManager:
 
 def audit_server(server_mgr, name):
     checks = []
-    cmds = [
-        ("SSH Root Login", "grep -i 'PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null | grep -v '^#' | head -1"),
-        ("Firewall Status", "ufw status 2>/dev/null || iptables -L -n 2>/dev/null | head -5 || echo 'No firewall found'"),
-        ("Open Ports", "ss -tlnp 2>/dev/null | head -10 || netstat -tlnp 2>/dev/null | head -10"),
-        ("Failed Logins", "lastb 2>/dev/null | wc -l || echo 'N/A'"),
-        ("Users with Shell", "grep -v '/nologin\\|/false' /etc/passwd 2>/dev/null | wc -l"),
-        ("Disk Encrypted", "lsblk -o NAME,FSTYPE,MOUNTPOINT 2>/dev/null | grep crypt || echo 'No LUKS found'"),
-        ("Auto Updates", "systemctl is-enabled unattended-upgrades 2>/dev/null || echo 'Not configured'"),
-        ("SSH Key Auth", "grep -i 'PubkeyAuthentication' /etc/ssh/sshd_config 2>/dev/null | grep -v '^#' | head -1"),
-    ]
-    for label, cmd in cmds:
+    try:
+        info = server_mgr.get_server_info(name) or {}
+    except Exception:
+        info = {}
+    for label, cmd in get_profile(info.get("os_type")).audit_checks():
         try:
             r = server_mgr.execute(name, cmd)
             output = r["stdout"].strip() if r["exit_code"] == 0 else "N/A"

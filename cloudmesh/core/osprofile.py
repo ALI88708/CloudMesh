@@ -58,6 +58,26 @@ WINDOWS_RAM_CMD = """powershell -Command "$os=Get-CimInstance Win32_OperatingSys
 
 WINDOWS_DISK_CMD = """powershell -Command "$d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; $t=[math]::Round($d.Size/1GB,1); $f=[math]::Round($d.FreeSpace/1GB,1); $u=$t-$f; $p=[math]::Round(($u/$t)*100,1); @{total_gb=$t;used_gb=$u;free_gb=$f;percent=$p}|ConvertTo-Json" """
 
+SSH_ROOT_LOGIN_CMD = "grep -i 'PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null | grep -v '^#' | head -1"
+
+USERS_WITH_SHELL_CMD = "grep -v '/nologin\\|/false' /etc/passwd 2>/dev/null | wc -l"
+
+SSH_KEY_AUTH_CMD = "grep -i 'PubkeyAuthentication' /etc/ssh/sshd_config 2>/dev/null | grep -v '^#' | head -1"
+
+
+def _audit_checks(firewall_cmd, ports_cmd, logins_cmd, encryption_cmd, updates_cmd):
+    """Build the security-audit rows every profile shares, in CLI order."""
+    return [
+        ("SSH Root Login", SSH_ROOT_LOGIN_CMD),
+        ("Firewall Status", firewall_cmd),
+        ("Open Ports", ports_cmd),
+        ("Failed Logins", logins_cmd),
+        ("Users with Shell", USERS_WITH_SHELL_CMD),
+        ("Disk Encrypted", encryption_cmd),
+        ("Auto Updates", updates_cmd),
+        ("SSH Key Auth", SSH_KEY_AUTH_CMD),
+    ]
+
 
 def _as_float(value):
     try:
@@ -158,6 +178,15 @@ class OsProfile:
 
     def md5_cmd(self, path):
         return f"md5sum {shlex.quote(path)} 2>/dev/null || echo none"
+
+    def audit_checks(self):
+        return _audit_checks(
+            "ufw status 2>/dev/null || iptables -L -n 2>/dev/null | head -5 || echo 'No firewall found'",
+            "ss -tlnp 2>/dev/null | head -10 || netstat -tlnp 2>/dev/null | head -10",
+            "lastb 2>/dev/null | wc -l || echo 'N/A'",
+            "lsblk -o NAME,FSTYPE,MOUNTPOINT 2>/dev/null | grep crypt || echo 'No LUKS found'",
+            "systemctl is-enabled unattended-upgrades 2>/dev/null || echo 'Not configured'",
+        )
 
 
 class LinuxProfile(OsProfile):
@@ -318,6 +347,21 @@ class BsdProfile(OsProfile):
     def md5_cmd(self, path):
         return f"md5 -q {shlex.quote(path)} 2>/dev/null || echo none"
 
+    def audit_encryption_cmd(self):
+        return "geli status 2>/dev/null || echo 'No geli volumes found'"
+
+    def audit_updates_cmd(self):
+        return "sysrc -n freebsd_update_enable 2>/dev/null || echo 'Not configured'"
+
+    def audit_checks(self):
+        return _audit_checks(
+            "pfctl -s info 2>/dev/null | head -2 || ipfw list 2>/dev/null | head -3",
+            "netstat -an -p tcp 2>/dev/null | grep LISTEN | head -10",
+            f"grep -c 'Failed password' {self.log_paths()[1]} 2>/dev/null || echo 'N/A'",
+            self.audit_encryption_cmd(),
+            self.audit_updates_cmd(),
+        )
+
 
 class FreeBsdProfile(BsdProfile):
     key = "freebsd"
@@ -338,6 +382,12 @@ class OpenBsdProfile(BsdProfile):
     def python_package(self):
         return "python%3"
 
+    def audit_encryption_cmd(self):
+        return "echo 'N/A'"
+
+    def audit_updates_cmd(self):
+        return "syspatch -l 2>/dev/null | head -1 || echo 'Not configured'"
+
     def log_paths(self):
         return ("/var/log/messages", "/var/log/authlog")
 
@@ -350,6 +400,12 @@ class NetBsdProfile(BsdProfile):
 
     def nodejs_package(self):
         return "nodejs"
+
+    def audit_encryption_cmd(self):
+        return "echo 'N/A'"
+
+    def audit_updates_cmd(self):
+        return "echo 'Not configured'"
 
     def log_paths(self):
         return ("/var/log/messages", "/var/log/authlog")
