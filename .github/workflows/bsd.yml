@@ -33,6 +33,9 @@ jobs:
             # does not exist on FreeBSD 15.1).
             PY=$(python3 -c 'import sys; print("py%d%d" % sys.version_info[:2])')
             pkg install -y "$PY-pip"
+            # FreeBSD splits the stdlib database module out of the interpreter
+            # package, and the suite imports sqlite3 at collection time.
+            pkg install -y "$PY-sqlite3"
             # requirements.txt pins exact versions, and FreeBSD has no wheels for
             # cryptography or bcrypt, so pip builds them from source and needs
             # the Rust toolchain (maturin is itself a Rust crate) plus perl,
