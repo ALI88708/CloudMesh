@@ -24,14 +24,26 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         with:
           usesh: true
-          prepare: pkg install -y python311 py311-pip py311-psutil git
+          prepare: |
+            set -e
+            pkg install -y git python3
+            # Ports build the flavoured packages only for the default
+            # interpreter, so ask the interpreter for its own flavour instead of
+            # hardcoding a version a newer release no longer builds (py311-pip
+            # does not exist on FreeBSD 15.1).
+            PY=$(python3 -c 'import sys; print("py%d%d" % sys.version_info[:2])')
+            pkg install -y "$PY-pip"
+            # psutil falls back to a source build in requirements.txt; the
+            # package just makes the job faster when the flavour exists.
+            pkg install -y "$PY-psutil" || true
+            python3 -m pip --version
           run: |
             set -e
             # FreeBSD marks its python ports as externally managed; CI installs
             # into that interpreter on purpose, inside a throwaway VM.
             export PIP_BREAK_SYSTEM_PACKAGES=1
-            python3.11 --version
-            python3.11 -m pip install --upgrade pip
-            python3.11 -m pip install -r cloudmesh/requirements.txt
-            python3.11 -m pytest cloudmesh/tests -q
+            python3 --version
+            python3 -m pip install --upgrade pip
+            python3 -m pip install -r cloudmesh/requirements.txt
+            python3 -m pytest cloudmesh/tests -q
             sh scripts/bsd_e2e.sh

@@ -43,12 +43,12 @@ run_tolerant() {
 step "Phase 1/4: controller"
 export PIP_BREAK_SYSTEM_PACKAGES=1
 
-run_required "python3.11 -m pip install -q -e ."
+run_required "python3 -m pip install -q -e ."
 
 VERSION_OUT="$(cm --version 2>&1)"
 printf '%s\n' "$VERSION_OUT"
-if ! printf '%s' "$VERSION_OUT" | grep -Eq '[0-9]+\.[0-9]+\.[0-9]+'; then
-    printf '[E2E] FAILED: cm --version printed no version\n' >&2
+if ! printf '%s' "$VERSION_OUT" | grep -q '4\.0\.0'; then
+    printf '[E2E] FAILED: cm --version did not report 4.0.0\n' >&2
     exit 1
 fi
 ok "cm --version"
