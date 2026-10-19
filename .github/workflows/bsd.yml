@@ -33,9 +33,11 @@ jobs:
             # does not exist on FreeBSD 15.1).
             PY=$(python3 -c 'import sys; print("py%d%d" % sys.version_info[:2])')
             pkg install -y "$PY-pip"
-            # psutil falls back to a source build in requirements.txt; the
-            # package just makes the job faster when the flavour exists.
-            pkg install -y "$PY-psutil" || true
+            # requirements.txt pins exact versions, and FreeBSD has no wheels for
+            # cryptography or bcrypt, so pip builds them from source and needs
+            # the Rust toolchain (maturin is itself a Rust crate) plus perl,
+            # which vendored OpenSSL needs even when it is built by cargo.
+            pkg install -y rust perl5
             python3 -m pip --version
           run: |
             set -e
