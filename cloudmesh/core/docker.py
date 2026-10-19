@@ -30,6 +30,21 @@ def _get_server(name):
 def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)
 
+BSD_OS_TYPES = ("freebsd", "openbsd", "netbsd")
+
+def _bsd_message(os_type):
+    return f"Docker is not supported on {os_type} servers; use the platform package manager (pkg) and rc.d units"
+
+def unsupported_on_bsd(server_name):
+    """Return the explanation for BSD servers, otherwise None."""
+    srv = _get_server(server_name)
+    if not srv:
+        return None
+    os_type = (srv.get("os_type") or "").lower()
+    if os_type in BSD_OS_TYPES:
+        return _bsd_message(os_type)
+    return None
+
 def docker_list(args=None):
     cfg = _load_config()
     targets = []
@@ -48,6 +63,11 @@ def docker_list(args=None):
 
     results = []
     for name, srv in targets:
+        os_type = (srv.get("os_type") or "").lower()
+        if os_type in BSD_OS_TYPES:
+            results.append({"server": name, "containers": [], "error": _bsd_message(os_type)})
+            continue
+
         host = srv.get("host", "")
         user = srv.get("user", "root")
         key = srv.get("key", "")
@@ -78,6 +98,9 @@ def docker_action(server_name, action, container=None):
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
+    msg = unsupported_on_bsd(server_name)
+    if msg:
+        return msg
 
     host = srv.get("host", "")
     user = srv.get("user", "root")
@@ -127,6 +150,9 @@ def docker_deploy(server_name, image, name=None, ports=None, env=None):
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
+    msg = unsupported_on_bsd(server_name)
+    if msg:
+        return msg
 
     host = srv.get("host", "")
     user = srv.get("user", "root")
@@ -150,6 +176,9 @@ def docker_deploy(server_name, image, name=None, ports=None, env=None):
 class DockerManager:
     """Adapter exposing the CLI-facing Docker API over the functions above."""
 
+    def _bsd_guard(self, server):
+        return unsupported_on_bsd(server)
+
     def list_servers(self):
         """Return the names of all configured servers and nodes."""
         cfg = _load_config()
@@ -160,6 +189,9 @@ class DockerManager:
 
     def list_containers(self, server):
         """Return a formatted listing of containers running on the given server."""
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         results = docker_list()
         if isinstance(results, str):
             return results
@@ -179,6 +211,9 @@ class DockerManager:
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         host, user, key = srv.get("host", ""), srv.get("user", "root"), srv.get("key", "")
         if action == "down":
             return docker_action(server, "compose_down")
@@ -188,10 +223,16 @@ class DockerManager:
 
     def container_stats(self, server):
         """Return live resource usage stats for containers on the server."""
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         return docker_action(server, "stats")
 
     def list_images(self, server):
         """Return the list of Docker images available on the server."""
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         return docker_action(server, "images")
 
     def pull_image(self, image, server):
@@ -199,6 +240,9 @@ class DockerManager:
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
                             f"docker pull {image}")
         return f"Pulled {image}" if rc == 0 else f"Failed: {out}"
@@ -208,6 +252,9 @@ class DockerManager:
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
                             f"docker exec {container} {cmd}")
         return out if rc == 0 else f"Failed: {out}"
@@ -217,6 +264,9 @@ class DockerManager:
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         try:
             lines = max(int(lines), 1)
         except (TypeError, ValueError):
@@ -230,10 +280,16 @@ class DockerManager:
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
                             "docker container prune -f && docker image prune -f")
         return out if rc == 0 else f"Failed: {out}"
 
     def prune(self, server):
         """Run a Docker system prune on the server."""
+        msg = self._bsd_guard(server)
+        if msg:
+            return msg
         return docker_action(server, "prune")
