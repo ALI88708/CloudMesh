@@ -580,3 +580,42 @@ def test_windows_git_detection_noninteractive(tmp_path, available):
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"AVAILABLE:{int(available)}" in result.stdout
     assert ("Git found" if available else "Skipping Git") in result.stdout
+
+
+# --- the node installer on BSD ------------------------------------------
+
+
+def _node_install_text():
+    return NODE_SH.read_text(encoding="utf-8")
+
+
+def test_node_installer_knows_the_bsd_family():
+    text = _node_install_text()
+    for marker in ("FreeBSD", "OpenBSD", "NetBSD", "pkg install", "pkg_add",
+                   "doas", "/usr/local/etc/rc.d", "rcctl"):
+        assert marker in text, f"node-install.sh is missing {marker}"
+
+
+def test_node_installer_is_posix_sh():
+    """BSD hosts ship a POSIX sh; the shebang decides which one parses it.
+
+    `#!/bin/bash` does not exist on a stock FreeBSD/OpenBSD host, so the line
+    is not cosmetic: it is the difference between the installer running and the
+    kernel refusing to start it.
+    """
+    first_line = _node_install_text().splitlines()[0]
+    assert first_line == "#!/bin/sh", f"node-install.sh starts with {first_line!r}"
+    text = _node_install_text()
+    for bashism in ("&>", "[[", "BASH_SOURCE", "#!/bin/bash"):
+        assert bashism not in text, f"node-install.sh still carries {bashism}"
+
+
+def test_node_installer_posix_parses():
+    sh = shutil.which("sh") or shutil.which("dash")
+    if sh and "system32" in sh.lower():
+        sh = None  # WSL: it cannot see C:\ paths, so the check would fail wrongly
+    if sh is None:
+        pytest.skip("no POSIX shell on this machine")
+    target = str(NODE_SH).replace("\\", "/") if "\\" in sh else str(NODE_SH)
+    result = subprocess.run([sh, "-n", target], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
