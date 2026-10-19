@@ -619,3 +619,61 @@ def test_node_installer_posix_parses():
     target = str(NODE_SH).replace("\\", "/") if "\\" in sh else str(NODE_SH)
     result = subprocess.run([sh, "-n", target], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr
+
+
+# --- the BSD controller installer ---------------------------------------
+
+BSD_SH = ROOT / "cm_for-bsd.sh"
+
+
+def test_bsd_installer_exists_gitattributes_and_is_executable():
+    assert BSD_SH.exists()
+    assert ".sh" in (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    mode = subprocess.run(["git", "ls-files", "-s", "cm_for-bsd.sh"],
+                          cwd=ROOT, capture_output=True, text=True).stdout.split()
+    assert mode and mode[0] == "100755"
+
+
+def test_bsd_installer_parses_and_detects_bsd():
+    text = BSD_SH.read_text(encoding="utf-8")
+    assert "uname -s" in text
+    assert "pkg install" in text
+    assert "--verify-only" in text
+
+
+def test_bsd_installer_is_posix_sh():
+    """A stock BSD host has no bash, so the shebang is load-bearing."""
+    text = BSD_SH.read_text(encoding="utf-8")
+    first_line = text.splitlines()[0]
+    assert first_line == "#!/bin/sh", f"cm_for-bsd.sh starts with {first_line!r}"
+    for bashism in ("&>", "[[", "BASH_SOURCE", "echo -e", "#!/bin/bash"):
+        assert bashism not in text, f"cm_for-bsd.sh still carries {bashism}"
+
+
+def test_bsd_installer_help_works_without_a_tty():
+    bash = _find_bash()
+    if not bash:
+        pytest.skip("no native bash on this platform; CI runs this on ubuntu-latest")
+    result = subprocess.run(
+        [bash, str(BSD_SH), "--help"],
+        capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--verify-only" in result.stdout
+
+
+def test_bsd_installer_refuses_non_bsd_hosts():
+    """Running it on Linux must route the user to the Linux installer."""
+    import platform
+
+    if platform.system() in ("FreeBSD", "OpenBSD", "NetBSD"):
+        pytest.skip("on BSD this would really install")
+    bash = _find_bash()
+    if not bash:
+        pytest.skip("no native bash on this platform")
+    result = subprocess.run(
+        [bash, str(BSD_SH), "--yes"],
+        capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+    )
+    assert result.returncode == 1
+    assert "cm_for-linux.sh" in result.stdout + result.stderr
