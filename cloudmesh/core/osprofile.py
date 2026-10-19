@@ -146,6 +146,15 @@ class OsProfile:
     def log_paths(self):
         return ("/var/log/syslog", "/var/log/auth.log", "/var/log/messages")
 
+    def python_package(self):
+        return "python3"
+
+    def nodejs_package(self):
+        return "nodejs"
+
+    def script_shell(self):
+        return "bash"
+
 
 class LinuxProfile(OsProfile):
     key = "linux"
@@ -155,6 +164,12 @@ class LinuxProfile(OsProfile):
 class WindowsProfile(OsProfile):
     key = "windows"
     family = "windows"
+
+    def python_package(self):
+        return "python"
+
+    def nodejs_package(self):
+        return "nodejs-lts"
 
     def cpu_cmd(self):
         return WINDOWS_CPU_CMD
@@ -287,6 +302,15 @@ class BsdProfile(OsProfile):
     def log_paths(self):
         return ("/var/log/messages", "/var/log/auth.log")
 
+    def python_package(self):
+        return "python3"
+
+    def nodejs_package(self):
+        return "node"
+
+    def script_shell(self):
+        return "sh"
+
 
 class FreeBsdProfile(BsdProfile):
     key = "freebsd"
@@ -304,6 +328,9 @@ class OpenBsdProfile(BsdProfile):
     def ram_cmd(self):
         return "sysctl -n hw.physmem hw.pagesize vm.uvmexp.free"
 
+    def python_package(self):
+        return "python%3"
+
     def log_paths(self):
         return ("/var/log/messages", "/var/log/authlog")
 
@@ -313,6 +340,9 @@ class NetBsdProfile(BsdProfile):
 
     def ram_cmd(self):
         return "sysctl -n hw.physmem64 hw.pagesize vm.uvmexp.free vm.uvmexp.inactive"
+
+    def nodejs_package(self):
+        return "nodejs"
 
     def log_paths(self):
         return ("/var/log/messages", "/var/log/authlog")

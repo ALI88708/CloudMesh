@@ -1,6 +1,8 @@
 import tempfile
 import os
 
+from cloudmesh.core.osprofile import get_profile
+
 
 class PackageDeployer:
     def __init__(self, server_manager):
@@ -9,16 +11,33 @@ class PackageDeployer:
             "apt": "apt list --installed 2>/dev/null | grep -q '{pkg}' && echo installed || echo not_installed",
             "yum": "rpm -q {pkg} >/dev/null 2>&1 && echo installed || echo not_installed",
             "brew": "brew list {pkg} >/dev/null 2>&1 && echo installed || echo not_installed",
+            "pkg": "pkg info -e {pkg} >/dev/null 2>&1 && echo installed || echo not_installed",
+            "pkg_add": "pkg_info -e {pkg} >/dev/null 2>&1 && echo installed || echo not_installed",
             "choco": "choco list --local-only {pkg} >/dev/null 2>&1 && echo installed || echo not_installed",
             "winget": "winget list --name {pkg} >/dev/null 2>&1 && echo installed || echo not_installed",
         }
         self._install_cmds = {
-            "apt": "sudo apt update && sudo apt install -y {pkg}",
-            "yum": "sudo yum install -y {pkg}",
+            "apt": "{priv} apt update && {priv} apt install -y {pkg}",
+            "yum": "{priv} yum install -y {pkg}",
             "brew": "brew install {pkg}",
+            "pkg": "{priv} pkg install -y {pkg}",
+            "pkg_add": "{priv} pkg_add {pkg}",
             "choco": "choco install {pkg} -y",
             "winget": "winget install --name {pkg} --accept-source-agreements",
         }
+
+    def _profile_for(self, server_name):
+        info = self.server_mgr.get_server_info(server_name) or {}
+        return get_profile(info.get("os_type"))
+
+    def _privilege_cmd(self, server_name):
+        for tool in ("sudo", "doas"):
+            result = self.server_mgr.execute(
+                server_name, f"which {tool} >/dev/null 2>&1 && echo {tool} || echo none"
+            )
+            if tool in result.get("stdout", ""):
+                return tool
+        return ""
 
     def _detect_package_manager(self, server_name):
         info = self.server_mgr.get_server_info(server_name)
@@ -32,7 +51,10 @@ class PackageDeployer:
                 return "winget"
             return None
 
-        for mgr in ["apt", "yum", "brew"]:
+        candidates = ["apt", "yum", "brew"]
+        if os_type in ("freebsd", "openbsd", "netbsd"):
+            candidates = ["pkg", "pkg_add"]
+        for mgr in candidates:
             result = self.server_mgr.execute(server_name, f"which {mgr} >/dev/null 2>&1 && echo {mgr} || echo none")
             if mgr in result.get("stdout", ""):
                 return mgr
@@ -50,7 +72,11 @@ class PackageDeployer:
         mgr = self._detect_package_manager(server_name)
         if mgr is None:
             return {"success": False, "error": "No package manager found"}
-        cmd = self._install_cmds.get(mgr, "").format(pkg=package)
+        cmd = (
+            self._install_cmds.get(mgr, "")
+            .format(priv=self._privilege_cmd(server_name), pkg=package)
+            .strip()
+        )
         result = self.server_mgr.execute(server_name, cmd)
         return {
             "success": result["exit_code"] == 0,
@@ -79,14 +105,7 @@ class PackageDeployer:
         results = {}
         for name in server_names:
             try:
-                info = self.server_mgr.get_server_info(name)
-                os_type = info.get("os_type", "linux")
-
-                if os_type == "windows":
-                    result = self.install(name, "python")
-                else:
-                    result = self.install(name, "python3")
-
+                result = self.install(name, self._profile_for(name).python_package())
                 results[name] = result
             except Exception as e:
                 results[name] = {"success": False, "error": str(e)}
@@ -99,14 +118,7 @@ class PackageDeployer:
         results = {}
         for name in server_names:
             try:
-                info = self.server_mgr.get_server_info(name)
-                os_type = info.get("os_type", "linux")
-
-                if os_type == "windows":
-                    result = self.install(name, "nodejs-lts")
-                else:
-                    result = self.install(name, "nodejs")
-
+                result = self.install(name, self._profile_for(name).nodejs_package())
                 results[name] = result
             except Exception as e:
                 results[name] = {"success": False, "error": str(e)}
@@ -130,10 +142,11 @@ class PackageDeployer:
                 transfer.upload(server_name, local_tmp, remote_path)
                 result = self.server_mgr.execute(server_name, remote_path)
             else:
+                shell = get_profile(os_type).script_shell()
                 remote_path = f"/tmp/{script_name}"
                 transfer.upload(server_name, local_tmp, remote_path)
                 self.server_mgr.execute(server_name, f"chmod +x {remote_path}")
-                result = self.server_mgr.execute(server_name, f"bash {remote_path}")
+                result = self.server_mgr.execute(server_name, f"{shell} {remote_path}")
 
             return {
                 "success": result["exit_code"] == 0,
