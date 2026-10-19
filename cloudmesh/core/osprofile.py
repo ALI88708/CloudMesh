@@ -111,9 +111,106 @@ class WindowsProfile(OsProfile):
         return WINDOWS_DISK_CMD
 
 
+class BsdProfile(OsProfile):
+    """Shared command shapes for FreeBSD, OpenBSD and NetBSD.
+
+    ``vmstat`` and ``df -kP`` are POSIX-familiar across the three systems;
+    only the RAM ``sysctl`` names differ per OS, so subclasses override
+    ``ram_cmd`` and inherit the parsers.
+    """
+
+    family = "posix"
+
+    def cpu_cmd(self):
+        return "vmstat 1 2"
+
+    def parse_cpu(self, raw):
+        try:
+            lines = [line for line in (raw or "").splitlines() if line.strip()]
+            idle = float(lines[-1].split()[-1])
+        except (IndexError, ValueError):
+            return None
+        return round(100.0 - idle, 1)
+
+    def disk_cmd(self):
+        return "df -kP /"
+
+    def parse_disk(self, raw):
+        try:
+            lines = [
+                line
+                for line in (raw or "").splitlines()
+                if line.strip() and not line.lower().startswith("filesystem")
+            ]
+            parts = lines[-1].split()
+            total_kb = int(parts[1])
+            avail_kb = int(parts[3])
+        except (IndexError, ValueError):
+            return None
+        total = total_kb / 1048576
+        free = avail_kb / 1048576
+        used = total - free
+        pct = round((used / total) * 100, 1) if total > 0 else 0
+        return {
+            "total_gb": round(total, 1),
+            "used_gb": round(used, 1),
+            "free_gb": round(free, 1),
+            "percent": pct,
+        }
+
+    def parse_ram(self, raw):
+        try:
+            values = [int(line) for line in (raw or "").splitlines() if line.strip()]
+        except ValueError:
+            return None
+        if len(values) < 3:
+            return None
+        total_bytes, page_size, free_pages = values[0], values[1], values[2]
+        inactive_pages = values[3] if len(values) > 3 else 0
+        if total_bytes <= 0 or page_size <= 0:
+            return None
+        total = total_bytes / 1073741824
+        free = (free_pages + inactive_pages) * page_size / 1073741824
+        used = total - free
+        pct = round((used / total) * 100, 1) if total > 0 else 0
+        return {
+            "total_gb": round(total, 1),
+            "used_gb": round(used, 1),
+            "free_gb": round(free, 1),
+            "percent": pct,
+        }
+
+
+class FreeBsdProfile(BsdProfile):
+    key = "freebsd"
+
+    def ram_cmd(self):
+        return (
+            "sysctl -n hw.physmem vm.stats.vm.v_page_size "
+            "vm.stats.vm.v_free_count vm.stats.vm.v_inactive_count"
+        )
+
+
+class OpenBsdProfile(BsdProfile):
+    key = "openbsd"
+
+    def ram_cmd(self):
+        return "sysctl -n hw.physmem hw.pagesize vm.uvmexp.free"
+
+
+class NetBsdProfile(BsdProfile):
+    key = "netbsd"
+
+    def ram_cmd(self):
+        return "sysctl -n hw.physmem64 hw.pagesize vm.uvmexp.free vm.uvmexp.inactive"
+
+
 _PROFILES = {
     "linux": LinuxProfile(),
     "windows": WindowsProfile(),
+    "freebsd": FreeBsdProfile(),
+    "openbsd": OpenBsdProfile(),
+    "netbsd": NetBsdProfile(),
 }
 
 
