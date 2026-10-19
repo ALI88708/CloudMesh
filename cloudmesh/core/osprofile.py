@@ -7,6 +7,7 @@ key falls back to Linux, which is what legacy configs assume.
 """
 
 import json
+import shlex
 
 
 LINUX_CPU_CMD = """python3 -c "
@@ -154,6 +155,9 @@ class OsProfile:
 
     def script_shell(self):
         return "bash"
+
+    def md5_cmd(self, path):
+        return f"md5sum {shlex.quote(path)} 2>/dev/null || echo none"
 
 
 class LinuxProfile(OsProfile):
@@ -310,6 +314,9 @@ class BsdProfile(OsProfile):
 
     def script_shell(self):
         return "sh"
+
+    def md5_cmd(self, path):
+        return f"md5 -q {shlex.quote(path)} 2>/dev/null || echo none"
 
 
 class FreeBsdProfile(BsdProfile):

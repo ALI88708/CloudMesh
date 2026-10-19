@@ -3,6 +3,8 @@ import hashlib
 import shlex
 from pathlib import Path
 
+from cloudmesh.core.osprofile import get_profile
+
 
 class DirectorySync:
     def __init__(self, server_manager):
@@ -22,9 +24,14 @@ class DirectorySync:
                 h.update(chunk)
         return h.hexdigest()
 
+    def _profile_for(self, server_name):
+        info = self.server_mgr.get_server_info(server_name) or {}
+        return get_profile(info.get("os_type"))
+
     def _remote_md5(self, server_name, remote_path):
-        safe_path = shlex.quote(remote_path)
-        result = self.server_mgr.execute(server_name, f"md5sum {safe_path} 2>/dev/null || echo none")
+        result = self.server_mgr.execute(
+            server_name, self._profile_for(server_name).md5_cmd(remote_path)
+        )
         if result["exit_code"] != 0 or "none" in result["stdout"]:
             return None
         return result["stdout"].split()[0]
