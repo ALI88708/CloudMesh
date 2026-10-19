@@ -141,6 +141,10 @@ new `cm_for-bsd.sh` for the controller. The Linux and Windows installers keep wo
 **C15 — Release.** Version 4.0.0, BSD classifiers, README support matrix, CHANGELOG,
 CONTRIBUTING.
 
+**C16 — End-to-end environment.** No local BSD host. E2E runs inside a real FreeBSD
+VM on GitHub Actions (`vmactions/freebsd-vm`), which also executes the BSD-relevant
+test suite under a real FreeBSD userland. No local disk is used.
+
 ## 8. Architecture
 
 ### 8.1 Controller: the OS profile layer
@@ -236,6 +240,10 @@ controller, then exercise node test/exec/job/upload/download, monitoring, top, d
 network, who, logs, sync, deploy, firewall status and audit. The same checklist then
 runs with the controller installed on FreeBSD.
 
+The end-to-end host is a FreeBSD VM in GitHub Actions (`vmactions/freebsd-vm`). The
+job installs the agent and runs a loopback controller↔agent flow inside the VM, plus
+the BSD-relevant pytest suite. The local machine is never asked for disk space.
+
 ## 10. Acceptance criteria
 
 - [ ] FreeBSD 14 node: installer succeeds, rc.d service starts on boot, `cm node test`
@@ -251,8 +259,10 @@ runs with the controller installed on FreeBSD.
 
 ## 11. Risks and unknowns
 
-- **No BSD host yet.** The biggest unknown. Without one, acceptance criteria 1–3 are
-  verified only by mocked tests, and the release would carry unverified BSD paths.
+- **No local BSD host.** The user's VM was removed for disk-space reasons. The E2E
+  gate moves to a FreeBSD VM on GitHub Actions (C16); if that job cannot be made to
+  run, acceptance criteria 1–3 fall back to mocked tests and the release carries
+  unverified BSD paths.
 - **Binary wheels on BSD.** `psutil` and `cryptography` may be built from source by
   pip; the installers must prefer OS packages.
 - **Package name drift.** OpenBSD and NetBSD Python/psutil package names differ by
@@ -267,9 +277,9 @@ runs with the controller installed on FreeBSD.
 
 ## 12. Questions for you
 
-1. **BSD host.** Do we have a FreeBSD (or any BSD) host/VM we can use today? If not,
-   is a mocked-test-only 4.0.0 acceptable, with end-to-end verification as a release
-   blocker?
+1. **BSD host — answered.** No local host (the existing VM was deleted for disk
+   space). Confirm the replacement: E2E in a FreeBSD VM on GitHub Actions (C16),
+   with no local disk use.
 2. **Priority.** Confirm BSD-as-managed-machines first, controller second, with
    OpenBSD/NetBSD as best effort.
 3. **SPA.** Stretch item (recommended), or must-have for 4.0.0?
