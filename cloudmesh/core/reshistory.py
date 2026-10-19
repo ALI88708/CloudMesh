@@ -1,5 +1,6 @@
 import json, os, time, signal
 from cloudmesh.core.ssh_util import run_ssh
+from cloudmesh.core.osprofile import get_profile
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
@@ -19,6 +20,10 @@ def _get_server(name):
 
 def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)
+
+def _profile_for(server):
+    info = server or {}
+    return get_profile(info.get("os_type"))
 
 def _history_file():
     return os.path.join(DATA_DIR, "resource_history.json")
@@ -52,23 +57,27 @@ def snapshot(server_name=None):
 
     for name, srv in targets:
         host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
-        cmd = "echo $(top -bn1 | grep 'Cpu(s)' | awk '{print $2}')|$(free -m | awk '/Mem/{printf \"%.1f\", $3/$2*100}')|$(df -h / | awk 'NR==2{print $5}')"
-        out, rc = _run_ssh(host, user, key, cmd)
-        if rc == 0 and "|" in out:
-            parts = out.split("|")
-            cpu = float(parts[0]) if parts[0] else 0
-            ram = float(parts[1]) if parts[1] else 0
-            disk = int(parts[2].replace("%", "")) if parts[2] else 0
+        profile = _profile_for(srv)
+        cpu_out, cpu_rc = _run_ssh(host, user, key, profile.cpu_cmd())
+        ram_out, ram_rc = _run_ssh(host, user, key, profile.ram_cmd())
+        disk_out, disk_rc = _run_ssh(host, user, key, profile.disk_cmd())
+        cpu = profile.parse_cpu(cpu_out) if cpu_rc == 0 else None
+        ram = profile.parse_ram(ram_out) if ram_rc == 0 else None
+        disk = profile.parse_disk(disk_out) if disk_rc == 0 else None
+        ram_pct = ram.get("percent") if isinstance(ram, dict) else None
+        disk_pct = disk.get("percent") if isinstance(disk, dict) else None
+        if cpu is None or ram_pct is None or disk_pct is None:
+            continue
 
-            if name not in history:
-                history[name] = []
-            history[name].append({
-                "time": timestamp,
-                "cpu": cpu,
-                "ram": ram,
-                "disk": disk
-            })
-            history[name] = history[name][-1000:]
+        if name not in history:
+            history[name] = []
+        history[name].append({
+            "time": timestamp,
+            "cpu": float(cpu),
+            "ram": float(ram_pct),
+            "disk": int(disk_pct),
+        })
+        history[name] = history[name][-1000:]
 
     _save_history(history)
     return f"Snapshot saved at {timestamp}"
