@@ -201,9 +201,11 @@ if [ "$OS_TYPE" = "FreeBSD" ]; then
 
 name="cloudmesh_node"
 rcvar="cloudmesh_node_enable"
+# The agent writes this pidfile itself. Passing daemon -p would write the child
+# PID first, so the agent would read its own PID back and exit "Already running".
 pidfile="$INSTALL_DIR/cloudmesh_node.pid"
 command="/usr/sbin/daemon"
-command_args="-p \$pidfile $(command -v python3) $INSTALL_DIR/$NODE_SCRIPT start"
+command_args="$(command -v python3) $INSTALL_DIR/$NODE_SCRIPT start"
 
 load_rc_config \$name
 : \${cloudmesh_node_enable:="NO"}

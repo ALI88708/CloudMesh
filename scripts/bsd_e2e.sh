@@ -89,7 +89,20 @@ step "Phase 2/4: node installer and rc.d"
 run_required "sh cloudmesh/node/node-install.sh"
 run_required "sysrc cloudmesh_node_enable=YES"
 run_required "service cloudmesh_node start"
-run_required "service cloudmesh_node status"
+NODE_UP=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if service cloudmesh_node status > /tmp/cm-node-status.log 2>&1; then
+        NODE_UP=1
+        break
+    fi
+    sleep 1
+done
+run_tolerant "service cloudmesh_node status"
+if [ "$NODE_UP" -ne 1 ]; then
+    printf '[E2E] FAILED: service cloudmesh_node status never reported running\n' >&2
+    sed -n '1,20p' /tmp/cm-node-status.log 2>/dev/null || true
+    exit 1
+fi
 ok "rc.d unit starts the agent"
 
 NODE_KEY="$(cat "$HOME/.cloudmesh-node/.node_key")"

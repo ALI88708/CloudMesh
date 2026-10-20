@@ -634,6 +634,19 @@ def test_node_installer_rc_units_do_not_block():
     )
 
 
+def test_freebsd_unit_lets_the_agent_own_its_pidfile():
+    """daemon(8) -p writes the child PID before the agent starts, so cmd_start
+    reads its own PID back, prints "Already running", and exits before serving.
+    rc.subr still needs the path to answer status, so the agent writes it."""
+    text = _node_install_text()
+    assert "-p \\$pidfile" not in text, (
+        "daemon(8) must not write the pidfile that the agent writes itself"
+    )
+    assert 'pidfile="$INSTALL_DIR/cloudmesh_node.pid"' in text, (
+        "rc.subr still needs the pidfile path to answer status"
+    )
+
+
 # --- the BSD controller installer ---------------------------------------
 
 BSD_SH = ROOT / "cm_for-bsd.sh"
