@@ -85,12 +85,15 @@ The Releases section reads published releases from the GitHub Releases API, so r
 
 ## Quick Start
 
-### pip install (Recommended)
-Download [Python](https://www.python.org/) for Linux or Windows
+### GitHub release (Recommended)
+Download [Python](https://www.python.org/) 3.11+ for Linux or Windows, then install the verified release wheel:
 ```bash
-pip install cloudmesh
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.1.2/cloudmesh-4.1.2-py3-none-any.whl
 cm --help
 ```
+
+CloudMesh is distributed through GitHub Releases. The `cloudmesh` name on PyPI
+belongs to a different project and is not this tool.
 
 ### Windows (Installer)
 1. Download [Python](https://www.python.org/) and install it
@@ -150,9 +153,12 @@ the same POSIX code paths and are covered by the profile tests, but their
 
 ### Update
 ```bash
-cm update              # Self-update from GitHub (recommended)
-pip install --upgrade cloudmesh  # Or via pip
+cm update              # Self-update a source checkout from GitHub
+cm update --pip        # Download, verify, and install the GitHub release wheel
 ```
+
+`cm update --pip` checks the release's `SHA256SUMS` before installing the local
+wheel. It never installs the unrelated PyPI `cloudmesh` package.
 
 ### First Steps
 ```bash
@@ -852,10 +858,10 @@ curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 
 | Option | What it does |
 |--------|-------------|
-| **pip install** | `pip install cloudmesh` -- simplest method |
+| **GitHub release wheel** | Install the verified `cloudmesh-4.1.2-py3-none-any.whl` from GitHub Releases |
 | **Fresh Install** | Download installer, double-click, done |
 | **BSD installer** | `sh cm_for-bsd.sh --yes` on FreeBSD, OpenBSD and NetBSD |
-| **Update** | `cm update` or `pip install --upgrade cloudmesh` |
+| **Update** | `cm update` in a checkout, or `cm update --pip` for a verified release wheel |
 | **Uninstall** | `pip uninstall cloudmesh` |
 
 The installer automatically:

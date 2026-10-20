@@ -245,12 +245,15 @@ When you install a node agent, here is what gets placed on the remote server:
 
 ## 3. Installation
 
-### Method 1: pip install (Recommended)
+### Method 1: GitHub release wheel (Recommended)
 
 ```bash
-pip install cloudmesh
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.1.2/cloudmesh-4.1.2-py3-none-any.whl
 cm --help
 ```
+
+CloudMesh is distributed through GitHub Releases. The `cloudmesh` name on PyPI
+belongs to a different project; do not install it from PyPI.
 
 ### Method 2: Windows Installer
 
@@ -271,8 +274,8 @@ chmod +x cm.sh && ./cm.sh
 ### Updating
 
 ```bash
-cm update              # Self-update from GitHub (recommended)
-pip install --upgrade cloudmesh  # Or via pip
+cm update              # Self-update a source checkout from GitHub
+cm update --pip        # Download, verify, and install the GitHub release wheel
 ```
 
 ### Uninstalling

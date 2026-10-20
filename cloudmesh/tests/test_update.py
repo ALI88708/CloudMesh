@@ -10,6 +10,7 @@ import pytest
 from rich.console import Console
 
 from cloudmesh import main
+from cloudmesh.core import releases
 
 
 @pytest.fixture
@@ -81,7 +82,10 @@ def test_wheel_auto_update_gives_manual_instructions(update_env):
 
     main.cmd_update(_args())
 
-    assert "pip install --upgrade cloudmesh" in update_env.output.getvalue()
+    output = update_env.output.getvalue()
+    assert "cm update --pip" in output
+    assert "github.com/ALI88708/CloudMesh/releases" in output
+    assert "pip install cloudmesh" not in output
     update_env.run.assert_not_called()
 
 
@@ -106,52 +110,52 @@ def test_git_route_checks_checkout_without_prompt_when_current(update_env, force
 
 
 @pytest.mark.parametrize("installed", ["3.4.0", ""])
-def test_pip_upgrade_uses_active_python_and_reports_result(update_env, monkeypatch, installed):
+def test_pip_upgrade_uses_github_release_and_reports_result(update_env, monkeypatch, installed):
     monkeypatch.setattr(main.git_support, "installed_version", Mock(return_value=installed))
-    update_env.run.side_effect = None
-    update_env.run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+    update = Mock(return_value="Updated to CloudMesh 4.1.2")
+    monkeypatch.setattr(releases, "update_from_github", update)
 
     main.cmd_update_via_pip()
 
-    update_env.run.assert_called_once_with(
-        [sys.executable, "-m", "pip", "install", "--upgrade", "cloudmesh"],
-        capture_output=True, text=True, timeout=300,
-    )
-    assert f"Installed version: {installed or 'unknown'}" in update_env.output.getvalue()
-    assert "Updated via pip to CloudMesh 3.5.0" in update_env.output.getvalue()
+    update.assert_called_once_with()
+    update_env.run.assert_not_called()
+    output = update_env.output.getvalue()
+    assert f"Installed version: {installed or 'unknown'}" in output
+    assert "Updated to CloudMesh 4.1.2" in output
     update_env.prompt.assert_not_called()
 
 
 def test_pip_failure_shows_only_tail_of_stderr(update_env, monkeypatch):
-    version = Mock(side_effect=AssertionError("failed upgrade has no new version"))
-    monkeypatch.setattr(main, "get_version", version)
     tail = "x" * 480 + " dependency conflict"
-    update_env.run.side_effect = None
-    update_env.run.return_value = subprocess.CompletedProcess(
-        [], 1, stdout="", stderr="discard-this-prefix" + tail + "\n",
+    monkeypatch.setattr(
+        releases,
+        "update_from_github",
+        Mock(side_effect=releases.ReleaseError(
+            "pip install failed: discard-this-prefix" + tail
+        )),
     )
 
     main.cmd_update_via_pip()
 
     output = update_env.output.getvalue().replace("\n", "")
-    assert "pip upgrade failed:" in output
+    assert "Update failed: pip install failed:" in output
     assert tail in output
-    assert "discard-this-prefix" not in output
-    assert "Updated via pip" not in output
-    version.assert_not_called()
+    assert "discard-this-prefix" in output
+    assert "Updated to CloudMesh" not in output
 
 
 @pytest.mark.parametrize("error", [
     OSError("cannot launch Python"), subprocess.TimeoutExpired("pip", 300),
 ])
-def test_pip_execution_errors_are_reported_without_tracebacks(update_env, error):
-    update_env.run.side_effect = error
+def test_pip_execution_errors_are_reported_without_tracebacks(update_env, monkeypatch, error):
+    monkeypatch.setattr(releases, "update_from_github", Mock(side_effect=error))
 
     main.cmd_update_via_pip()
 
-    assert "pip failed to start:" in update_env.output.getvalue()
-    assert "Updated via pip" not in update_env.output.getvalue()
-    assert "Traceback" not in update_env.output.getvalue()
+    output = update_env.output.getvalue()
+    assert "Update failed:" in output
+    assert "Traceback" not in output
+    assert "Updated to CloudMesh" not in output
 
 
 @pytest.mark.parametrize("flags, expected", [

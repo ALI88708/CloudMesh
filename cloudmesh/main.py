@@ -2363,28 +2363,29 @@ def cmd_doctor(args):
 
 
 def cmd_update_via_pip():
-    """Refresh CloudMesh with pip instead of git.
+    """Install the newest verified 4.1.x wheel from GitHub Releases.
 
-    Run pip install --upgrade cloudmesh with the current Python interpreter
-    and a 300-second timeout, without a CloudMesh confirmation prompt. Print
-    subprocess errors or nonzero exit results and return without setting an
-    exit status. Version lookup errors outside the subprocess call propagate.
+    The updater downloads the release wheel and its ``SHA256SUMS``, verifies
+    the digest, and only then asks pip to install that local file. It never
+    passes a bare package name to pip, so the unrelated PyPI ``cloudmesh``
+    project can never be installed by mistake. Release and verification
+    failures are printed without a traceback.
     """
-    import sys as _sys
-
     console.print(f"[cyan]Installed version: {git_support.installed_version() or 'unknown'}[/]")
     try:
-        result = subprocess.run(
-            [_sys.executable, "-m", "pip", "install", "--upgrade", "cloudmesh"],
-            capture_output=True, text=True, timeout=300,
-        )
+        from cloudmesh.core.releases import ReleaseError, update_from_github
+    except ImportError:
+        from core.releases import ReleaseError, update_from_github
+
+    try:
+        message = update_from_github()
+    except ReleaseError as e:
+        console.print(f"[red]Update failed: {e}[/]")
+        return
     except Exception as e:
-        console.print(f"[red]pip failed to start: {e}[/]")
+        console.print(f"[red]Update failed: {e}[/]")
         return
-    if result.returncode != 0:
-        console.print(f"[red]pip upgrade failed: {result.stderr.strip()[-500:]}[/]")
-        return
-    console.print(f"[green]Updated via pip to CloudMesh {get_version().get('version', '?')}[/]")
+    console.print(f"[green]{message}[/]")
 
 
 def cmd_update(args):
@@ -2413,9 +2414,9 @@ def cmd_update(args):
         return
 
     if not (repo_dir / ".git").exists():
-        console.print("[red]Not a git repository. Cannot self-update.[/]")
-        console.print("[dim]This is a pip install. Use: pip install --upgrade cloudmesh[/]")
-        console.print("[dim]Or from the CLI: cm update --pip[/]")
+        console.print("[red]Not a git repository. Cannot self-update from git.[/]")
+        console.print("[dim]Install a verified GitHub release: cm update --pip[/]")
+        console.print("[dim]Releases: https://github.com/ALI88708/CloudMesh/releases[/]")
         return
 
     if not git_support.git_available():
