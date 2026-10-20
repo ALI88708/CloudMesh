@@ -86,6 +86,11 @@ else
     echo "[OK] Python3 installed: $PY_VERSION"
 fi
 
+# rc.d, cron and unit environments do not carry the interactive PATH -- FreeBSD
+# keeps python3 in /usr/local/bin, which rc.d leaves out -- so the scripts below
+# bake in the interpreter instead of resolving python3 at run time.
+PYTHON_BIN="$(command -v python3)"
+
 # ============================================
 # 2. Install psutil (system package first, pip after)
 # ============================================
@@ -157,24 +162,24 @@ chmod +x "$INSTALL_DIR/$NODE_SCRIPT"
 # ============================================
 echo "[5/5] Creating scripts..."
 
-cat > "$INSTALL_DIR/start.sh" << 'EOF'
+cat > "$INSTALL_DIR/start.sh" << EOF
 #!/bin/sh
-cd "$(dirname "$0")"
-python3 cloudmesh_node.py start "$@"
+cd "\$(dirname "\$0")"
+$PYTHON_BIN cloudmesh_node.py start "\$@"
 EOF
 chmod +x "$INSTALL_DIR/start.sh"
 
-cat > "$INSTALL_DIR/stop.sh" << 'EOF'
+cat > "$INSTALL_DIR/stop.sh" << EOF
 #!/bin/sh
-cd "$(dirname "$0")"
-python3 cloudmesh_node.py stop
+cd "\$(dirname "\$0")"
+$PYTHON_BIN cloudmesh_node.py stop
 EOF
 chmod +x "$INSTALL_DIR/stop.sh"
 
-cat > "$INSTALL_DIR/status.sh" << 'EOF'
+cat > "$INSTALL_DIR/status.sh" << EOF
 #!/bin/sh
-cd "$(dirname "$0")"
-python3 cloudmesh_node.py status
+cd "\$(dirname "\$0")"
+$PYTHON_BIN cloudmesh_node.py status
 EOF
 chmod +x "$INSTALL_DIR/status.sh"
 

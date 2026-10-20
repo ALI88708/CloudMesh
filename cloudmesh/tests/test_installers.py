@@ -652,6 +652,13 @@ def test_freebsd_unit_keeps_rc_subr_and_ssh_happy():
     assert "/usr/sbin/daemon" not in text, (
         "daemon(8) keeps the caller's descriptors open"
     )
+    assert 'PYTHON_BIN="$(command -v python3)"' in text, (
+        "the helper scripts must not resolve python3 through the caller's PATH"
+    )
+    for action in ("start", "stop", "status"):
+        assert f"$PYTHON_BIN cloudmesh_node.py {action}" in text, (
+            f"the {action} script must use the interpreter found at install time"
+        )
 
 
 def test_freebsd_unit_lets_the_agent_own_its_pidfile():
