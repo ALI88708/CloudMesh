@@ -88,10 +88,10 @@ step "Phase 2/4: node installer and rc.d"
 
 run_required "sh cloudmesh/node/node-install.sh"
 run_required "sysrc cloudmesh_node_enable=YES"
-run_required "service cloudmesh_node start"
+run_required "timeout 60 service cloudmesh_node start"
 NODE_UP=0
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    if service cloudmesh_node status > /tmp/cm-node-status.log 2>&1; then
+    if timeout 30 service cloudmesh_node status > /tmp/cm-node-status.log 2>&1; then
         NODE_UP=1
         break
     fi
@@ -101,6 +101,12 @@ run_tolerant "service cloudmesh_node status"
 if [ "$NODE_UP" -ne 1 ]; then
     printf '[E2E] FAILED: service cloudmesh_node status never reported running\n' >&2
     sed -n '1,20p' /tmp/cm-node-status.log 2>/dev/null || true
+    printf '[E2E] --- service output ---\n' >&2
+    tail -n 20 "$HOME/.cloudmesh-node/cloudmesh_node.out" 2>/dev/null || true
+    printf '[E2E] --- agent log ---\n' >&2
+    tail -n 20 "$HOME/.cloudmesh-node/cloudmesh_node.log" 2>/dev/null || true
+    printf '[E2E] --- cloudmesh processes ---\n' >&2
+    ps aux | grep -i cloudmesh | grep -v grep || true
     exit 1
 fi
 ok "rc.d unit starts the agent"
@@ -173,6 +179,14 @@ run_tolerant "cm deploy --install nano"
 # subcommands take --server, status does not.
 run_tolerant "cm firewall status"
 run_tolerant "cm audit -n localssh"
+
+step "Cleanup"
+run_required "timeout 60 service cloudmesh_node stop"
+if timeout 30 service cloudmesh_node status > /dev/null 2>&1; then
+    printf '[E2E] FAILED: the agent still runs after service stop\n' >&2
+    exit 1
+fi
+ok "rc.d unit stops the agent"
 
 step "Done"
 printf '\nBSD E2E OK\n'
