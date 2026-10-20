@@ -636,21 +636,24 @@ def test_node_installer_rc_units_do_not_block():
 
 def test_freebsd_unit_keeps_rc_subr_and_ssh_happy():
     """rc.subr matches procname against argv[0] of the pid in the pidfile, and
-    the agent's argv[0] is the interpreter, so the unit must name it. The unit
-    must also take the agent off the caller's stdio: daemon(8) keeps those
-    descriptors open, which holds an ssh session open while the agent serves."""
+    the agent's argv[0] is the interpreter, so the unit must name it. daemon(8)
+    must also close the descriptors it inherited: otherwise an ssh session stays
+    open for as long as the agent serves."""
     text = _node_install_text()
-    assert 'procname="$(command -v python3)"' in text, (
+    start = text.index('if [ "$OS_TYPE" = "FreeBSD" ]; then')
+    end = text.index('elif [ "$OS_TYPE" = "OpenBSD" ]; then', start)
+    unit = text[start:end]
+    assert 'procname="$(command -v python3)"' in unit, (
         "status compares the pidfile process with procname"
     )
-    assert 'start_cmd="cloudmesh_start"' in text, (
-        "the FreeBSD unit starts the agent through its own script"
+    assert 'command="/usr/sbin/daemon"' in unit, (
+        "daemon(8) is what returns control to rc.subr"
     )
-    assert 'start.sh </dev/null >>"$INSTALL_DIR/cloudmesh_node.out" 2>&1 &' in text, (
-        "the agent must not inherit the caller's stdio"
+    assert 'command_args="-f $(command -v python3)' in unit, (
+        "-f closes the descriptors daemon(8) would otherwise keep"
     )
-    assert "/usr/sbin/daemon" not in text, (
-        "daemon(8) keeps the caller's descriptors open"
+    assert "start_cmd=" not in unit, (
+        "the FreeBSD unit relies on the standard start path"
     )
     assert 'PYTHON_BIN="$(command -v python3)"' in text, (
         "the helper scripts must not resolve python3 through the caller's PATH"

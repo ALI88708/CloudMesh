@@ -210,29 +210,14 @@ rcvar="cloudmesh_node_enable"
 # PID first, so the agent would read its own PID back and exit "Already running".
 pidfile="$INSTALL_DIR/cloudmesh_node.pid"
 # rc.subr compares procname with argv[0] of the pid in the pidfile, so it must
-# name the interpreter the agent actually runs as, not a launcher such as
-# daemon(8) -- otherwise status reports "not running" while the agent serves.
+# name the interpreter the agent runs as, not the daemon(8) launcher -- otherwise
+# status reports "not running" while the agent serves.
 procname="$(command -v python3)"
-command="$(command -v python3)"
-command_args="$INSTALL_DIR/$NODE_SCRIPT start"
-
-# Start in the background with stdio detached: the agent outlives the shell that
-# started it, and daemon(8) keeps the caller's descriptors open, which holds an
-# ssh session open for as long as the agent runs.
-start_cmd="cloudmesh_start"
-stop_cmd="cloudmesh_stop"
-
-cloudmesh_start()
-{
-    echo "Starting \${name}."
-    $INSTALL_DIR/start.sh </dev/null >>"$INSTALL_DIR/cloudmesh_node.out" 2>&1 &
-}
-
-cloudmesh_stop()
-{
-    echo "Stopping \${name}."
-    $INSTALL_DIR/stop.sh </dev/null >/dev/null 2>&1
-}
+command="/usr/sbin/daemon"
+# -f (--close-fds) points stdin, stdout and stderr at /dev/null. Without it
+# daemon(8) keeps the caller's descriptors, so an ssh session stays open for as
+# long as the agent serves.
+command_args="-f $(command -v python3) $INSTALL_DIR/$NODE_SCRIPT start"
 
 load_rc_config \$name
 : \${cloudmesh_node_enable:="NO"}
