@@ -626,8 +626,8 @@ def test_node_installer_rc_units_do_not_block():
     runs it without backgrounding would hang `service ... start` until the agent
     exits -- which on a server it never does."""
     text = _node_install_text()
-    assert "-p \\$pidfile -f" not in text, (
-        "FreeBSD daemon(8) must fork; -f keeps the agent attached and blocks start"
+    assert 'command_args="-f ' not in text, (
+        "daemon(8) -f hung on 15.1-RELEASE; redirect inside the wrapper instead"
     )
     assert len(re.findall(r"start\.sh(?: </dev/null)? >/dev/null 2>&1 &", text)) == 2, (
         "the OpenBSD and NetBSD units must background the start script"
@@ -636,9 +636,9 @@ def test_node_installer_rc_units_do_not_block():
 
 def test_freebsd_unit_keeps_rc_subr_and_ssh_happy():
     """rc.subr matches procname against argv[0] of the pid in the pidfile, and
-    the agent's argv[0] is the interpreter, so the unit must name it. daemon(8)
-    must also close the descriptors it inherited: otherwise an ssh session stays
-    open for as long as the agent serves."""
+    the agent's argv[0] is the interpreter, so the unit must name it. The
+    wrapper must also send the agent's stdio to a file: otherwise an ssh session
+    stays open for as long as the agent serves."""
     text = _node_install_text()
     start = text.index('if [ "$OS_TYPE" = "FreeBSD" ]; then')
     end = text.index('elif [ "$OS_TYPE" = "OpenBSD" ]; then', start)
@@ -649,8 +649,11 @@ def test_freebsd_unit_keeps_rc_subr_and_ssh_happy():
     assert 'command="/usr/sbin/daemon"' in unit, (
         "daemon(8) is what returns control to rc.subr"
     )
-    assert 'command_args="-f $(command -v python3)' in unit, (
-        "-f closes the descriptors daemon(8) would otherwise keep"
+    assert 'command_args="$INSTALL_DIR/daemon.sh"' in unit, (
+        "the wrapper detaches the agent's stdio before it serves"
+    )
+    assert 'exec "$INSTALL_DIR/start.sh" </dev/null >>"$INSTALL_DIR/cloudmesh_node.out" 2>&1' in text, (
+        "daemon.sh must not keep the descriptors of the session that started it"
     )
     assert "start_cmd=" not in unit, (
         "the FreeBSD unit relies on the standard start path"

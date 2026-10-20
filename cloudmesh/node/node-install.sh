@@ -183,6 +183,15 @@ $PYTHON_BIN cloudmesh_node.py status
 EOF
 chmod +x "$INSTALL_DIR/status.sh"
 
+# rc.d runs a unit's command in the foreground and the agent never daemonizes.
+# daemon(8) provides the fork; this wrapper then sends the agent's stdio to a
+# file so it cannot hold the session that started it.
+cat > "$INSTALL_DIR/daemon.sh" << EOF
+#!/bin/sh
+exec "$INSTALL_DIR/start.sh" </dev/null >>"$INSTALL_DIR/cloudmesh_node.out" 2>&1
+EOF
+chmod +x "$INSTALL_DIR/daemon.sh"
+
 cat > "$INSTALL_DIR/restart.sh" << 'EOF'
 #!/bin/sh
 cd "$(dirname "$0")"
@@ -214,10 +223,9 @@ pidfile="$INSTALL_DIR/cloudmesh_node.pid"
 # status reports "not running" while the agent serves.
 procname="$(command -v python3)"
 command="/usr/sbin/daemon"
-# -f (--close-fds) points stdin, stdout and stderr at /dev/null. Without it
-# daemon(8) keeps the caller's descriptors, so an ssh session stays open for as
-# long as the agent serves.
-command_args="-f $(command -v python3) $INSTALL_DIR/$NODE_SCRIPT start"
+# daemon(8) forks and returns, and the wrapper sends the agent's stdio to a
+# file. -f hung on 15.1-RELEASE, so the redirection lives in the wrapper.
+command_args="$INSTALL_DIR/daemon.sh"
 
 load_rc_config \$name
 : \${cloudmesh_node_enable:="NO"}
