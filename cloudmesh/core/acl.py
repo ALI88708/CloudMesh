@@ -7,7 +7,9 @@ try:
 except ImportError:
     import hashlib
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+from cloudmesh.core.paths import data_dir
+
+DATA_DIR = str(data_dir())
 
 def _log_file():
     return os.path.join(DATA_DIR, "acl_audit.log")

@@ -4,6 +4,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from .paths import base_dir as default_base_dir
+
 logger = logging.getLogger(__name__)
 
 SEVERITY_LEVELS = {"info": 0, "warning": 1, "critical": 2}
@@ -37,7 +39,7 @@ class AlertManager:
         """
         self.monitor = resource_monitor
         if base_dir is None:
-            base_dir = Path(__file__).parent.parent
+            base_dir = default_base_dir()
         self.base_dir = Path(base_dir)
         self.alerts_file = self.base_dir / "alerts.json"
         self.notifier = notifier

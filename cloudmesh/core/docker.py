@@ -1,31 +1,20 @@
-import json, os, subprocess, socket
+import re, shlex
 
 from cloudmesh.core.ssh_util import run_ssh
+from cloudmesh.core.server_config import get_server as _store_server
+from cloudmesh.core.server_config import load_server_config
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+_IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,254}$")
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PORT_RE = re.compile(r"^[0-9A-Za-z_.:\[\]/-]+$")
+
 
 def _load_config():
-    p = os.path.join(DATA_DIR, "cloudmesh.json")
-    if os.path.exists(p):
-        with open(p) as f:
-            return json.load(f)
-    return {}
-
-def _save_config(cfg):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    p = os.path.join(DATA_DIR, "cloudmesh.json")
-    with open(p, "w") as f:
-        json.dump(cfg, f, indent=2)
+    return load_server_config()
 
 def _get_server(name):
-    cfg = _load_config()
-    servers = cfg.get("servers", {})
-    if name in servers:
-        return servers[name]
-    nodes = cfg.get("nodes", {})
-    if name in nodes:
-        return nodes[name]
-    return None
+    return _store_server(name)
 
 def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)
@@ -110,23 +99,27 @@ def docker_action(server_name, action, container=None):
         out, rc = _run_ssh(host, user, key, "docker ps -a --format 'table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'")
         return out
     elif action == "start" and container:
-        out, rc = _run_ssh(host, user, key, f"docker start {container}")
+        out, rc = _run_ssh(host, user, key, f"docker start {shlex.quote(container)}")
         return f"Started: {container}" if rc == 0 else f"Failed: {out}"
     elif action == "stop" and container:
-        out, rc = _run_ssh(host, user, key, f"docker stop {container}")
+        out, rc = _run_ssh(host, user, key, f"docker stop {shlex.quote(container)}")
         return f"Stopped: {container}" if rc == 0 else f"Failed: {out}"
     elif action == "restart" and container:
-        out, rc = _run_ssh(host, user, key, f"docker restart {container}")
+        out, rc = _run_ssh(host, user, key, f"docker restart {shlex.quote(container)}")
         return f"Restarted: {container}" if rc == 0 else f"Failed: {out}"
     elif action == "rm" and container:
-        out, rc = _run_ssh(host, user, key, f"docker rm -f {container}")
+        out, rc = _run_ssh(host, user, key, f"docker rm -f {shlex.quote(container)}")
         return f"Removed: {container}" if rc == 0 else f"Failed: {out}"
     elif action == "logs" and container:
-        out, rc = _run_ssh(host, user, key, f"docker logs --tail 50 {container} 2>&1")
+        out, rc = _run_ssh(
+            host, user, key, f"docker logs --tail 50 {shlex.quote(container)} 2>&1"
+        )
         return out
     elif action == "exec" and container:
         cmd = getattr(server_name, "cmd", "sh") if hasattr(server_name, "cmd") else "sh"
-        out, rc = _run_ssh(host, user, key, f"docker exec {container} {cmd}")
+        out, rc = _run_ssh(
+            host, user, key, f"docker exec {shlex.quote(container)} {cmd}"
+        )
         return out
     elif action == "images":
         out, rc = _run_ssh(host, user, key, "docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}'")
@@ -158,16 +151,25 @@ def docker_deploy(server_name, image, name=None, ports=None, env=None):
     user = srv.get("user", "root")
     key = srv.get("key", "")
 
-    cmd = f"docker run -d --restart unless-stopped"
+    if not _IMAGE_RE.fullmatch(image or ""):
+        return f"Invalid image reference: {image}"
+    if name and not _NAME_RE.fullmatch(name):
+        return f"Invalid container name: {name}"
+    for port in ports or []:
+        if not _PORT_RE.fullmatch(str(port)):
+            return f"Invalid port mapping: {port}"
+    for key_name in (env or {}):
+        if not _ENV_KEY_RE.fullmatch(key_name):
+            return f"Invalid environment variable name: {key_name}"
+
+    cmd = "docker run -d --restart unless-stopped"
     if name:
         cmd += f" --name {name}"
-    if ports:
-        for p in ports:
-            cmd += f" -p {p}"
-    if env:
-        for k, v in env.items():
-            cmd += f" -e {k}={v}"
-    cmd += f" {image}"
+    for port in ports or []:
+        cmd += f" -p {port}"
+    for key_name, value in (env or {}).items():
+        cmd += f" -e {shlex.quote(f'{key_name}={value}')}"
+    cmd += f" {shlex.quote(image)}"
 
     out, rc = _run_ssh(host, user, key, cmd)
     return f"Deployed {image}" if rc == 0 else f"Failed: {out}"
@@ -217,7 +219,10 @@ class DockerManager:
         host, user, key = srv.get("host", ""), srv.get("user", "root"), srv.get("key", "")
         if action == "down":
             return docker_action(server, "compose_down")
-        cmd = f"cd {path} && docker compose up -d 2>/dev/null || docker-compose up -d 2>/dev/null"
+        cmd = (
+            f"cd {shlex.quote(path)} && docker compose up -d 2>/dev/null "
+            "|| docker-compose up -d 2>/dev/null"
+        )
         out, rc = _run_ssh(host, user, key, cmd)
         return "Compose started" if rc == 0 else f"Failed: {out}"
 
@@ -243,8 +248,10 @@ class DockerManager:
         msg = self._bsd_guard(server)
         if msg:
             return msg
+        if not _IMAGE_RE.fullmatch(image or ""):
+            return f"Invalid image reference: {image}"
         out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
-                            f"docker pull {image}")
+                            f"docker pull {shlex.quote(image)}")
         return f"Pulled {image}" if rc == 0 else f"Failed: {out}"
 
     def exec_command(self, container, cmd, server):
@@ -256,7 +263,7 @@ class DockerManager:
         if msg:
             return msg
         out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
-                            f"docker exec {container} {cmd}")
+                            f"docker exec {shlex.quote(container)} {cmd}")
         return out if rc == 0 else f"Failed: {out}"
 
     def container_logs(self, container, server, lines=50):
@@ -272,7 +279,7 @@ class DockerManager:
         except (TypeError, ValueError):
             lines = 50
         out, rc = _run_ssh(srv.get("host", ""), srv.get("user", "root"), srv.get("key", ""),
-                            f"docker logs --tail {lines} {container} 2>&1")
+                            f"docker logs --tail {lines} {shlex.quote(container)} 2>&1")
         return out if rc == 0 else f"Failed: {out}"
 
     def cleanup(self, server):

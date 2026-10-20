@@ -1,23 +1,18 @@
-import json, os, subprocess, re
+import json, os, subprocess, re, shlex
 from datetime import datetime
 from cloudmesh.core.ssh_util import run_ssh
 from cloudmesh.core.osprofile import get_profile
+from cloudmesh.core.server_config import get_server as _store_server
+from cloudmesh.core.server_config import load_server_config
+from cloudmesh.core.paths import data_dir
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DATA_DIR = str(data_dir())
 
 def _load_config():
-    p = os.path.join(DATA_DIR, "cloudmesh.json")
-    if os.path.exists(p):
-        with open(p) as f:
-            return json.load(f)
-    return {}
+    return load_server_config()
 
 def _get_server(name):
-    cfg = _load_config()
-    for section in ["servers", "nodes"]:
-        if name in cfg.get(section, {}):
-            return cfg[section][name]
-    return None
+    return _store_server(name)
 
 def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)
@@ -27,6 +22,13 @@ def _default_log_path(server):
     info = server or {}
     return get_profile(info.get("os_type")).log_paths()[0]
 
+def _line_count(value):
+    count = int(value)
+    if count < 0:
+        raise ValueError("line count must not be negative")
+    return count
+
+
 def get_logs(server_name, log_file=None, lines=50, search=None, severity=None):
     srv = _get_server(server_name)
     if not srv:
@@ -34,12 +36,16 @@ def get_logs(server_name, log_file=None, lines=50, search=None, severity=None):
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
     if log_file is None:
         log_file = _default_log_path(srv)
+    count = _line_count(lines)
+    quoted_log = shlex.quote(log_file)
 
-    cmd = f"tail -n {lines} {log_file} 2>/dev/null"
-    if search:
-        cmd = f"grep -i '{search}' {log_file} 2>/dev/null | tail -n {lines}"
-    if severity:
-        cmd = f"grep -i '{severity}' {log_file} 2>/dev/null | tail -n {lines}"
+    cmd = f"tail -n {count} {quoted_log} 2>/dev/null"
+    pattern = search or severity
+    if pattern:
+        cmd = (
+            f"grep -i -e {shlex.quote(pattern)} {quoted_log} 2>/dev/null "
+            f"| tail -n {count}"
+        )
 
     out, rc = _run_ssh(host, user, key, cmd)
     return out if rc == 0 else f"Failed to read {log_file}"
@@ -58,14 +64,19 @@ def aggregate_logs(log_files=None, search=None, lines=100):
     if not log_files:
         log_files = ["/var/log/syslog", "/var/log/auth.log"]
 
+    count = _line_count(lines)
     results = []
     for section in ["servers", "nodes"]:
         for name, srv in cfg.get(section, {}).items():
             host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
             for lf in log_files:
-                cmd = f"tail -n {lines} {lf} 2>/dev/null"
+                quoted_log = shlex.quote(lf)
+                cmd = f"tail -n {count} {quoted_log} 2>/dev/null"
                 if search:
-                    cmd = f"grep -i '{search}' {lf} 2>/dev/null | tail -n {lines}"
+                    cmd = (
+                        f"grep -i -e {shlex.quote(search)} {quoted_log} 2>/dev/null "
+                        f"| tail -n {count}"
+                    )
                 out, rc = _run_ssh(host, user, key, cmd)
                 if out and rc == 0:
                     results.append({"server": name, "log": lf, "entries": out.split("\n")})
@@ -78,7 +89,7 @@ def follow_log(server_name, log_file=None):
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
     if log_file is None:
         log_file = _default_log_path(srv)
-    cmd = f"tail -f {log_file} 2>/dev/null"
+    cmd = f"tail -f {shlex.quote(log_file)} 2>/dev/null"
     try:
         from cloudmesh.core.ssh_util import build_ssh_cmd
         ssh_cmd = build_ssh_cmd(host, user, key, cmd, extra_flags=[])

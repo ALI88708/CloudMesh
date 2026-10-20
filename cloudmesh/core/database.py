@@ -1,7 +1,7 @@
-import json, os, shlex, tempfile
+import shlex
 from cloudmesh.core.ssh_util import run_ssh, run_ssh_with_stdin
-
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+from cloudmesh.core.server_config import get_server as _store_server
+from cloudmesh.core.server_config import load_server_config
 
 
 def _remote_result(operation, output, return_code):
@@ -14,35 +14,58 @@ def _remote_result(operation, output, return_code):
 
 
 def _load_config():
-    p = os.path.join(DATA_DIR, "cloudmesh.json")
-    if os.path.exists(p):
-        with open(p) as f:
-            return json.load(f)
-    return {}
+    return load_server_config()
+
 
 def _get_server(name):
-    cfg = _load_config()
-    for section in ["servers", "nodes"]:
-        if name in cfg.get(section, {}):
-            return cfg[section][name]
-    return None
+    return _store_server(name)
+
+def _mysql_value(value):
+    text = str(value)
+    return '"' + (
+        text.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\0", "")
+    ) + '"'
+
 
 def _mysql_cmd(user, host, port, password, database, sql):
-    my_cnf = f"[client]\nuser={user}\npassword={password}\nhost={host}\nport={port}\n"
+    my_cnf = (
+        "[client]\n"
+        f"user={_mysql_value(user)}\n"
+        f"password={_mysql_value(password)}\n"
+        f"host={_mysql_value(host)}\n"
+        f"port={int(port)}\n"
+    )
     if database:
-        my_cnf += f"database={database}\n"
+        my_cnf += f"database={_mysql_value(database)}\n"
     remote_conf = "/tmp/.cm_my.conf"
     create = f"printf '%s' {shlex.quote(my_cnf)} > {remote_conf} && chmod 600 {remote_conf}"
     run = f"mysql --defaults-extra-file={remote_conf} -e {shlex.quote(sql)} 2>/dev/null"
     cleanup = f"rm -f {remote_conf}"
     return f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
 
+def _pgpass_value(value):
+    # PostgreSQL's .pgpass format has no escape for a line break. Drop control
+    # line characters rather than let a credential inject a second entry.
+    text = str(value).replace("\n", "").replace("\r", "").replace("\0", "")
+    return text.replace("\\", "\\\\").replace(":", "\\:")
+
+
 def _postgres_cmd(user, host, port, password, database, sql):
-    pgpass = shlex.quote(f"*:*:*:{user}:{password}")
+    pgpass = shlex.quote(
+        f"*:*:*:{_pgpass_value(user)}:{_pgpass_value(password)}"
+    )
     remote_pgpass = "/tmp/.cm_pgpass"
     create = f"printf '%s' {pgpass} > {remote_pgpass} && chmod 600 {remote_pgpass}"
     db_flag = f"-d {shlex.quote(database)}" if database else ""
-    run = f"PGPASSFILE={remote_pgpass} psql -U {user} -h {host} -p {port} {db_flag} -c {shlex.quote(sql)} 2>/dev/null"
+    run = (
+        f"PGPASSFILE={remote_pgpass} psql -U {shlex.quote(user)} "
+        f"-h {shlex.quote(host)} -p {int(port)} {db_flag} "
+        f"-c {shlex.quote(sql)} 2>/dev/null"
+    )
     cleanup = f"rm -f {remote_pgpass}"
     return f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
 

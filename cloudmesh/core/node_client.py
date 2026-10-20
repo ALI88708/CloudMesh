@@ -9,6 +9,13 @@ import time
 import uuid
 from pathlib import Path
 
+try:
+    from cloudmesh.core.storage import resolve_base_dir
+except ImportError:  # pragma: no cover - source checkout without installed package
+    from core.storage import resolve_base_dir
+
+MAX_RESPONSE_BYTES = 50 * 1024 * 1024
+
 
 def save_private_json(path, data):
     path = Path(path)
@@ -39,7 +46,7 @@ class NodeClient:
         self._ssl_context = (
             ssl.create_default_context(cafile=ca_file) if tls else None
         )
-        self._key_file = Path(__file__).parent.parent / ".node_keys.json"
+        self._key_file = resolve_base_dir() / ".node_keys.json"
         self._keys = self._load_keys()
 
     @classmethod
@@ -122,6 +129,12 @@ class NodeClient:
                     }
                 length_bytes += chunk
             length = int.from_bytes(length_bytes, 'big')
+            if length > MAX_RESPONSE_BYTES:
+                return {
+                    "type": "error",
+                    "message": f"Response too large ({length} bytes)",
+                    "request_sent": request_sent,
+                }
             data = b""
             while len(data) < length:
                 chunk = sock.recv(min(length - len(data), 65536))

@@ -1,4 +1,7 @@
 import json
+import os
+import re
+import tempfile
 import time
 import socket
 import subprocess
@@ -12,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .features import get_version
 from .osprofile import get_profile
+from .paths import state_file
 
 
 # === 1. AUTO-DISCOVERY ===
@@ -154,7 +158,7 @@ class ScheduleManager:
         parent directory; base_dir does not relocate the JSON file.
         Storage initialization errors propagate.
         """
-        self.file = Path(schedule_file or Path(__file__).parent.parent / ".schedule.json")
+        self.file = Path(schedule_file) if schedule_file else state_file(".schedule.json")
         self._schedules = self._load()
         if storage is None:
             from .storage import StorageManager
@@ -360,7 +364,7 @@ class ScheduleManager:
 
 class NotifyManager:
     def __init__(self, notify_file=None):
-        self.file = Path(notify_file or Path(__file__).parent.parent / ".notify.json")
+        self.file = Path(notify_file) if notify_file else state_file(".notify.json")
         self._config = self._load()
 
     def _load(self):
@@ -448,6 +452,7 @@ class CloudMeshAPI:
         self.node_keys = node_keys or {}
         self.port = port
         self._running = False
+        self._server = None
         self.api_key = api_key or secrets.token_hex(32)
         from cloudmesh.core.ddos import DDoSProtection
         self._ddos = DDoSProtection(rate_max=60, rate_window=60, ban_threshold=10)
@@ -527,65 +532,129 @@ class CloudMeshAPI:
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
                     self.wfile.write(json.dumps({"error": reason}).encode())
-                    api._ddos.release_connection(ip)
                     return
-                api_key = self.headers.get("X-Api-Key", "")
-                if not secrets.compare_digest(api_key, _api_key):
-                    api._ddos.on_auth_failure(ip)
-                    self.send_response(401)
+                try:
+                    api_key = self.headers.get("X-Api-Key", "")
+                    if not secrets.compare_digest(api_key, _api_key):
+                        api._ddos.on_auth_failure(ip)
+                        self.send_response(401)
+                        self.send_header("Content-Type", "application/json")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"error": "Unauthorized"}).encode())
+                        return
+                    api._ddos.on_auth_success(ip)
+                    result = api._handle(self)
+                    status = 200
+                    if isinstance(result, tuple):
+                        status = result[1]
+                        result = result[0]
+                    self.send_response(status)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
-                    self.wfile.write(json.dumps({"error": "Unauthorized"}).encode())
+                    self.wfile.write(json.dumps(result, indent=2).encode())
+                finally:
+                    # A handler exception (including a client disconnect) must
+                    # not leak the per-IP connection slot forever.
                     api._ddos.release_connection(ip)
-                    return
-                api._ddos.on_auth_success(ip)
-                result = api._handle(self)
-                status = 200
-                if isinstance(result, tuple):
-                    status = result[1]
-                    result = result[0]
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(result, indent=2).encode())
-                api._ddos.release_connection(ip)
 
             def log_message(self, format, *args):
                 pass
 
         self._running = True
         server = http.server.HTTPServer(("127.0.0.1", self.port), Handler)
+        self._server = server
+        self.port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         return self.port
 
     def stop(self):
         self._running = False
+        server = self._server
+        self._server = None
+        if server is not None:
+            server.shutdown()
+            server.server_close()
 
 
 # === 6. CONFIG PROFILES ===
 
 class ProfileManager:
-    def __init__(self, profiles_dir=None):
-        self.dir = Path(profiles_dir or Path(__file__).parent.parent / ".profiles")
+    """Save and restore configuration snapshots without exposing secrets.
+
+    Profiles hold the decrypted server configuration, so they are encrypted
+    with the same Fernet key as ``config.json`` and written below the active
+    CloudMesh base directory. Plaintext profiles from older releases are still
+    readable; the next save rewrites them as ciphertext.
+    """
+
+    _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+    def __init__(self, profiles_dir=None, security=None):
+        from .storage import resolve_base_dir
+
+        self._security = security
+        if profiles_dir is None:
+            base = security.base_dir if security is not None else resolve_base_dir()
+            profiles_dir = Path(base) / ".profiles"
+        self.dir = Path(profiles_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def security(self):
+        if self._security is None:
+            from .security import SecurityManager
+
+            self._security = SecurityManager(self.dir.parent)
+        return self._security
+
+    def _path(self, name):
+        if not isinstance(name, str) or not self._NAME.fullmatch(name):
+            raise ValueError(
+                "Profile names may contain only letters, digits, '.', '_' and '-'"
+            )
+        return self.dir / f"{name}.json"
 
     def list_profiles(self):
         return [f.stem for f in self.dir.glob("*.json")]
 
     def save_profile(self, name, config):
-        (self.dir / f"{name}.json").write_text(json.dumps(config, indent=2))
+        target = self._path(name)
+        token = self.security.fernet.encrypt(json.dumps(config, indent=2).encode())
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=self.dir, prefix=f".{name}.", suffix=".tmp"
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as profile_file:
+                profile_file.write(token)
+            os.replace(temporary_path, target)
+            if os.name != "nt":
+                target.chmod(0o600)
+        finally:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def load_profile(self, name):
-        f = self.dir / f"{name}.json"
-        if f.exists():
-            return json.loads(f.read_text())
-        return None
+        target = self._path(name)
+        if not target.exists():
+            return None
+        raw = target.read_bytes()
+        if raw.lstrip().startswith(b"{"):
+            return json.loads(raw.decode())
+        from cryptography.fernet import InvalidToken
+
+        try:
+            return json.loads(self.security.fernet.decrypt(raw).decode())
+        except InvalidToken as exc:
+            raise ValueError(f"Profile '{name}' cannot be decrypted") from exc
 
     def delete_profile(self, name):
-        f = self.dir / f"{name}.json"
-        if f.exists():
-            f.unlink()
+        target = self._path(name)
+        if target.exists():
+            target.unlink()
             return True
         return False
 
@@ -641,7 +710,7 @@ class TemplateManager:
         parent directory; base_dir does not relocate the JSON file.
         Storage initialization errors propagate.
         """
-        self.file = Path(templates_file or Path(__file__).parent.parent / ".templates.json")
+        self.file = Path(templates_file) if templates_file else state_file(".templates.json")
         self._templates = self._load()
         if storage is None:
             from .storage import StorageManager

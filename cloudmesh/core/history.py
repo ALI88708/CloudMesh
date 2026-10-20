@@ -3,12 +3,14 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from .paths import base_dir as default_base_dir
+
 
 class HistoryManager:
     def __init__(self, resource_monitor, base_dir=None):
         self.monitor = resource_monitor
         if base_dir is None:
-            base_dir = Path(__file__).parent.parent
+            base_dir = default_base_dir()
         self.base_dir = Path(base_dir)
         self.history_dir = self.base_dir / "history"
         self.history_dir.mkdir(exist_ok=True)

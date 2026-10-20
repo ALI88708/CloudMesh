@@ -12,7 +12,7 @@ from typing import Dict, Any
 
 from cryptography.fernet import Fernet
 
-from .storage import StorageManager
+from .storage import StorageManager, resolve_base_dir
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class MigrationManager:
 
     def __init__(self, base_dir: Path = None, init_storage: bool = True):
         if base_dir is None:
-            base_dir = Path(__file__).parent.parent
+            base_dir = resolve_base_dir()
 
         self.base_dir = Path(base_dir)
         self.config_path = self.base_dir / "config.json"

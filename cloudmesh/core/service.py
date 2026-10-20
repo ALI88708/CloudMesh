@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .advanced import NotifyManager
+from .paths import base_dir
 
 
 class ServiceMode:
@@ -16,8 +17,8 @@ class ServiceMode:
         self.alerts = alert_manager
         self.history = history_manager
         self._running = False
-        self.pid_file = Path(__file__).parent.parent / "service.pid"
-        self.log_file = Path(__file__).parent.parent / "service.log"
+        self.pid_file = base_dir() / "service.pid"
+        self.log_file = base_dir() / "service.log"
 
     def _log(self, message):
         timestamp = datetime.now().isoformat()

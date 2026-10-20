@@ -93,6 +93,27 @@ class DirectorySync:
         except Exception as e:
             return {"success": False, "action": "error", "message": str(e)}
 
+    @staticmethod
+    def _local_target(local_path, remote_file, remote_dir):
+        """Resolve a remote listing under local_path, or return None.
+
+        A compromised or misconfigured server can put ``../`` segments (or an
+        absolute path) in the output of ``find``. Joining that to the local
+        destination unchecked lets the server choose where the controller
+        writes. Resolve first, then require the result to stay below the
+        destination root.
+        """
+        try:
+            relative = os.path.relpath(remote_file, remote_dir)
+            root = Path(local_path).resolve()
+            target = (root / relative).resolve()
+            if target == root:
+                return None
+            target.relative_to(root)
+            return target
+        except (OSError, ValueError):
+            return None
+
     def sync_from(self, server_name, remote_dir, local_dir):
         results = []
         local_path = Path(local_dir)
@@ -107,8 +128,16 @@ class DirectorySync:
         for remote_file in remote_files:
             if not remote_file.strip():
                 continue
+            local_file = self._local_target(local_path, remote_file, remote_dir)
+            if local_file is None:
+                results.append({
+                    "success": False,
+                    "action": "error",
+                    "file": remote_file,
+                    "error": "Unsafe remote path outside the destination",
+                })
+                continue
             rel_path = os.path.relpath(remote_file, remote_dir)
-            local_file = local_path / rel_path
             local_file.parent.mkdir(parents=True, exist_ok=True)
 
             local_md5 = self._md5(str(local_file)) if local_file.exists() else None
