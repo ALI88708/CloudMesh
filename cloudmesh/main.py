@@ -2,6 +2,7 @@ import argparse
 import sys
 import os
 import json
+import secrets
 import subprocess
 import tempfile
 import shlex
@@ -23,7 +24,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import box
 
-from cloudmesh.core.security import SecurityManager
+from cloudmesh.core.security import SecurityManager, private_mode_ok
 from cloudmesh.core.storage import resolve_base_dir
 from cloudmesh.core.server import ServerManager
 from cloudmesh.core.monitor import ResourceMonitor
@@ -56,7 +57,7 @@ from cloudmesh.core import git_support
 from cloudmesh.core.advanced import (
     discover_network, run_full_benchmark, ScheduleManager, NotifyManager,
     CloudMeshAPI, ProfileManager, audit_server, quick_ssh,
-    TemplateManager, generate_network_map,
+    TemplateManager, generate_network_map, load_api_key_file,
 )
 
 console = Console()
@@ -2262,7 +2263,7 @@ def cmd_doctor(args):
     db_src = base / "core" / "database.py"
     if db_src.exists():
         dc = db_src.read_text()
-        checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))  # nosec B108 -- the literal is the subject of a self-diagnosis grep; no file is created
+        checks.append(("Database: temp config", "mktemp" in dc and "/tmp/.cm_" not in dc, "Passwords via mktemp files"))  # nosec B108 -- the literal is the subject of a self-diagnosis grep; no file is created
     else:
         checks.append(("Database", False, "database.py not found"))
 
@@ -2304,17 +2305,9 @@ def cmd_doctor(args):
         _sm = StorageManager(base)
         _db = base / "cloudmesh.db"
         if _db.exists():
-            if os.name == "nt":
-                checks.append(("Storage: database", True, "cloudmesh.db present"))
-            else:
-                _mode = oct(_db.stat().st_mode & 0o777)
-                checks.append(("Storage: database perms", _mode == "0o600", f"cloudmesh.db mode {_mode}"))
+            checks.append(("Storage: database", True, "cloudmesh.db present"))
         else:
             checks.append(("Storage: database", False, "cloudmesh.db missing (run cm migrate)"))
-        _key = base / ".secret.key"
-        if _key.exists() and os.name != "nt":
-            _kmode = oct(_key.stat().st_mode & 0o777)
-            checks.append(("Storage: key perms", _kmode == "0o600", f".secret.key mode {_kmode}"))
         _marker_kinds = ("servers", "groups", "nodes", "alerts", "schedules", "templates", "aliases")
         _markers = [k for k in _marker_kinds if _sm.legacy_imported(k)]
         checks.append(("Storage: legacy import", len(_markers) == len(_marker_kinds),
@@ -2344,6 +2337,32 @@ def cmd_doctor(args):
     except Exception as e:
         checks.append(("Storage backend", False, f"check failed: {e}"))
 
+    permission_fixes = []
+    permission_files = (
+        (".secret.key", base / ".secret.key"),
+        ("config.json", base / "config.json"),
+        (".node_keys.json", base / ".node_keys.json"),
+        ("cloudmesh.db", base / "cloudmesh.db"),
+        ("data/acl.json", base / "data" / "acl.json"),
+    )
+    for name, path in permission_files:
+        if not path.exists():
+            continue
+        label = f"Storage: {name} perms"
+        try:
+            ok = private_mode_ok(path)
+            if os.name == "nt":
+                detail = f"{name} present"
+            else:
+                mode = oct(path.stat().st_mode & 0o777)
+                detail = f"{name} mode {mode}" + ("" if ok else "; expected 0o600")
+            checks.append((label, ok, detail))
+            if not ok:
+                permission_fixes.append(path)
+        except OSError as e:
+            checks.append((label, False, f"permission check failed: {e}"))
+            permission_fixes.append(path)
+
     table = Table(box=box.ROUNDED)
     table.add_column("Check", style="bold")
     table.add_column("Status")
@@ -2356,6 +2375,8 @@ def cmd_doctor(args):
             all_ok = False
     console.print(table)
     console.print()
+    for path in permission_fixes:
+        console.print(f"[dim]Fix: chmod 600 {shlex.quote(str(path))}[/]")
     if all_ok:
         console.print("[green bold]All checks passed![/]")
     else:
@@ -2363,28 +2384,29 @@ def cmd_doctor(args):
 
 
 def cmd_update_via_pip():
-    """Refresh CloudMesh with pip instead of git.
+    """Install the newest verified 4.1.x wheel from GitHub Releases.
 
-    Run pip install --upgrade cloudmesh with the current Python interpreter
-    and a 300-second timeout, without a CloudMesh confirmation prompt. Print
-    subprocess errors or nonzero exit results and return without setting an
-    exit status. Version lookup errors outside the subprocess call propagate.
+    The updater downloads the release wheel and its ``SHA256SUMS``, verifies
+    the digest, and only then asks pip to install that local file. It never
+    passes a bare package name to pip, so the unrelated PyPI ``cloudmesh``
+    project can never be installed by mistake. Release and verification
+    failures are printed without a traceback.
     """
-    import sys as _sys
-
     console.print(f"[cyan]Installed version: {git_support.installed_version() or 'unknown'}[/]")
     try:
-        result = subprocess.run(
-            [_sys.executable, "-m", "pip", "install", "--upgrade", "cloudmesh"],
-            capture_output=True, text=True, timeout=300,
-        )
+        from cloudmesh.core.releases import ReleaseError, update_from_github
+    except ImportError:
+        from core.releases import ReleaseError, update_from_github
+
+    try:
+        message = update_from_github()
+    except ReleaseError as e:
+        console.print(f"[red]Update failed: {e}[/]")
+        return
     except Exception as e:
-        console.print(f"[red]pip failed to start: {e}[/]")
+        console.print(f"[red]Update failed: {e}[/]")
         return
-    if result.returncode != 0:
-        console.print(f"[red]pip upgrade failed: {result.stderr.strip()[-500:]}[/]")
-        return
-    console.print(f"[green]Updated via pip to CloudMesh {get_version().get('version', '?')}[/]")
+    console.print(f"[green]{message}[/]")
 
 
 def cmd_update(args):
@@ -2413,9 +2435,9 @@ def cmd_update(args):
         return
 
     if not (repo_dir / ".git").exists():
-        console.print("[red]Not a git repository. Cannot self-update.[/]")
-        console.print("[dim]This is a pip install. Use: pip install --upgrade cloudmesh[/]")
-        console.print("[dim]Or from the CLI: cm update --pip[/]")
+        console.print("[red]Not a git repository. Cannot self-update from git.[/]")
+        console.print("[dim]Install a verified GitHub release: cm update --pip[/]")
+        console.print("[dim]Releases: https://github.com/ALI88708/CloudMesh/releases[/]")
         return
 
     if not git_support.git_available():
@@ -3282,14 +3304,45 @@ def cmd_notify(args):
 
 
 def cmd_api(args):
+    allow_commands = getattr(args, "allow_command", None) or []
+    enable_exec = bool(getattr(args, "enable_exec", False))
+    if allow_commands and not enable_exec:
+        console.print("[red]--allow-command requires --enable-exec[/]")
+        sys.exit(2)
+
+    api_key_file = getattr(args, "api_key_file", None)
+    if api_key_file:
+        try:
+            api_key = load_api_key_file(api_key_file)
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            sys.exit(2)
+    else:
+        api_key = secrets.token_hex(32)
+
     _, server_mgr, monitor, *_ = init_components()
     keys = _load_node_keys()
-    api = CloudMeshAPI(server_mgr, monitor, keys, args.port)
+    api = CloudMeshAPI(
+        server_mgr,
+        monitor,
+        keys,
+        args.port,
+        api_key=api_key,
+        enable_exec=enable_exec,
+        exec_allowlist=allow_commands or None,
+    )
     port = api.start()
     console.print(f"[green]API running on http://127.0.0.1:{port}[/]")
-    console.print(f"[bold yellow]API Key: {api.api_key}[/]")
+    if api_key_file:
+        console.print(f"[dim]Using API key from {api_key_file}[/]")
+    else:
+        console.print(f"[bold yellow]API Key: {api.api_key}[/]")
     console.print("[dim]Use header: X-Api-Key: <key>[/]")
-    console.print("[dim]Endpoints: /api/status, /api/servers, /api/nodes, /api/exec/{server}?cmd={command}[/]")
+    if enable_exec:
+        console.print("[dim]Endpoints: /api/status, /api/servers, /api/nodes, /api/exec/{server}?cmd={command}[/]")
+    else:
+        console.print("[dim]Endpoints: /api/status, /api/servers, /api/nodes[/]")
+        console.print("[dim]/api/exec is disabled; restart with --enable-exec to allow it[/]")
     console.print("[dim]Press Ctrl+C to stop[/]")
     try:
         while True:
@@ -4329,6 +4382,22 @@ def main():
 
     api_p = subparsers.add_parser("api", help="Start REST API server")
     api_p.add_argument("--port", "-p", type=int, default=8080)
+    api_p.add_argument(
+        "--enable-exec",
+        action="store_true",
+        help="Enable /api/exec (disabled by default)",
+    )
+    api_p.add_argument(
+        "--allow-command",
+        action="append",
+        default=[],
+        metavar="COMMAND",
+        help="Allow only this exact /api/exec command (repeatable; requires --enable-exec)",
+    )
+    api_p.add_argument(
+        "--api-key-file",
+        help="Read the API key from an owner-only file instead of printing a per-run key",
+    )
 
     # === v1.2.0 NEW COMMANDS ===
 

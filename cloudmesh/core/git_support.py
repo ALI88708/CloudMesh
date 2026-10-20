@@ -94,11 +94,10 @@ def update_support(base_dir: Path | str | None = None) -> str:
 
     A source checkout is a git working tree, so it can pull when git is
     available. Everything else — a wheel install, or a checkout on a machine
-    without git — can still be refreshed with
-    `pip install --upgrade cloudmesh`, which is why "pip" is the floor and
-    "none" is never returned. Accept a .git file or directory directly under
-    base_dir, defaulting to this module's project root. Git output decoding
-    errors propagate.
+    without git — can still be refreshed with `cm update --pip`, which is why
+    "pip" is the floor and "none" is never returned. Accept a .git file or
+    directory directly under base_dir, defaulting to this module's project
+    root. Git output decoding errors propagate.
     """
     if base_dir is None:
         base_dir = Path(__file__).resolve().parent.parent.parent
@@ -169,5 +168,5 @@ def update_advice(base_dir: Path | str | None = None, tmp_path_with_git: bool = 
         return f"CloudMesh {shown} - git {git_version() or 'available'}; cm update can pull"
     return (
         f"CloudMesh {shown} - git not found; "
-        "`cm update` needs git, or use `pip install --upgrade cloudmesh`"
+        "`cm update` needs git, or use `cm update --pip` (GitHub release)"
     )

@@ -499,7 +499,7 @@ def test_linux_declining_git_keeps_install_usable(tmp_path, answer):
     result = _run_git_check(tmp_path, answer=answer, managers=("apt-get",))
 
     assert "Skipping Git" in result.stdout
-    assert "pip install --upgrade cloudmesh" in result.stdout
+    assert "cm update --pip" in result.stdout
     assert "AVAILABLE:0" in result.stdout
     assert "INSTALL:" not in result.stdout
 

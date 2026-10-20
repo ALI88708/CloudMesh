@@ -93,12 +93,12 @@ class _Completed:
 
 
 def test_update_support_is_reported_for_a_plain_pip_install(tmp_path, monkeypatch):
-    """A wheel install has no .git, but pip can still refresh it."""
+    """A wheel install has no .git, but cm update --pip can still refresh it."""
     base = tmp_path / "site-packages"
     base.mkdir()
 
-    # Not "none": `pip install --upgrade cloudmesh` works there, and reporting
-    # "none" made cm doctor's Update path row FAIL on every normal install.
+    # Not "none": `cm update --pip` works there, and reporting "none" made
+    # cm doctor's Update path row FAIL on every normal install.
     assert git_support.update_support(base) == "pip"
 
 
@@ -332,7 +332,8 @@ def test_update_outside_a_checkout_points_at_pip(monkeypatch, capsys):
     cloudmesh_main.cmd_update(_UpdateArgs())
 
     out = capsys.readouterr().out
-    assert "pip install --upgrade cloudmesh" in out
+    assert "cm update --pip" in out
+    assert "github.com/ALI88708/CloudMesh/releases" in out
 
 
 def test_update_pip_flag_works_even_outside_a_checkout(monkeypatch, capsys):
@@ -462,9 +463,8 @@ def test_update_support_accepts_git_worktree_files(monkeypatch, tmp_path, availa
 def test_wheel_update_support_does_not_probe_git(monkeypatch, tmp_path):
     """A wheel install must answer from the filesystem, never by shelling out.
 
-    Reports "pip", not "none": `pip install --upgrade cloudmesh` does work
-    there, so calling it "none" made cm doctor's Update path row fail on every
-    ordinary install.
+    Reports "pip", not "none": `cm update --pip` does work there, so calling
+    it "none" made cm doctor's Update path row fail on every ordinary install.
     """
     probe = Mock(side_effect=AssertionError("wheel installs cannot use git"))
     monkeypatch.setattr(git_support, "git_available", probe)
@@ -515,7 +515,7 @@ def test_package_version_lookup_failure_is_reported_as_unknown(monkeypatch):
 
 
 @pytest.mark.parametrize("available, version, git_version, expected", [
-    (False, "", "", ["CloudMesh unknown", "git not found", "pip install --upgrade cloudmesh"]),
+    (False, "", "", ["CloudMesh unknown", "git not found", "cm update --pip"]),
     (True, "9.8.7", "git version 2.50.0", ["CloudMesh 9.8.7", "2.50.0", "cm update can pull"]),
     (True, "9.8.7", "", ["CloudMesh 9.8.7", "git available", "cm update can pull"]),
 ])

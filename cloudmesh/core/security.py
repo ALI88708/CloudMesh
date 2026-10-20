@@ -1,12 +1,24 @@
 import os
 import json
 import logging
+import stat
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
+
+
+def private_mode_ok(path) -> bool:
+    """Return True when group and other permission bits are clear.
+
+    Windows does not expose POSIX permission bits in a form that maps to this
+    check, so the platform is treated as unverifiable rather than failed.
+    """
+    if os.name == "nt":
+        return True
+    return (stat.S_IMODE(Path(path).stat().st_mode) & 0o077) == 0
 
 
 class SecurityManager:

@@ -928,6 +928,7 @@ class NodeAgent:
 
             auth_key = req.get("auth", "") or ""
             if not hmac_mod.compare_digest(auth_key, self.auth_key):
+                _log(f"AUTH_FAIL: {ip}")
                 is_banned = self._ddos.on_auth_failure(ip)
                 is_tripwire, tripwire_name = _check_tripwire(auth_key)
                 if is_tripwire:

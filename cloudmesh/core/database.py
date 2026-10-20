@@ -31,6 +31,18 @@ def _mysql_value(value):
     ) + '"'
 
 
+def _credential_file_setup(variable, template, content):
+    """Return shell lines that create an unpredictable owner-only temp file."""
+    temp_path = f"${{TMPDIR:-/tmp}}/{template}"
+    return (
+        f'{variable}=$(mktemp "{temp_path}") || exit 1\n'
+        f"trap 'rm -f \"${variable}\"' EXIT HUP INT TERM\n"
+        "umask 077\n"
+        f"printf '%s' {shlex.quote(content)} > \"${variable}\" || exit 1\n"
+        f'chmod 600 "${variable}" || exit 1\n'
+    )
+
+
 def _mysql_cmd(user, host, port, password, database, sql):
     my_cnf = (
         "[client]\n"
@@ -41,11 +53,12 @@ def _mysql_cmd(user, host, port, password, database, sql):
     )
     if database:
         my_cnf += f"database={_mysql_value(database)}\n"
-    remote_conf = "/tmp/.cm_my.conf"
-    create = f"printf '%s' {shlex.quote(my_cnf)} > {remote_conf} && chmod 600 {remote_conf}"
-    run = f"mysql --defaults-extra-file={remote_conf} -e {shlex.quote(sql)} 2>/dev/null"
-    cleanup = f"rm -f {remote_conf}"
-    return f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
+    setup = _credential_file_setup("remote_conf", "cm_my.XXXXXX", my_cnf)
+    run = (
+        f'mysql --defaults-extra-file="$remote_conf" '
+        f"-e {shlex.quote(sql)} 2>/dev/null"
+    )
+    return f"{setup}{run}\nrc=$?; exit $rc"
 
 def _pgpass_value(value):
     # PostgreSQL's .pgpass format has no escape for a line break. Drop control
@@ -55,19 +68,15 @@ def _pgpass_value(value):
 
 
 def _postgres_cmd(user, host, port, password, database, sql):
-    pgpass = shlex.quote(
-        f"*:*:*:{_pgpass_value(user)}:{_pgpass_value(password)}"
-    )
-    remote_pgpass = "/tmp/.cm_pgpass"
-    create = f"printf '%s' {pgpass} > {remote_pgpass} && chmod 600 {remote_pgpass}"
+    pgpass = f"*:*:*:{_pgpass_value(user)}:{_pgpass_value(password)}"
+    setup = _credential_file_setup("remote_pgpass", "cm_pgpass.XXXXXX", pgpass)
     db_flag = f"-d {shlex.quote(database)}" if database else ""
     run = (
-        f"PGPASSFILE={remote_pgpass} psql -U {shlex.quote(user)} "
+        f'PGPASSFILE="$remote_pgpass" psql -U {shlex.quote(user)} '
         f"-h {shlex.quote(host)} -p {int(port)} {db_flag} "
         f"-c {shlex.quote(sql)} 2>/dev/null"
     )
-    cleanup = f"rm -f {remote_pgpass}"
-    return f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
+    return f"{setup}{run}\nrc=$?; exit $rc"
 
 def list_databases(server_name, db_type="mysql", host="127.0.0.1", port=None, user="root", password=""):  # nosec B107 -- empty-string default, not a hardcoded credential
     """List MySQL or PostgreSQL databases through a configured server's SSH host.
@@ -171,21 +180,31 @@ def db_backup(server_name, database, backup_path="/tmp", db_type="mysql", host="
     filename = f"{database}_backup_{__import__('time').strftime('%Y%m%d_%H%M%S')}.sql"
 
     if db_type == "mysql":
-        p = port or 3306
-        my_cnf = f"[client]\nuser={user}\npassword={password}\nhost={host}\nport={p}\n"
-        remote_conf = "/tmp/.cm_my.conf"
-        create = f"printf '%s' {shlex.quote(my_cnf)} > {remote_conf} && chmod 600 {remote_conf}"
-        run = f"mysqldump --defaults-extra-file={remote_conf} {shlex.quote(database)} > {shlex.quote(backup_path + '/' + filename)} 2>/dev/null"
-        cleanup = f"rm -f {remote_conf}"
-        cmd = f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
+        p = int(port or 3306)
+        my_cnf = (
+            "[client]\n"
+            f"user={_mysql_value(user)}\n"
+            f"password={_mysql_value(password)}\n"
+            f"host={_mysql_value(host)}\n"
+            f"port={p}\n"
+        )
+        setup = _credential_file_setup("remote_conf", "cm_my.XXXXXX", my_cnf)
+        run = (
+            f'mysqldump --defaults-extra-file="$remote_conf" '
+            f"{shlex.quote(database)} > "
+            f"{shlex.quote(backup_path + '/' + filename)} 2>/dev/null"
+        )
+        cmd = f"{setup}{run}\nrc=$?; exit $rc"
     elif db_type == "postgres":
-        p = port or 5432
-        pgpass = shlex.quote(f"*:*:*:{user}:{password}")
-        remote_pgpass = "/tmp/.cm_pgpass"
-        create = f"printf '%s' {pgpass} > {remote_pgpass} && chmod 600 {remote_pgpass}"
-        run = f"PGPASSFILE={remote_pgpass} pg_dump -U {user} -h {host} -p {p} {shlex.quote(database)} > {shlex.quote(backup_path + '/' + filename)} 2>/dev/null"
-        cleanup = f"rm -f {remote_pgpass}"
-        cmd = f"{create} && {run}; rc=$?; {cleanup}; exit $rc"
+        p = int(port or 5432)
+        pgpass = f"*:*:*:{_pgpass_value(user)}:{_pgpass_value(password)}"
+        setup = _credential_file_setup("remote_pgpass", "cm_pgpass.XXXXXX", pgpass)
+        run = (
+            f'PGPASSFILE="$remote_pgpass" pg_dump -U {shlex.quote(user)} '
+            f"-h {shlex.quote(host)} -p {p} {shlex.quote(database)} > "
+            f"{shlex.quote(backup_path + '/' + filename)} 2>/dev/null"
+        )
+        cmd = f"{setup}{run}\nrc=$?; exit $rc"
     else:
         return f"Unsupported: {db_type}"
 

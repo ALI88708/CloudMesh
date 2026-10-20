@@ -1,4 +1,4 @@
-# CloudMesh 4.0.0 hardening audit
+# CloudMesh 4.1.2 LTS hardening audit
 
 Date: 2026-10-20
 
@@ -17,6 +17,9 @@ certification or a penetration test of a deployed host.
 | 6 | The REST API leaked a per-IP connection slot whenever a handler raised, and `stop()` only flipped a flag. The listening socket stayed bound after `cm api` exited. | Handler work is wrapped in `try/finally` for slot release. `stop()` shuts down and closes the server, and the reported port is the bound ephemeral port. |
 | 7 | Shell metacharacters in log search patterns, watcher process names, Docker container names, image names, environment values, compose paths, PostgreSQL host/user and passfile fields, and MySQL option-file values could break out of the remote command or inject config directives. | Values are quoted with `shlex.quote` or escaped for the target config format. Docker image, deployment container, port, and environment-variable names are allowlisted; ad-hoc container arguments are shell-quoted. |
 | 8 | `cm node install` uploaded to the predictable `/tmp/node-install.sh` and ran it with `bash`, which is absent on FreeBSD and minimal Linux. | The installer uses `mktemp`, a unique remote path, `sh` (the script's actual interpreter), and removes both local and remote temporary files. |
+| 9 | A valid API key could call `/api/exec`; the dangerous-command blocklist was the only control. String matching is bypassable, so a leaked key meant remote command execution. | `/api/exec` is disabled by default. The operator must pass `cm api --enable-exec`; `--allow-command` restricts execution to exact command strings. The API remains loopback-only. |
+| 10 | `cm api` generated a key per run and printed it only to the terminal, so automation had no supported key source. | Generated keys stay per-run and are never persisted. Automation uses `--api-key-file`; on POSIX the file must be mode `0600`. |
+| 11 | Remote MySQL and PostgreSQL helper files used fixed `/tmp/.cm_my.conf` and `/tmp/.cm_pgpass` paths, so a hostile local account could race them. | Each command uses `mktemp`, `umask 077`, `chmod 600`, and an `EXIT HUP INT TERM` cleanup trap. A failed `mktemp` aborts rather than falling back to a predictable path. |
 
 ## Regression coverage
 
@@ -40,16 +43,22 @@ Run the suite with:
 python -m pytest cloudmesh/tests -q
 ```
 
-## Residual notes
+## Accepted risks
 
-- `cm api` prints its generated API key to the terminal on startup. That is
-  intentional bootstrap behaviour; treat the terminal output as sensitive.
-- `/api/exec` uses a dangerous-command blocklist as defence in depth. It is not
-  a sandbox; only expose the API on a trusted network.
-- Remote database helper files still use fixed `/tmp/.cm_my.conf` and
-  `/tmp/.cm_pgpass` names, created with mode `0600` and removed after use. A
-  hostile local account on the managed host could race those paths. Moving to
-  `mktemp` is tracked as a follow-up.
-- `docker exec` intentionally passes the user-supplied command string through;
-  container, image, and deployment inputs are quoted or validated, but the
-  command itself is an operator instruction.
+- **REST API is loopback-only HTTP.** The API has no external-bind flag and is
+  not a TLS terminator. A local process that obtains the key can call it, and a
+  local observer can read loopback traffic. Remote use is through an SSH tunnel;
+  adding public bind or TLS is out of scope for `4.1.x`.
+- **`/api/exec` is an operator feature, not a sandbox.** It is opt-in and can be
+  restricted with `--allow-command`, but an enabled unrestricted exec endpoint
+  intentionally runs the operator's command. The container, image, and
+  deployment inputs are quoted or validated; the command itself is an operator
+  instruction.
+- **`docker exec` passes the operator's command through.** This is the feature,
+  not an injection. The container and deployment are the trust boundary.
+- **The node protocol is unchanged.** Shared auth keys, optional TLS, optional
+  SPA, and no replay cache remain. Use TLS; a protocol change is deferred to a
+  feature line.
+- **`cm api` prints a generated key to the terminal.** That is intentional
+  bootstrap behaviour; treat the terminal output as sensitive. Automation uses
+  `--api-key-file` instead.

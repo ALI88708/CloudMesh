@@ -18,6 +18,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -58,6 +60,15 @@ jobs:
           python scripts/smoke_cli.py --cmd cm --jobs 8 --quiet
           echo "[OK] release artifact verified"
 
+      - name: Generate SBOM
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .rel-venv/bin/activate
+          python -m pip install --quiet cyclonedx-bom
+          cyclonedx-py environment --output-file dist/sbom.cdx.json
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}
@@ -75,6 +86,17 @@ jobs:
           merge-multiple: true
 
       - uses: actions/checkout@v4
+
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum artifacts/*.whl artifacts/*.tar.gz > artifacts/SHA256SUMS
+
+      - name: Attest wheel provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/*.whl
 
       - name: Work out the release notes
         id: notes
@@ -99,3 +121,5 @@ jobs:
           files: |
             artifacts/*.whl
             artifacts/*.tar.gz
+            artifacts/SHA256SUMS
+            artifacts/sbom.cdx.json

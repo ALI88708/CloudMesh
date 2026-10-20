@@ -4,6 +4,65 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.1.2] - 2026-10-20 — LTS
+
+This is the first published 4.x release and the supported LTS artifact.
+There is no separate `4.0.0` tag; `4.0.0` remains the internal BSD/hardening
+checkpoint. Support runs until **2027-10-20**.
+
+### Security
+
+- `/api/exec` is disabled by default. Enabling it requires `cm api --enable-exec`;
+  an optional exact-match `--allow-command` list narrows it further.
+- The REST API remains loopback-only and now sends `X-Content-Type-Options`,
+  `Cache-Control: no-store`, and `X-Frame-Options` on every response.
+- Generated API keys are per-run and never persisted. Automation can use
+  `--api-key-file`, which requires mode `0600` on POSIX.
+- API authentication failures are rate-limited in the process log and are never
+  appended to the command ledger.
+- `cm update --pip` downloads a GitHub release wheel, verifies it against the
+  release's `SHA256SUMS`, and installs only that local file. The PyPI name
+  `cloudmesh` belongs to a different project and is never used.
+- Remote MySQL/PostgreSQL credential files use `mktemp`, `umask 077`, and a
+  cleanup trap instead of predictable `/tmp` paths.
+- Release artifacts ship with `SHA256SUMS`, a CycloneDX SBOM, and GitHub build
+  provenance attestations.
+
+### Fixed
+
+- `cm cmdlog --verify` no longer reports a broken chain after the 500-entry
+  rotation. A checkpoint records the last dropped hash, so trimming is not
+  mistaken for tampering.
+- The command ledger detects edits to the retained first entry and the
+  checkpoint.
+- `cm doctor` audits secret-file permissions and reports a remediation command.
+- The node agent records `AUTH_FAIL` in its local log before the DDoS counter
+  handles a rejected key.
+- Python 3.10 is no longer supported. Python 3.11, 3.12, and 3.13 are supported.
+
+## [4.1.1] - 2026-10-20 — internal checkpoint
+
+Not published. Fixes found while validating the 4.1 security baseline.
+
+### Fixed
+
+- Command-ledger rotation checkpoint.
+- `mktemp`-based remote database credential files.
+- Node auth-failure log line.
+- Secret-permission checks in `cm doctor`.
+
+## [4.1.0] - 2026-10-20 — internal checkpoint
+
+Not published. Security-feature baseline for the 4.1 line.
+
+### Added
+
+- Opt-in API exec with an optional exact-match allowlist.
+- Per-run API keys and `--api-key-file` for automation.
+- API security headers and rate-limited authentication-failure logging.
+- GitHub-release update channel with SHA-256 verification.
+- LTS policy, upgrade guide, release checksums, SBOM, and provenance.
+
 ## [4.0.0] - 2026-10-20 — BSD family support
 
 CloudMesh now runs on FreeBSD, OpenBSD and NetBSD alongside Linux and Windows.

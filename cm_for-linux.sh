@@ -145,7 +145,7 @@ check_git() {
 
     ask "   Install Git now? (y/n): " "n" INSTALL_GIT
     if [ "$INSTALL_GIT" != "y" ] && [ "$INSTALL_GIT" != "Y" ]; then
-        warn "Skipping Git. CloudMesh still works; 'cm update' will need 'pip install --upgrade cloudmesh' instead."
+        warn "Skipping Git. CloudMesh still works; 'cm update' will need 'cm update --pip' (GitHub release) instead."
         return 0
     fi
 
