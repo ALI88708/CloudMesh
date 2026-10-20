@@ -1,7 +1,8 @@
 import json, os, subprocess, ssl, socket
 from datetime import datetime
+from cloudmesh.core.paths import data_dir
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DATA_DIR = str(data_dir())
 
 def _load_config():
     p = os.path.join(DATA_DIR, "cloudmesh.json")

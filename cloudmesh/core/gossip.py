@@ -3,10 +3,12 @@ import time
 from pathlib import Path
 from datetime import datetime
 
+from .paths import state_file
+
 
 class GossipManager:
     def __init__(self, data_file=None):
-        self.data_file = Path(data_file or Path(__file__).parent.parent / ".gossip_trust.json")
+        self.data_file = Path(data_file) if data_file else state_file(".gossip_trust.json")
         self._data = self._load()
 
     def _load(self):

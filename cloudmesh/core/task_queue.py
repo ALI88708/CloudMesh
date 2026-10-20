@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .node_client import NodeClient
 from .queue_storage import SQLiteJobStore
+from .paths import state_file
 
 
 class WorkerAlreadyRunningError(RuntimeError):
@@ -26,7 +27,7 @@ class SmartTaskQueue:
         self.nodes = nodes
         default_dir = os.environ.get("CLOUDMESH_QUEUE_DIR")
         self.queue_dir = Path(
-            queue_dir or default_dir or Path(__file__).parent.parent / ".task_queue"
+            queue_dir or default_dir or state_file(".task_queue")
         ).expanduser()
         self.client_factory = client_factory
         self.failover_grace_seconds = self._finite_nonnegative(

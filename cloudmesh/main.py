@@ -24,6 +24,7 @@ from rich.text import Text
 from rich import box
 
 from cloudmesh.core.security import SecurityManager
+from cloudmesh.core.storage import resolve_base_dir
 from cloudmesh.core.server import ServerManager
 from cloudmesh.core.monitor import ResourceMonitor
 from cloudmesh.core.scheduler import TaskScheduler
@@ -60,7 +61,7 @@ from cloudmesh.core.advanced import (
 
 console = Console()
 
-NODE_KEYS_FILE = Path(__file__).parent / ".node_keys.json"
+NODE_KEYS_FILE = resolve_base_dir() / ".node_keys.json"
 
 COMPLETION_COMMANDS = (
     "server monitor dashboard run plan transfer sync history deploy alerts group "
@@ -724,7 +725,7 @@ def cmd_drift(args):
     from cloudmesh.core.drift import DriftManager
     _, server_mgr, *_ = init_components()
     from cloudmesh.core.storage import StorageManager
-    sm = StorageManager(Path(__file__).parent)
+    sm = StorageManager(resolve_base_dir())
     dm = DriftManager(server_mgr=server_mgr, storage=sm)
     action = getattr(args, "action", None)
     if action == "snapshot":
@@ -779,9 +780,9 @@ def cmd_diagnose(args):
     from cloudmesh.core.diagnose import DiagnoseEngine
     from cloudmesh.core.storage import StorageManager
     _, server_mgr, monitor, *_ = init_components()
-    sm = StorageManager(Path(__file__).parent)
+    sm = StorageManager(resolve_base_dir())
     engine = DiagnoseEngine(monitor=monitor, server_mgr=server_mgr, storage=sm,
-                            base_dir=Path(__file__).parent)
+                            base_dir=resolve_base_dir())
     names = None
     if getattr(args, "name", None):
         names = [args.name]
@@ -1870,6 +1871,53 @@ def cmd_node_exec(args):
         console.print(f"[red]Failed: {result.get('stderr', 'Unknown error')}[/]")
 
 
+def _run_node_installer(server_mgr, server_name, content):
+    """Upload and run the POSIX installer without a predictable remote path.
+
+    ``node-install.sh`` is ``#!/bin/sh`` because the BSD family has no bash.
+    A unique remote name avoids clobbering (or following a symlink planted at)
+    ``/tmp/node-install.sh``, and the local copy is removed even when upload or
+    execution fails.
+    """
+    local_tmp = None
+    remote_tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix="cloudmesh-install-",
+            suffix=".sh",
+            delete=False,
+        ) as installer:
+            installer.write(content)
+            local_tmp = installer.name
+
+        probe = server_mgr.execute(server_name, "mktemp /tmp/cloudmesh-install.XXXXXX")
+        if probe.get("exit_code") == 0:
+            candidates = probe.get("stdout", "").strip().splitlines()
+            if candidates:
+                remote_tmp = candidates[-1]
+        if not remote_tmp:
+            raise RuntimeError(
+                "mktemp failed on the remote host; refusing a predictable temporary path"
+            )
+
+        FileTransfer(server_mgr).upload(server_name, local_tmp, remote_tmp)
+        server_mgr.execute(server_name, f"chmod +x {shlex.quote(remote_tmp)}")
+        return server_mgr.execute(server_name, f"sh {shlex.quote(remote_tmp)}")
+    finally:
+        if local_tmp:
+            try:
+                os.unlink(local_tmp)
+            except OSError:
+                pass
+        if remote_tmp:
+            try:
+                server_mgr.execute(server_name, f"rm -f {shlex.quote(remote_tmp)}")
+            except Exception:
+                pass
+
+
 def cmd_node_install(args):
     console.print(f"[cyan]Installing CloudMesh Node on {args.host}...[/]")
     security = SecurityManager()
@@ -1882,16 +1930,13 @@ def cmd_node_install(args):
         if not node_script.exists():
             console.print("[red]node-install.sh not found in cloudmesh/node/[/]")
             return
-        content = node_script.read_text()
-        local_tmp = os.path.join(tempfile.gettempdir(), "node-install.sh")
-        with open(local_tmp, "w") as f:
-            f.write(content)
-        transfer = FileTransfer(server_mgr)
-        transfer.upload(temp_name, local_tmp, "/tmp/node-install.sh")
-        server_mgr.execute(temp_name, "chmod +x /tmp/node-install.sh")
-        os.remove(local_tmp)
+        content = node_script.read_text(encoding="utf-8")
         console.print("  [dim]Running installer...[/]")
-        result = server_mgr.execute(temp_name, "bash /tmp/node-install.sh")
+        try:
+            result = _run_node_installer(server_mgr, temp_name, content)
+        except Exception as exc:
+            console.print(f"[red]Installation failed: {exc}[/]")
+            return
         if result["exit_code"] == 0:
             console.print("[green]Node installed successfully![/]")
             console.print(result["stdout"])
@@ -2056,7 +2101,7 @@ def cmd_alias(args):
     JSON fallback write errors propagate.
     """
     from cloudmesh.core.storage import StorageManager
-    storage = StorageManager(Path(__file__).parent)
+    storage = StorageManager(resolve_base_dir())
     if args.remove:
         if remove_alias(args.remove, storage=storage):
             console.print(f"[green]Alias '{args.remove}' removed[/]")
@@ -2174,9 +2219,9 @@ def cmd_doctor(args):
     # feeding it here would report a source path as though it were the data
     # directory.
     try:
-        from cloudmesh.core.storage import resolve_base_dir
+        from cloudmesh.core import storage as storage_module
 
-        data_dir = resolve_base_dir()
+        data_dir = storage_module.resolve_base_dir()
         configured = bool(os.environ.get("CLOUDMESH_DIR"))
         checks.append((
             "Data directory",
@@ -2680,7 +2725,7 @@ def cmd_keys(args):
     """Generate, list, show, deploy, or remove managed SSH keys."""
     home = Path.home()
     ssh_dir = home / ".ssh"
-    keys_file = Path(__file__).parent / ".ssh_keys.json"
+    keys_file = resolve_base_dir() / ".ssh_keys.json"
 
     def load_keys():
         if keys_file.exists():
@@ -2792,7 +2837,7 @@ def cmd_keys(args):
 
 def cmd_config(args):
     """List, export, import, or show CloudMesh configuration files."""
-    config_dir = Path(__file__).parent
+    config_dir = resolve_base_dir()
     config_files = {
         "servers": config_dir / "data" / "servers.json",
         "node_keys": config_dir / ".node_keys.json",
@@ -3251,35 +3296,46 @@ def cmd_api(args):
             time.sleep(1)
     except KeyboardInterrupt:
         console.print("\n[dim]API stopped[/]")
+    finally:
+        stop = getattr(api, "stop", None)
+        if stop:
+            stop()
 
 
 def cmd_profile(args):
-    mgr = ProfileManager()
-    if args.action == "list":
-        profiles = mgr.list_profiles()
-        if not profiles:
-            console.print("[dim]No profiles[/]")
-            return
-        for p in profiles:
-            console.print(f"  {p}")
-    elif args.action == "save":
-        security, *_ = init_components()
-        config = security.load_config()
-        mgr.save_profile(args.name, config)
-        console.print(f"[green]Profile '{args.name}' saved[/]")
-    elif args.action == "load":
-        security, *_ = init_components()
-        config = mgr.load_profile(args.name)
-        if config:
-            security.save_config(config)
-            console.print(f"[green]Profile '{args.name}' loaded[/]")
+    try:
+        if args.action == "save":
+            security, *_ = init_components()
+            mgr = ProfileManager(security=security)
+            config = security.load_config()
+            mgr.save_profile(args.name, config)
+            console.print(f"[green]Profile '{args.name}' saved[/]")
+        elif args.action == "load":
+            security, *_ = init_components()
+            mgr = ProfileManager(security=security)
+            config = mgr.load_profile(args.name)
+            if config:
+                security.save_config(config)
+                console.print(f"[green]Profile '{args.name}' loaded[/]")
+            else:
+                console.print(f"[red]Profile '{args.name}' not found[/]")
         else:
-            console.print(f"[red]Profile '{args.name}' not found[/]")
-    elif args.action == "delete":
-        if mgr.delete_profile(args.name):
-            console.print(f"[green]Profile '{args.name}' deleted[/]")
-        else:
-            console.print(f"[red]Profile '{args.name}' not found[/]")
+            mgr = ProfileManager()
+            if args.action == "list":
+                profiles = mgr.list_profiles()
+                if not profiles:
+                    console.print("[dim]No profiles[/]")
+                    return
+                for p in profiles:
+                    console.print(f"  {p}")
+            elif args.action == "delete":
+                if mgr.delete_profile(args.name):
+                    console.print(f"[green]Profile '{args.name}' deleted[/]")
+                else:
+                    console.print(f"[red]Profile '{args.name}' not found[/]")
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        sys.exit(2)
 
 
 def cmd_audit(args):

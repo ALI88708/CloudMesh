@@ -2,10 +2,14 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+from .paths import state_file
+
 
 class CheckpointManager:
     def __init__(self, checkpoint_dir=None):
-        self.checkpoint_dir = Path(checkpoint_dir or Path(__file__).parent.parent / ".checkpoints")
+        self.checkpoint_dir = (
+            Path(checkpoint_dir) if checkpoint_dir else state_file(".checkpoints")
+        )
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def _cp_file(self, job_id):

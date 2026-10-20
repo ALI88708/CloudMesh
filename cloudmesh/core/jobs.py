@@ -7,12 +7,14 @@ import signal
 from pathlib import Path
 from datetime import datetime
 
+from .paths import state_file
+
 
 class JobManager:
     """Manage async background jobs on the controller side."""
 
     def __init__(self, jobs_dir=None):
-        self.jobs_dir = Path(jobs_dir or Path(__file__).parent.parent / ".jobs")
+        self.jobs_dir = Path(jobs_dir) if jobs_dir else state_file(".jobs")
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
 
     def _job_file(self, job_id):

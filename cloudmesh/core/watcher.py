@@ -1,21 +1,16 @@
-import json, os, time
+import json, os, shlex, time
 from cloudmesh.core.ssh_util import run_ssh
+from cloudmesh.core.server_config import get_server as _store_server
+from cloudmesh.core.server_config import load_server_config
+from cloudmesh.core.paths import data_dir
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DATA_DIR = str(data_dir())
 
 def _load_config():
-    p = os.path.join(DATA_DIR, "cloudmesh.json")
-    if os.path.exists(p):
-        with open(p) as f:
-            return json.load(f)
-    return {}
+    return load_server_config()
 
 def _get_server(name):
-    cfg = _load_config()
-    for section in ["servers", "nodes"]:
-        if name in cfg.get(section, {}):
-            return cfg[section][name]
-    return None
+    return _store_server(name)
 
 def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)
@@ -65,7 +60,9 @@ def check_process(server_name, process_name):
     if not srv:
         return {"server": server_name, "process": process_name, "running": False, "error": "Server not found"}
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
-    out, rc = _run_ssh(host, user, key, f"pgrep -f '{process_name}' 2>/dev/null | wc -l")
+    out, rc = _run_ssh(
+        host, user, key, f"pgrep -f {shlex.quote(process_name)} 2>/dev/null | wc -l"
+    )
     try:
         count = int(out.strip())
     except:

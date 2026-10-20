@@ -1,22 +1,17 @@
 import json, os, time, signal
 from cloudmesh.core.ssh_util import run_ssh
 from cloudmesh.core.osprofile import get_profile
+from cloudmesh.core.server_config import get_server as _store_server
+from cloudmesh.core.server_config import load_server_config
+from cloudmesh.core.paths import data_dir
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DATA_DIR = str(data_dir())
 
 def _load_config():
-    p = os.path.join(DATA_DIR, "cloudmesh.json")
-    if os.path.exists(p):
-        with open(p) as f:
-            return json.load(f)
-    return {}
+    return load_server_config()
 
 def _get_server(name):
-    cfg = _load_config()
-    for section in ["servers", "nodes"]:
-        if name in cfg.get(section, {}):
-            return cfg[section][name]
-    return None
+    return _store_server(name)
 
 def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)

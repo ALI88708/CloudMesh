@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime
 
 from cloudmesh.core.osprofile import get_profile
+from cloudmesh.core.paths import state_file
 
 
 def ping_all(server_mgr, node_keys=None):
@@ -242,7 +243,7 @@ def create_alias(name, command, aliases_file=None, storage=None):
     Mirror write errors are suppressed on the storage path, but file write
     errors from the JSON-only path propagate.
     """
-    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    f = Path(aliases_file) if aliases_file else state_file(".aliases.json")
     if isinstance(command, dict):
         command = command.get("command", "")
     command = str(command)
@@ -297,7 +298,7 @@ def get_aliases(aliases_file=None, storage=None):
     Supplying storage also attempts a marker-guarded legacy import.
     Missing or unreadable JSON yields an empty dictionary.
     """
-    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    f = Path(aliases_file) if aliases_file else state_file(".aliases.json")
     if storage is not None:
         try:
             if not storage.legacy_imported("aliases"):
@@ -323,7 +324,7 @@ def remove_alias(name, aliases_file=None, storage=None):
     With storage, suppress database and mirror errors; True does not confirm
     a successful deletion. Without storage, JSON file write errors propagate.
     """
-    f = Path(aliases_file or Path(__file__).parent.parent / ".aliases.json")
+    f = Path(aliases_file) if aliases_file else state_file(".aliases.json")
     if storage is not None:
         try:
             existed = name in storage.list_aliases()

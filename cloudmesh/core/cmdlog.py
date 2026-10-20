@@ -3,6 +3,8 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
+from .paths import base_dir as default_base_dir
+
 
 GENESIS_HASH = "0" * 64
 
@@ -15,7 +17,7 @@ def _compute_hash(prev_hash, timestamp, command, args=""):
 class CommandLog:
     def __init__(self, base_dir=None):
         if base_dir is None:
-            base_dir = Path(__file__).parent.parent
+            base_dir = default_base_dir()
         self.base_dir = Path(base_dir)
         self.log_file = self.base_dir / "command_log.json"
         self._entries = []

@@ -10,12 +10,13 @@ from datetime import datetime
 from cryptography.fernet import Fernet
 
 from cloudmesh.core.shamir import ShamirSecretSharing
+from cloudmesh.core.paths import base_dir as default_base_dir
 
 
 class PanicManager:
     def __init__(self, base_dir=None, keyring=None):
         """Initialize the panic manager and its file paths under base_dir."""
-        self.base_dir = Path(base_dir or Path(__file__).parent.parent)
+        self.base_dir = Path(base_dir) if base_dir else default_base_dir()
         self.secret_key_file = self.base_dir / ".secret.key"
         self.node_keys_file = self.base_dir / ".node_keys.json"
         self.panic_log_file = self.base_dir / ".panic_log.json"
@@ -284,7 +285,7 @@ class PanicManager:
 
 class TripwireManager:
     def __init__(self, base_dir=None):
-        self.base_dir = Path(base_dir or Path(__file__).parent.parent)
+        self.base_dir = Path(base_dir) if base_dir else default_base_dir()
         self.node_keys_file = self.base_dir / ".node_keys.json"
         self.tripwire_log = self.base_dir / ".tripwire_log.json"
 
@@ -394,7 +395,7 @@ class TripwireManager:
 
 class ShamirPanicManager:
     def __init__(self, base_dir=None):
-        self.base_dir = Path(base_dir or Path(__file__).parent.parent)
+        self.base_dir = Path(base_dir) if base_dir else default_base_dir()
         self.shares_file = self.base_dir / ".panic_shares.json"
         self.panic_manager = PanicManager(base_dir)
 

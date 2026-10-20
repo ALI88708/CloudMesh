@@ -1,7 +1,7 @@
-import json, os, shlex
+import shlex
 from cloudmesh.core.ssh_util import run_ssh
-
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+from cloudmesh.core.server_config import get_server as _store_server
+from cloudmesh.core.server_config import load_server_config
 
 ALLOWED_RULES = {
     "allow", "deny", "reject",
@@ -28,18 +28,11 @@ def _validate_rule(rule):
 
 
 def _load_config():
-    p = os.path.join(DATA_DIR, "cloudmesh.json")
-    if os.path.exists(p):
-        with open(p) as f:
-            return json.load(f)
-    return {}
+    return load_server_config()
+
 
 def _get_server(name):
-    cfg = _load_config()
-    for section in ["servers", "nodes"]:
-        if name in cfg.get(section, {}):
-            return cfg[section][name]
-    return None
+    return _store_server(name)
 
 def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)

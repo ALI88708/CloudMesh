@@ -4,7 +4,9 @@ import json
 import os
 from collections import defaultdict
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+from cloudmesh.core.paths import data_dir
+
+DATA_DIR = str(data_dir())
 
 
 class RateLimiter:

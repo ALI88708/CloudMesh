@@ -1,7 +1,8 @@
 import json, os, subprocess
 from cloudmesh.core.ssh_util import run_ssh
+from cloudmesh.core.paths import data_dir
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DATA_DIR = str(data_dir())
 
 _PLUGINS_WARNING = (
     "SECURITY WARNING: plugins.json executes arbitrary commands. "
