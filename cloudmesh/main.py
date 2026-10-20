@@ -24,7 +24,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import box
 
-from cloudmesh.core.security import SecurityManager
+from cloudmesh.core.security import SecurityManager, private_mode_ok
 from cloudmesh.core.storage import resolve_base_dir
 from cloudmesh.core.server import ServerManager
 from cloudmesh.core.monitor import ResourceMonitor
@@ -2305,17 +2305,9 @@ def cmd_doctor(args):
         _sm = StorageManager(base)
         _db = base / "cloudmesh.db"
         if _db.exists():
-            if os.name == "nt":
-                checks.append(("Storage: database", True, "cloudmesh.db present"))
-            else:
-                _mode = oct(_db.stat().st_mode & 0o777)
-                checks.append(("Storage: database perms", _mode == "0o600", f"cloudmesh.db mode {_mode}"))
+            checks.append(("Storage: database", True, "cloudmesh.db present"))
         else:
             checks.append(("Storage: database", False, "cloudmesh.db missing (run cm migrate)"))
-        _key = base / ".secret.key"
-        if _key.exists() and os.name != "nt":
-            _kmode = oct(_key.stat().st_mode & 0o777)
-            checks.append(("Storage: key perms", _kmode == "0o600", f".secret.key mode {_kmode}"))
         _marker_kinds = ("servers", "groups", "nodes", "alerts", "schedules", "templates", "aliases")
         _markers = [k for k in _marker_kinds if _sm.legacy_imported(k)]
         checks.append(("Storage: legacy import", len(_markers) == len(_marker_kinds),
@@ -2345,6 +2337,32 @@ def cmd_doctor(args):
     except Exception as e:
         checks.append(("Storage backend", False, f"check failed: {e}"))
 
+    permission_fixes = []
+    permission_files = (
+        (".secret.key", base / ".secret.key"),
+        ("config.json", base / "config.json"),
+        (".node_keys.json", base / ".node_keys.json"),
+        ("cloudmesh.db", base / "cloudmesh.db"),
+        ("data/acl.json", base / "data" / "acl.json"),
+    )
+    for name, path in permission_files:
+        if not path.exists():
+            continue
+        label = f"Storage: {name} perms"
+        try:
+            ok = private_mode_ok(path)
+            if os.name == "nt":
+                detail = f"{name} present"
+            else:
+                mode = oct(path.stat().st_mode & 0o777)
+                detail = f"{name} mode {mode}" + ("" if ok else "; expected 0o600")
+            checks.append((label, ok, detail))
+            if not ok:
+                permission_fixes.append(path)
+        except OSError as e:
+            checks.append((label, False, f"permission check failed: {e}"))
+            permission_fixes.append(path)
+
     table = Table(box=box.ROUNDED)
     table.add_column("Check", style="bold")
     table.add_column("Status")
@@ -2357,6 +2375,8 @@ def cmd_doctor(args):
             all_ok = False
     console.print(table)
     console.print()
+    for path in permission_fixes:
+        console.print(f"[dim]Fix: chmod 600 {shlex.quote(str(path))}[/]")
     if all_ok:
         console.print("[green bold]All checks passed![/]")
     else:

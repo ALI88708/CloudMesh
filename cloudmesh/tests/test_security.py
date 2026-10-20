@@ -837,6 +837,53 @@ class TestSpaPacket:
         max_age = 30
         assert abs(current_time - stale_timestamp) > max_age
 
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission check")
+def test_private_mode_accepts_only_owner_only_files(tmp_path):
+    from core.security import private_mode_ok
+
+    path = tmp_path / "secret"
+    path.write_text("x")
+    path.chmod(0o600)
+    assert private_mode_ok(path) is True
+    path.chmod(0o644)
+    assert private_mode_ok(path) is False
+
+
+def test_node_logs_auth_failures():
+    source = (Path(__file__).resolve().parent.parent / "node" / "cloudmesh_node.py").read_text()
+    assert "AUTH_FAIL" in source
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission check")
+def test_doctor_reports_and_remediates_secret_permissions(tmp_path, monkeypatch, capsys):
+    from cloudmesh import main as cloudmesh_main
+
+    base = tmp_path / "data dir"
+    files = [
+        base / ".secret.key",
+        base / "config.json",
+        base / ".node_keys.json",
+        base / "cloudmesh.db",
+        base / "data" / "acl.json",
+    ]
+    for path in files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+        path.chmod(0o644)
+
+    monkeypatch.setenv("COLUMNS", "300")
+    cloudmesh_main.cmd_doctor(SimpleNamespace(base_dir=str(base)))
+
+    out = capsys.readouterr().out
+    assert "Storage: .secret.key perms" in out
+    assert "Storage: config.json perms" in out
+    assert "Storage: .node_keys.json perms" in out
+    assert "Storage: cloudmesh.db perms" in out
+    assert "Storage: data/acl.json perms" in out
+    assert "Fix: chmod 600" in out
+    assert str(base / ".secret.key") in out
+
     def test_spa_knock_sends_udp(self):
         from core.node_client import NodeClient
         import hmac as hmac_mod
