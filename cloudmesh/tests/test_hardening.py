@@ -381,6 +381,54 @@ def test_postgres_passfile_cannot_inject_a_second_entry():
     assert "\n*:*" not in command
 
 
+def test_mysql_uses_mktemp_and_a_cleanup_trap():
+    from cloudmesh.core import database
+
+    command = database._mysql_cmd("root", "127.0.0.1", 3306, "p", None, "SELECT 1")
+    assert "mktemp" in command
+    assert "/tmp/.cm_my.conf" not in command
+    assert "umask 077" in command
+    assert "trap" in command
+    assert 'rm -f "$remote_conf"' in command
+
+
+def test_postgres_uses_mktemp_and_a_cleanup_trap():
+    from cloudmesh.core import database
+
+    command = database._postgres_cmd("root", "127.0.0.1", 5432, "p", None, "SELECT 1")
+    assert "mktemp" in command
+    assert "/tmp/.cm_pgpass" not in command
+    assert "umask 077" in command
+    assert "trap" in command
+    assert 'rm -f "$remote_pgpass"' in command
+
+
+@pytest.mark.parametrize("db_type, marker", [
+    ("mysql", "/tmp/.cm_my.conf"),
+    ("postgres", "/tmp/.cm_pgpass"),
+])
+def test_database_backup_uses_mktemp(db_type, marker, monkeypatch):
+    from cloudmesh.core import database
+
+    seen = {}
+    monkeypatch.setattr(
+        database,
+        "_get_server",
+        lambda _name: {"host": "h", "user": "root", "key": ""},
+    )
+    monkeypatch.setattr(
+        database,
+        "run_ssh",
+        lambda _host, _user, _key, command: seen.update(command=command) or ("", 0),
+    )
+
+    result = database.db_backup("srv", "app", db_type=db_type, password="p")
+
+    assert "Backup saved" in result
+    assert "mktemp" in seen["command"]
+    assert marker not in seen["command"]
+
+
 def test_docker_deploy_quotes_environment_values(monkeypatch):
     from cloudmesh.core import docker
 

@@ -2263,7 +2263,7 @@ def cmd_doctor(args):
     db_src = base / "core" / "database.py"
     if db_src.exists():
         dc = db_src.read_text()
-        checks.append(("Database: temp config", "/tmp/" in dc, "Passwords via temp files"))  # nosec B108 -- the literal is the subject of a self-diagnosis grep; no file is created
+        checks.append(("Database: temp config", "mktemp" in dc and "/tmp/.cm_" not in dc, "Passwords via mktemp files"))  # nosec B108 -- the literal is the subject of a self-diagnosis grep; no file is created
     else:
         checks.append(("Database", False, "database.py not found"))
 
