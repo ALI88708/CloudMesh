@@ -89,6 +89,21 @@ def test_the_upgrade_guide_names_the_breaking_changes():
         assert token in guide
 
 
+def test_the_upgrade_guide_carries_the_drill_findings():
+    """The drill turned up two traps that are silent when they are hit.
+
+    3.4.0 ignores `CLOUDMESH_DIR` while 4.1.2 honours it, so a user who
+    leaves the variable set sees an empty server list after the upgrade. And
+    3.4.0's `cm config import` neither carries the SQLite database nor
+    creates missing files, so a rollback onto a fresh install loses the
+    server list. The guide is the only place either fact is written down.
+    """
+    guide = _read("docs/UPGRADING.md")
+    for token in ("CLOUDMESH_DIR", "cm migrate --verify", "cloudmesh.db"):
+        assert token in guide, f"the upgrade guide no longer mentions {token}"
+    assert "Upgrade drill record" in guide
+
+
 def test_the_security_policy_lists_the_lts_line():
     policy = _read("SECURITY.md")
     assert "4.1.x" in policy
