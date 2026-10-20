@@ -51,6 +51,14 @@ python -m pytest cloudmesh/tests -q
 - All new features must come with tests.
 - Security-related changes **must** extend `cloudmesh/tests/test_security.py` (currently **63 tests**).
 - Keep the whole suite green before opening a Pull Request.
+- The suite runs on Windows and Linux on every push. FreeBSD paths are verified
+  by `.github/workflows/bsd.yml`, which runs the same suite plus
+  `scripts/bsd_e2e.sh` inside a FreeBSD VM; the `pkg` and rc.d branches of the
+  installers are only exercised there.
+- OS-specific commands belong in `cloudmesh/core/osprofile.py`. Feature modules
+  ask the profile for the command instead of branching on `platform.system()`, so
+  supporting a new system is one profile entry rather than a search across the
+  tree.
 
 ## Branch & Commit Workflow
 

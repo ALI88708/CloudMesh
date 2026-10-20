@@ -1,0 +1,58 @@
+name: BSD
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ feature/bsd-support ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bsd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  freebsd:
+    name: FreeBSD suite and smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: FreeBSD suite and smoke test
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            set -e
+            pkg install -y git python3
+            # Ports build the flavoured packages only for the default
+            # interpreter, so ask the interpreter for its own flavour instead of
+            # hardcoding a version a newer release no longer builds (py311-pip
+            # does not exist on FreeBSD 15.1).
+            PY=$(python3 -c 'import sys; print("py%d%d" % sys.version_info[:2])')
+            pkg install -y "$PY-pip"
+            # FreeBSD splits the stdlib database module out of the interpreter
+            # package, and the suite imports sqlite3 at collection time.
+            pkg install -y "$PY-sqlite3"
+            # requirements.txt pins exact versions, and FreeBSD has no wheels for
+            # cryptography or bcrypt, so pip builds them from source and needs
+            # the Rust toolchain (maturin is itself a Rust crate) plus perl,
+            # which vendored OpenSSL needs even when it is built by cargo.
+            pkg install -y rust perl5
+            python3 -m pip --version
+          run: |
+            set -e
+            # FreeBSD marks its python ports as externally managed; CI installs
+            # into that interpreter on purpose, inside a throwaway VM.
+            export PIP_BREAK_SYSTEM_PACKAGES=1
+            # The workspace reaches the VM over rsync and is owned by another
+            # user, so git refuses to inspect it as root until the path is
+            # trusted. The installer tests read the committed file mode.
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            python3 --version
+            python3 -m pip install --upgrade pip
+            python3 -m pip install -r cloudmesh/requirements.txt
+            python3 -m pytest cloudmesh/tests -q
+            sh scripts/bsd_e2e.sh

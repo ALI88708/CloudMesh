@@ -42,6 +42,39 @@ _METRICS_CACHE = None
 _METRICS_CACHE_AT = 0.0
 _METRICS_LOCK = threading.Lock()
 
+_BSD_OS_TYPES = ("freebsd", "openbsd", "netbsd")
+
+_OS_TYPE_NAMES = {
+    "linux": "linux",
+    "windows": "windows",
+    "freebsd": "freebsd",
+    "openbsd": "openbsd",
+    "netbsd": "netbsd",
+}
+
+
+def _system_os_type():
+    """Map the running platform to one of the supported os_type keys."""
+    return _OS_TYPE_NAMES.get(platform.system().lower(), "linux")
+
+
+def _resolve_written_path(fd, safe_path):
+    """Resolve a written file descriptor without assuming /proc exists."""
+    proc_path = Path(f"/proc/self/fd/{fd}")
+    if proc_path.exists():
+        return Path(os.path.realpath(str(proc_path)))
+    return Path(os.path.realpath(str(safe_path)))
+
+
+def _spa_guard(system_name):
+    """Return the fatal message when SPA cannot be guarded, else None."""
+    if system_name.lower() == "linux":
+        return None
+    return (
+        f"FATAL: SPA mode is not supported on {system_name} — the iptables port-knocking "
+        "guard is Linux-only. Refusing to start with an exposed TCP port."
+    )
+
 
 def get_or_create_key():
     if KEY_FILE.exists():
@@ -235,6 +268,45 @@ def get_gpu_info():
         return None
 
 
+_BSD_PAGE_SYSCTLS = (
+    ("hw.physmem", "vm.stats.vm.v_page_size", "vm.stats.vm.v_free_count", "vm.stats.vm.v_inactive_count"),
+    ("hw.physmem", "hw.pagesize", "vm.uvmexp.free"),
+    ("hw.physmem64", "hw.pagesize", "vm.uvmexp.free", "vm.uvmexp.inactive"),
+)
+
+
+def _bsd_cpu_percent():
+    """CPU busy percentage from vmstat's idle column, 0 on failure."""
+    try:
+        out = subprocess.run(
+            ["vmstat", "1", "2"], capture_output=True, text=True, timeout=10
+        ).stdout.strip().splitlines()
+        idle = int(out[-1].split()[-1])
+        return round(100 - idle, 1) if 0 <= idle <= 100 else 0
+    except Exception:
+        return 0
+
+
+def _bsd_ram_usage():
+    """Return (total_gb, used_gb, free_gb, percent) via sysctl, zeros on failure."""
+    for names in _BSD_PAGE_SYSCTLS:
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", *names], capture_output=True, text=True, timeout=10
+            )
+            values = [int(value) for value in result.stdout.split()]
+        except Exception:
+            continue
+        if result.returncode != 0 or len(values) != len(names):
+            continue
+        total_gb = values[0] / (1024**3)
+        free_gb = (sum(values[2:]) * values[1]) / (1024**3)
+        used_gb = total_gb - free_gb
+        percent = round(used_gb / total_gb * 100, 1) if total_gb > 0 else 0
+        return total_gb, used_gb, free_gb, percent
+    return 0, 0, 0, 0
+
+
 def _collect_metrics():
     metrics = {}
     if HAS_PSUTIL:
@@ -258,29 +330,33 @@ def _collect_metrics():
             },
         }
     else:
-        try:
-            with open("/proc/stat") as f:
-                parts = f.readline().split()[1:]
-            t1, i1 = sum(int(x) for x in parts), int(parts[3])
-            time.sleep(0.5)
-            with open("/proc/stat") as f:
-                parts = f.readline().split()[1:]
-            t2, i2 = sum(int(x) for x in parts), int(parts[3])
-            total = t2 - t1
-            idle = i2 - i1
-            cpu = round((1 - idle / total) * 100, 1) if total > 0 else 0
-        except Exception:
-            cpu = 0
-        try:
-            with open("/proc/meminfo") as f:
-                lines = f.readlines()
-            info = {l.split()[0].rstrip(":"): int(l.split()[1]) for l in lines}
-            rt = info["MemTotal"] / 1048576
-            rf = info["MemAvailable"] / 1048576
-            ru = rt - rf
-            rp = round(ru / rt * 100, 1) if rt > 0 else 0
-        except Exception:
-            rt = rf = ru = rp = 0
+        if _system_os_type() in _BSD_OS_TYPES:
+            cpu = _bsd_cpu_percent()
+            rt, ru, rf, rp = _bsd_ram_usage()
+        else:
+            try:
+                with open("/proc/stat") as f:
+                    parts = f.readline().split()[1:]
+                t1, i1 = sum(int(x) for x in parts), int(parts[3])
+                time.sleep(0.5)
+                with open("/proc/stat") as f:
+                    parts = f.readline().split()[1:]
+                t2, i2 = sum(int(x) for x in parts), int(parts[3])
+                total = t2 - t1
+                idle = i2 - i1
+                cpu = round((1 - idle / total) * 100, 1) if total > 0 else 0
+            except Exception:
+                cpu = 0
+            try:
+                with open("/proc/meminfo") as f:
+                    lines = f.readlines()
+                info = {l.split()[0].rstrip(":"): int(l.split()[1]) for l in lines}
+                rt = info["MemTotal"] / 1048576
+                rf = info["MemAvailable"] / 1048576
+                ru = rt - rf
+                rp = round(ru / rt * 100, 1) if rt > 0 else 0
+            except Exception:
+                rt = rf = ru = rp = 0
         try:
             st = os.statvfs("/")
             dt = (st.f_blocks * st.f_frsize) / (1024**3)
@@ -352,7 +428,7 @@ def _safe_open_write(safe_path, data, mode):
         0o600,
     )
     try:
-        real = Path(os.path.realpath(f"/proc/self/fd/{fd}")) if os.name != "nt" else Path(str(safe_path)).resolve()
+        real = _resolve_written_path(fd, safe_path)
         if not (str(real) == str(allowed) or str(real).startswith(str(allowed) + os.sep)):
             raise PermissionError("Access denied")
         with os.fdopen(fd, mode) as f:
@@ -957,6 +1033,12 @@ class NodeAgent:
                 pass
 
     def serve(self):
+        if self.spa_mode:
+            guard = _spa_guard(platform.system())
+            if guard:
+                _log(guard)
+                return
+
         self._running = True
         PID_FILE.write_text(str(os.getpid()))
 

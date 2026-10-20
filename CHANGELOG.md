@@ -4,6 +4,41 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.0.0] - 2026-10-20 — BSD family support
+
+CloudMesh now runs on FreeBSD, OpenBSD and NetBSD alongside Linux and Windows.
+
+### Added
+
+- OS profile layer (`cloudmesh/core/osprofile.py`): every OS-specific command
+  (resource sampling, `uptime`, `top`, `df`, `ifconfig`, `who`, log paths, `md5`
+  versus `md5sum`, package manager) is chosen in one place instead of being
+  scattered as `platform.system()` branches across feature modules.
+- FreeBSD, OpenBSD and NetBSD resource profiles, replacing `/proc` reads with
+  `sysctl` and `vmstat`, and `hostname -I` with `ifconfig -a`.
+- `cm_for-bsd.sh`: POSIX sh controller installer with `--yes`, `--source=DIR` and
+  `--verify-only`, a venv-based install and a documented `pip --user` fallback.
+- `cloudmesh/node/node-install.sh` is POSIX sh and BSD-aware: `pkg` and `pkg_add`,
+  `doas`, rc.d units for all three systems, `bsdtar` for extraction and
+  `ifconfig` for the address it prints.
+- `pf` firewall backend for the BSD family; `ipfw` is reported as an explicit
+  unsupported limit instead of failing obscurely.
+- Package deployment through `pkg` and `pkg_add`, and directory sync on `md5`.
+- Docker reports an explicit unsupported message on BSD instead of a stack trace.
+- `.github/workflows/bsd.yml`: the full suite plus `scripts/bsd_e2e.sh` inside a
+  FreeBSD VM, so the BSD paths are verified rather than assumed.
+
+### Fixed
+
+- The rc.d units start the node agent in the background. `cloudmesh_node.py
+  start` serves in the foreground, so the previous units would have hung
+  `service cloudmesh_node start`.
+- The node agent resolves a written path before the `/proc` guard, falls back to
+  `vmstat` and `sysctl` when psutil is missing, and refuses to start SPA mode on a
+  system without the Linux iptables path rather than exposing the port.
+- `detect_os` maps the whole BSD family, so the node dashboard, monitors and
+  feature commands stop treating FreeBSD as unknown.
+
 ## [3.5.0] - 2026-10-16 — Enterprise (stable)
 
 This is the Enterprise stable release. The first release since 3.4.0, and the

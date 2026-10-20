@@ -1,9 +1,12 @@
 import os
 import json
+import shlex
 import subprocess
 import time
 from pathlib import Path
 from datetime import datetime
+
+from cloudmesh.core.osprofile import get_profile
 
 
 def ping_all(server_mgr, node_keys=None):
@@ -26,51 +29,49 @@ def ping_all(server_mgr, node_keys=None):
     return results
 
 
+def _profile_for(server_mgr, name):
+    try:
+        info = server_mgr.get_server_info(name) or {}
+    except Exception:
+        info = {}
+    return get_profile(info.get("os_type"))
+
+
 def get_uptime(server_mgr, name):
     try:
-        r = server_mgr.execute(name, "uptime -p 2>/dev/null || uptime")
+        profile = _profile_for(server_mgr, name)
+        r = server_mgr.execute(name, profile.uptime_cmd())
         return r["stdout"] if r["exit_code"] == 0 else "N/A"
     except Exception:
         return "N/A"
 
 
 def get_top_processes(server_mgr, name, limit=5, sort_by="cpu"):
-    flag = "-o %cpu" if sort_by == "cpu" else "-o %mem"
-    cmd = f"ps {flag} --sort=-{'pcpu' if sort_by == 'cpu' else 'pmem'} --no-headers -A | head -n {limit}"
     try:
-        r = server_mgr.execute(name, cmd)
-        if r["exit_code"] == 0:
-            procs = []
-            for line in r["stdout"].strip().split("\n"):
-                parts = line.split()
-                if len(parts) >= 2:
-                    procs.append({"pid": parts[0], "usage": parts[1], "name": " ".join(parts[2:])})
-            return procs
-        return []
+        profile = _profile_for(server_mgr, name)
+        r = server_mgr.execute(name, profile.top_cmd(sort_by, limit))
+        if r["exit_code"] != 0:
+            return []
+        return profile.parse_top(r["stdout"], sort_by, limit)
     except Exception:
         return []
 
 
 def get_disk_detail(server_mgr, name):
-    cmd = "df -h --output=source,size,used,avail,pcent,target 2>/dev/null | grep -E '^/' || df -h 2>/dev/null | grep -E '^/'"
     try:
-        r = server_mgr.execute(name, cmd)
+        profile = _profile_for(server_mgr, name)
+        r = server_mgr.execute(name, profile.disk_detail_cmd())
         if r["exit_code"] != 0:
             return []
-        disks = []
-        for line in r["stdout"].strip().split("\n")[1:]:
-            parts = line.split()
-            if len(parts) >= 6:
-                disks.append({"device": parts[0], "size": parts[1], "used": parts[2], "avail": parts[3], "use%": parts[4], "mount": parts[5]})
-        return disks
+        return profile.parse_disk_detail(r["stdout"])
     except Exception:
         return []
 
 
 def get_network_info(server_mgr, name):
-    cmd = "ip -4 addr show 2>/dev/null | grep -E 'inet ' || ipconfig 2>/dev/null"
     try:
-        r = server_mgr.execute(name, cmd)
+        profile = _profile_for(server_mgr, name)
+        r = server_mgr.execute(name, profile.network_cmd())
         return r["stdout"] if r["exit_code"] == 0 else "N/A"
     except Exception:
         return "N/A"
@@ -78,7 +79,8 @@ def get_network_info(server_mgr, name):
 
 def get_logged_users(server_mgr, name):
     try:
-        r = server_mgr.execute(name, "who 2>/dev/null || query user 2>/dev/null")
+        profile = _profile_for(server_mgr, name)
+        r = server_mgr.execute(name, profile.who_cmd())
         return r["stdout"] if r["exit_code"] == 0 else "N/A"
     except Exception:
         return "N/A"
@@ -93,8 +95,9 @@ def search_files(server_mgr, name, path, pattern):
         return []
 
 
-def get_recent_logs(server_mgr, name, log_file="/var/log/syslog", lines=20):
-    cmd = f"tail -n {lines} {log_file} 2>/dev/null || tail -n {lines} /var/log/messages 2>/dev/null"
+def get_recent_logs(server_mgr, name, log_file=None, lines=20):
+    paths = (log_file,) if log_file else _profile_for(server_mgr, name).log_paths()
+    cmd = " || ".join(f"tail -n {lines} {shlex.quote(path)} 2>/dev/null" for path in paths)
     try:
         r = server_mgr.execute(name, cmd)
         return r["stdout"] if r["exit_code"] == 0 else "N/A"
@@ -350,7 +353,7 @@ def get_version():
     to be kept in step with `pyproject.toml` by hand -- which is exactly why
     `test_release_metadata.py` pins the two against each other.
 
-    Metadata import or lookup errors fall back to 3.5.0. The returned dictionary
+    Metadata import or lookup errors fall back to 4.0.0. The returned dictionary
     has `version`, `python` (major.minor.micro), and `platform` (sys.platform).
     """
     try:
@@ -358,9 +361,9 @@ def get_version():
         try:
             ver = _pkg_version("cloudmesh")
         except Exception:
-            ver = "3.5.0"
+            ver = "4.0.0"
     except Exception:
-        ver = "3.5.0"
+        ver = "4.0.0"
     return {
         "version": ver,
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",

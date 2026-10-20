@@ -580,3 +580,165 @@ def test_windows_git_detection_noninteractive(tmp_path, available):
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"AVAILABLE:{int(available)}" in result.stdout
     assert ("Git found" if available else "Skipping Git") in result.stdout
+
+
+# --- the node installer on BSD ------------------------------------------
+
+
+def _node_install_text():
+    return NODE_SH.read_text(encoding="utf-8")
+
+
+def test_node_installer_knows_the_bsd_family():
+    text = _node_install_text()
+    for marker in ("FreeBSD", "OpenBSD", "NetBSD", "pkg install", "pkg_add",
+                   "doas", "/usr/local/etc/rc.d", "rcctl"):
+        assert marker in text, f"node-install.sh is missing {marker}"
+
+
+def test_node_installer_is_posix_sh():
+    """BSD hosts ship a POSIX sh; the shebang decides which one parses it.
+
+    `#!/bin/bash` does not exist on a stock FreeBSD/OpenBSD host, so the line
+    is not cosmetic: it is the difference between the installer running and the
+    kernel refusing to start it.
+    """
+    first_line = _node_install_text().splitlines()[0]
+    assert first_line == "#!/bin/sh", f"node-install.sh starts with {first_line!r}"
+    text = _node_install_text()
+    for bashism in ("&>", "[[", "BASH_SOURCE", "#!/bin/bash"):
+        assert bashism not in text, f"node-install.sh still carries {bashism}"
+
+
+def test_node_installer_posix_parses():
+    sh = shutil.which("sh") or shutil.which("dash")
+    if sh and "system32" in sh.lower():
+        sh = None  # WSL: it cannot see C:\ paths, so the check would fail wrongly
+    if sh is None:
+        pytest.skip("no POSIX shell on this machine")
+    target = str(NODE_SH).replace("\\", "/") if "\\" in sh else str(NODE_SH)
+    result = subprocess.run([sh, "-n", target], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+
+
+def test_node_installer_rc_units_do_not_block():
+    """`cloudmesh_node.py start` serves in the foreground, so a boot unit that
+    runs it without backgrounding would hang `service ... start` until the agent
+    exits -- which on a server it never does."""
+    text = _node_install_text()
+    assert 'command_args="-f ' not in text, (
+        "daemon(8) -f hung on 15.1-RELEASE; redirect inside the wrapper instead"
+    )
+    assert len(re.findall(r"start\.sh(?: </dev/null)? >/dev/null 2>&1 &", text)) == 2, (
+        "the OpenBSD and NetBSD units must background the start script"
+    )
+
+
+def test_freebsd_unit_keeps_rc_subr_and_ssh_happy():
+    """rc.subr matches procname against argv[0] of the pid in the pidfile, and
+    the agent's argv[0] is the interpreter, so the unit must name it. The
+    wrapper must also send the agent's stdio to a file: otherwise an ssh session
+    stays open for as long as the agent serves."""
+    text = _node_install_text()
+    start = text.index('if [ "$OS_TYPE" = "FreeBSD" ]; then')
+    end = text.index('elif [ "$OS_TYPE" = "OpenBSD" ]; then', start)
+    unit = text[start:end]
+    assert 'procname="$(command -v python3)"' in unit, (
+        "status compares the pidfile process with procname"
+    )
+    assert 'command="/usr/sbin/daemon"' in unit, (
+        "daemon(8) is what returns control to rc.subr"
+    )
+    assert 'command_args="$INSTALL_DIR/daemon.sh"' in unit, (
+        "the wrapper detaches the agent's stdio before it serves"
+    )
+    assert 'exec "$INSTALL_DIR/start.sh" </dev/null >>"$INSTALL_DIR/cloudmesh_node.out" 2>&1' in text, (
+        "daemon.sh must not keep the descriptors of the session that started it"
+    )
+    assert "start_cmd=" not in unit, (
+        "the FreeBSD unit relies on the standard start path"
+    )
+    assert 'PYTHON_BIN="$(command -v python3)"' in text, (
+        "the helper scripts must not resolve python3 through the caller's PATH"
+    )
+    for action in ("start", "stop", "status"):
+        assert f"$PYTHON_BIN cloudmesh_node.py {action}" in text, (
+            f"the {action} script must use the interpreter found at install time"
+        )
+
+
+def test_freebsd_unit_lets_the_agent_own_its_pidfile():
+    """daemon(8) -p writes the child PID before the agent starts, so cmd_start
+    reads its own PID back, prints "Already running", and exits before serving.
+    rc.subr still needs the path to answer status, so the agent writes it."""
+    text = _node_install_text()
+    assert "-p \\$pidfile" not in text, (
+        "daemon(8) must not write the pidfile that the agent writes itself"
+    )
+    assert 'pidfile="$INSTALL_DIR/cloudmesh_node.pid"' in text, (
+        "rc.subr still needs the pidfile path to answer status"
+    )
+
+
+# --- the BSD controller installer ---------------------------------------
+
+BSD_SH = ROOT / "cm_for-bsd.sh"
+
+
+def test_bsd_installer_exists_gitattributes_and_is_executable():
+    assert BSD_SH.exists()
+    assert ".sh" in (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    completed = subprocess.run(["git", "ls-files", "-s", "cm_for-bsd.sh"],
+                               cwd=ROOT, capture_output=True, text=True)
+    assert completed.returncode == 0, (
+        f"git ls-files failed in {ROOT}: {completed.stderr.strip()}"
+    )
+    mode = completed.stdout.split()
+    assert mode and mode[0] == "100755", (
+        f"cm_for-bsd.sh is committed as {completed.stdout.strip()!r}, not 100755"
+    )
+
+
+def test_bsd_installer_parses_and_detects_bsd():
+    text = BSD_SH.read_text(encoding="utf-8")
+    assert "uname -s" in text
+    assert "pkg install" in text
+    assert "--verify-only" in text
+
+
+def test_bsd_installer_is_posix_sh():
+    """A stock BSD host has no bash, so the shebang is load-bearing."""
+    text = BSD_SH.read_text(encoding="utf-8")
+    first_line = text.splitlines()[0]
+    assert first_line == "#!/bin/sh", f"cm_for-bsd.sh starts with {first_line!r}"
+    for bashism in ("&>", "[[", "BASH_SOURCE", "echo -e", "#!/bin/bash"):
+        assert bashism not in text, f"cm_for-bsd.sh still carries {bashism}"
+
+
+def test_bsd_installer_help_works_without_a_tty():
+    bash = _find_bash()
+    if not bash:
+        pytest.skip("no native bash on this platform; CI runs this on ubuntu-latest")
+    result = subprocess.run(
+        [bash, str(BSD_SH), "--help"],
+        capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--verify-only" in result.stdout
+
+
+def test_bsd_installer_refuses_non_bsd_hosts():
+    """Running it on Linux must route the user to the Linux installer."""
+    import platform
+
+    if platform.system() in ("FreeBSD", "OpenBSD", "NetBSD"):
+        pytest.skip("on BSD this would really install")
+    bash = _find_bash()
+    if not bash:
+        pytest.skip("no native bash on this platform")
+    result = subprocess.run(
+        [bash, str(BSD_SH), "--yes"],
+        capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+    )
+    assert result.returncode == 1
+    assert "cm_for-linux.sh" in result.stdout + result.stderr

@@ -1,4 +1,7 @@
-#!/bin/bash
+#!/bin/sh
+# CloudMesh Node installer — Linux, FreeBSD, OpenBSD and NetBSD.
+# POSIX sh on purpose: the BSD family ships no /bin/bash, so the shebang and
+# every construct below must work on a stock base system.
 echo "============================================"
 echo "   CloudMesh Node Installer"
 echo "============================================"
@@ -6,6 +9,21 @@ echo ""
 
 INSTALL_DIR="$HOME/.cloudmesh-node"
 NODE_SCRIPT="cloudmesh_node.py"
+OS_TYPE="$(uname -s)"
+
+# ============================================
+# 0. Privilege helper: root, else sudo, else doas
+# ============================================
+if [ "$(id -u)" -eq 0 ]; then
+    PRIV=""
+elif command -v sudo >/dev/null 2>&1; then
+    PRIV="sudo"
+elif command -v doas >/dev/null 2>&1; then
+    PRIV="doas"
+else
+    PRIV=""
+    echo "[WARN] Neither sudo nor doas found; system steps need root."
+fi
 
 # ============================================
 # 1. Detect and install Python
@@ -14,37 +32,53 @@ echo "[1/5] Checking Python..."
 
 install_python() {
     echo "[INFO] Python3 not found. Installing..."
-    
-    if command -v apt &> /dev/null; then
-        sudo apt update -qq
-        sudo apt install -y -qq python3 python3-pip python3-venv
-    elif command -v yum &> /dev/null; then
-        sudo yum install -y python3 python3-pip
-    elif command -v dnf &> /dev/null; then
-        sudo dnf install -y python3 python3-pip
-    elif command -v pacman &> /dev/null; then
-        sudo pacman -Sy --noconfirm python python-pip
-    elif command -v zypper &> /dev/null; then
-        sudo zypper install -y python3 python3-pip
-    elif command -v apk &> /dev/null; then
-        sudo apk add --no-cache python3 py3-pip
-    else
-        echo "[ERROR] Cannot detect package manager."
-        echo "[INFO] Please install Python3 manually:"
-        echo "  Ubuntu/Debian:  sudo apt install python3 python3-pip"
-        echo "  CentOS/RHEL:    sudo yum install python3 python3-pip"
-        echo "  Arch:           sudo pacman -S python python-pip"
-        echo "  Alpine:         sudo apk add python3 py3-pip"
-        exit 1
-    fi
+
+    case "$OS_TYPE" in
+        FreeBSD)
+            $PRIV pkg install -y python3
+            ;;
+        OpenBSD)
+            $PRIV pkg_add python%3 || $PRIV pkg_add python3
+            ;;
+        NetBSD)
+            $PRIV pkg_add python3
+            ;;
+        *)
+            if command -v apt >/dev/null 2>&1; then
+                $PRIV apt update -qq
+                $PRIV apt install -y -qq python3 python3-pip python3-venv
+            elif command -v yum >/dev/null 2>&1; then
+                $PRIV yum install -y python3 python3-pip
+            elif command -v dnf >/dev/null 2>&1; then
+                $PRIV dnf install -y python3 python3-pip
+            elif command -v pacman >/dev/null 2>&1; then
+                $PRIV pacman -Sy --noconfirm python python-pip
+            elif command -v zypper >/dev/null 2>&1; then
+                $PRIV zypper install -y python3 python3-pip
+            elif command -v apk >/dev/null 2>&1; then
+                $PRIV apk add --no-cache python3 py3-pip
+            else
+                echo "[ERROR] Cannot detect package manager."
+                echo "[INFO] Please install Python3 manually:"
+                echo "  Ubuntu/Debian:  sudo apt install python3 python3-pip"
+                echo "  CentOS/RHEL:    sudo yum install python3 python3-pip"
+                echo "  Arch:           sudo pacman -S python python-pip"
+                echo "  Alpine:         sudo apk add python3 py3-pip"
+                echo "  FreeBSD:        sudo pkg install python3"
+                echo "  OpenBSD:        doas pkg_add python%3"
+                echo "  NetBSD:         sudo pkg_add python3"
+                exit 1
+            fi
+            ;;
+    esac
 }
 
-if command -v python3 &> /dev/null; then
+if command -v python3 >/dev/null 2>&1; then
     PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
     echo "[OK] Python3 found: $PY_VERSION"
 else
     install_python
-    if ! command -v python3 &> /dev/null; then
+    if ! command -v python3 >/dev/null 2>&1; then
         echo "[ERROR] Python installation failed."
         exit 1
     fi
@@ -52,17 +86,45 @@ else
     echo "[OK] Python3 installed: $PY_VERSION"
 fi
 
+# rc.d, cron and unit environments do not carry the interactive PATH -- FreeBSD
+# keeps python3 in /usr/local/bin, which rc.d leaves out -- so the scripts below
+# bake in the interpreter instead of resolving python3 at run time.
+PYTHON_BIN="$(command -v python3)"
+
 # ============================================
-# 2. Install psutil (no sudo needed)
+# 2. Install psutil (system package first, pip after)
 # ============================================
 echo "[2/5] Installing dependencies..."
 
-python3 -m pip install --user psutil 2>/dev/null || true
+PY_FLAVOUR="$(python3 -c 'import sys; print("%d%d" % sys.version_info[:2])' 2>/dev/null)"
+
+case "$OS_TYPE" in
+    FreeBSD)
+        if [ -n "$PY_FLAVOUR" ]; then
+            $PRIV pkg install -y "py$PY_FLAVOUR-psutil" >/dev/null 2>&1 || true
+        fi
+        ;;
+    NetBSD)
+        if [ -n "$PY_FLAVOUR" ]; then
+            $PRIV pkg_add "py$PY_FLAVOUR-psutil" >/dev/null 2>&1 || true
+        fi
+        ;;
+    OpenBSD)
+        # OpenBSD names the port py3-psutil regardless of the Python minor,
+        # so try the versioned name first and the flavour name second.
+        if [ -n "$PY_FLAVOUR" ]; then
+            $PRIV pkg_add "py$PY_FLAVOUR-psutil" >/dev/null 2>&1 || \
+                $PRIV pkg_add py3-psutil >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+python3 -c "import psutil" 2>/dev/null || python3 -m pip install --user psutil 2>/dev/null || true
 
 python3 -c "import psutil" 2>/dev/null
 if [ $? -ne 0 ]; then
-    echo "[INFO] Trying with sudo..."
-    sudo python3 -m pip install psutil 2>/dev/null || true
+    echo "[INFO] Trying with elevated privileges..."
+    $PRIV python3 -m pip install psutil 2>/dev/null || true
 fi
 
 python3 -c "import psutil" 2>/dev/null
@@ -86,7 +148,7 @@ mkdir -p "$INSTALL_DIR/data"
 echo "[4/5] Installing CloudMesh Node..."
 
 # Copy standalone node agent (with GPU + async jobs)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE_SOURCE="$SCRIPT_DIR/cloudmesh_node.py"
 if [ ! -f "$NODE_SOURCE" ]; then
     echo "[ERROR] cloudmesh_node.py not found at $NODE_SOURCE"
@@ -100,29 +162,38 @@ chmod +x "$INSTALL_DIR/$NODE_SCRIPT"
 # ============================================
 echo "[5/5] Creating scripts..."
 
-cat > "$INSTALL_DIR/start.sh" << 'EOF'
-#!/bin/bash
-cd "$(dirname "$0")"
-python3 cloudmesh_node.py start "$@"
+cat > "$INSTALL_DIR/start.sh" << EOF
+#!/bin/sh
+cd "\$(dirname "\$0")"
+$PYTHON_BIN cloudmesh_node.py start "\$@"
 EOF
 chmod +x "$INSTALL_DIR/start.sh"
 
-cat > "$INSTALL_DIR/stop.sh" << 'EOF'
-#!/bin/bash
-cd "$(dirname "$0")"
-python3 cloudmesh_node.py stop
+cat > "$INSTALL_DIR/stop.sh" << EOF
+#!/bin/sh
+cd "\$(dirname "\$0")"
+$PYTHON_BIN cloudmesh_node.py stop
 EOF
 chmod +x "$INSTALL_DIR/stop.sh"
 
-cat > "$INSTALL_DIR/status.sh" << 'EOF'
-#!/bin/bash
-cd "$(dirname "$0")"
-python3 cloudmesh_node.py status
+cat > "$INSTALL_DIR/status.sh" << EOF
+#!/bin/sh
+cd "\$(dirname "\$0")"
+$PYTHON_BIN cloudmesh_node.py status
 EOF
 chmod +x "$INSTALL_DIR/status.sh"
 
+# rc.d runs a unit's command in the foreground and the agent never daemonizes.
+# daemon(8) provides the fork; this wrapper then sends the agent's stdio to a
+# file so it cannot hold the session that started it.
+cat > "$INSTALL_DIR/daemon.sh" << EOF
+#!/bin/sh
+exec "$INSTALL_DIR/start.sh" </dev/null >>"$INSTALL_DIR/cloudmesh_node.out" 2>&1
+EOF
+chmod +x "$INSTALL_DIR/daemon.sh"
+
 cat > "$INSTALL_DIR/restart.sh" << 'EOF'
-#!/bin/bash
+#!/bin/sh
 cd "$(dirname "$0")"
 ./stop.sh
 sleep 1
@@ -130,9 +201,83 @@ sleep 1
 EOF
 chmod +x "$INSTALL_DIR/restart.sh"
 
-# Create systemd service
-if command -v systemctl &> /dev/null; then
-    sudo tee /etc/systemd/system/cloudmesh-node.service > /dev/null << SERVICEEOF
+# Create the boot unit for this platform.
+# `cloudmesh_node.py start` serves in the foreground, so every unit below either
+# lets daemon(8) fork (FreeBSD) or backgrounds the start script itself.
+if [ "$OS_TYPE" = "FreeBSD" ]; then
+    $PRIV tee /usr/local/etc/rc.d/cloudmesh_node > /dev/null << SERVICEEOF
+#!/bin/sh
+# PROVIDE: cloudmesh_node
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="cloudmesh_node"
+rcvar="cloudmesh_node_enable"
+# The agent writes this pidfile itself. Passing daemon -p would write the child
+# PID first, so the agent would read its own PID back and exit "Already running".
+pidfile="$INSTALL_DIR/cloudmesh_node.pid"
+# rc.subr compares procname with argv[0] of the pid in the pidfile, so it must
+# name the interpreter the agent runs as, not the daemon(8) launcher -- otherwise
+# status reports "not running" while the agent serves.
+procname="$(command -v python3)"
+command="/usr/sbin/daemon"
+# daemon(8) forks and returns, and the wrapper sends the agent's stdio to a
+# file. -f hung on 15.1-RELEASE, so the redirection lives in the wrapper.
+command_args="$INSTALL_DIR/daemon.sh"
+
+load_rc_config \$name
+: \${cloudmesh_node_enable:="NO"}
+run_rc_command "\$1"
+SERVICEEOF
+    $PRIV chmod 755 /usr/local/etc/rc.d/cloudmesh_node
+    echo "[OK] rc.d unit created"
+elif [ "$OS_TYPE" = "OpenBSD" ]; then
+    $PRIV tee /etc/rc.d/cloudmesh_node > /dev/null << SERVICEEOF
+#!/bin/sh
+daemon="$INSTALL_DIR/start.sh"
+daemon_user="$(id -un)"
+
+. /etc/rc.d/rc.subr
+
+rc_start() {
+    $INSTALL_DIR/start.sh </dev/null >/dev/null 2>&1 &
+}
+
+rc_stop() {
+    $INSTALL_DIR/stop.sh >/dev/null 2>&1
+}
+
+rc_check() {
+    $INSTALL_DIR/status.sh >/dev/null 2>&1
+}
+
+rc_cmd "\$1"
+SERVICEEOF
+    $PRIV chmod 755 /etc/rc.d/cloudmesh_node
+    echo "[OK] rc.d unit created"
+elif [ "$OS_TYPE" = "NetBSD" ]; then
+    $PRIV tee /etc/rc.d/cloudmesh_node > /dev/null << SERVICEEOF
+#!/bin/sh
+name="cloudmesh_node"
+rcvar=\$name
+command="$INSTALL_DIR/start.sh"
+required_files="$INSTALL_DIR/$NODE_SCRIPT"
+start_cmd="$INSTALL_DIR/start.sh </dev/null >/dev/null 2>&1 &"
+stop_cmd="$INSTALL_DIR/stop.sh >/dev/null 2>&1"
+status_cmd="$INSTALL_DIR/status.sh"
+pidfile="$INSTALL_DIR/cloudmesh_node.pid"
+
+. /etc/rc.subr
+
+load_rc_config \$name
+run_rc_command "\$1"
+SERVICEEOF
+    $PRIV chmod 755 /etc/rc.d/cloudmesh_node
+    echo "[OK] rc.d unit created"
+elif command -v systemctl >/dev/null 2>&1; then
+    $PRIV tee /etc/systemd/system/cloudmesh-node.service > /dev/null << SERVICEEOF
 [Unit]
 Description=CloudMesh Node
 After=network.target
@@ -141,14 +286,14 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$(which python3) $INSTALL_DIR/$NODE_SCRIPT start
+ExecStart=$(command -v python3) $INSTALL_DIR/$NODE_SCRIPT start
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 SERVICEEOF
-    sudo systemctl daemon-reload
+    $PRIV systemctl daemon-reload
     echo "[OK] Systemd service created"
 fi
 
@@ -156,7 +301,12 @@ fi
 # Done! Print info
 # ============================================
 AUTH_KEY=$(cat "$INSTALL_DIR/.node_key" 2>/dev/null || echo "N/A")
-IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR_IP")
+if [ "$OS_TYPE" = "Linux" ]; then
+    IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}')
+else
+    IP_ADDRESS=$(ifconfig -a 2>/dev/null | awk '/inet /{print $2; exit}')
+fi
+[ -n "$IP_ADDRESS" ] || IP_ADDRESS="YOUR_IP"
 
 echo ""
 echo "============================================"
@@ -164,6 +314,7 @@ echo "   CloudMesh Node Installed!"
 echo "============================================"
 echo ""
 echo "  [OK] Python:   $(python3 --version 2>&1)"
+echo "  [OK] System:   $OS_TYPE"
 echo "  [OK] Location: $INSTALL_DIR"
 echo "  [OK] Auth Key: $AUTH_KEY"
 echo ""
@@ -174,8 +325,24 @@ echo "  Status:   $INSTALL_DIR/status.sh"
 echo "  Restart:  $INSTALL_DIR/restart.sh"
 echo ""
 echo "  === Auto-start on boot ==="
-echo "  sudo systemctl enable cloudmesh-node"
-echo "  sudo systemctl start cloudmesh-node"
+case "$OS_TYPE" in
+    FreeBSD)
+        echo "  $PRIV sysrc cloudmesh_node_enable=YES"
+        echo "  $PRIV service cloudmesh_node start"
+        ;;
+    OpenBSD)
+        echo "  doas rcctl enable cloudmesh_node"
+        echo "  doas rcctl start cloudmesh_node"
+        ;;
+    NetBSD)
+        echo "  $PRIV sh -c 'echo cloudmesh_node=YES >> /etc/rc.conf'"
+        echo "  $PRIV /etc/rc.d/cloudmesh_node start"
+        ;;
+    *)
+        echo "  $PRIV systemctl enable cloudmesh-node"
+        echo "  $PRIV systemctl start cloudmesh-node"
+        ;;
+esac
 echo ""
 echo "  === Add from Controller (your laptop) ==="
 echo "  cloudmesh node add -n $(hostname) -H $IP_ADDRESS -p 9999 -k $AUTH_KEY"

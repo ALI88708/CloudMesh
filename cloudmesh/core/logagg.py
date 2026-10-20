@@ -1,6 +1,7 @@
 import json, os, subprocess, re
 from datetime import datetime
 from cloudmesh.core.ssh_util import run_ssh
+from cloudmesh.core.osprofile import get_profile
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
@@ -21,11 +22,18 @@ def _get_server(name):
 def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)
 
-def get_logs(server_name, log_file="/var/log/syslog", lines=50, search=None, severity=None):
+def _default_log_path(server):
+    """Return the first log path the server's OS profile declares."""
+    info = server or {}
+    return get_profile(info.get("os_type")).log_paths()[0]
+
+def get_logs(server_name, log_file=None, lines=50, search=None, severity=None):
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
+    if log_file is None:
+        log_file = _default_log_path(srv)
 
     cmd = f"tail -n {lines} {log_file} 2>/dev/null"
     if search:
@@ -63,11 +71,13 @@ def aggregate_logs(log_files=None, search=None, lines=100):
                     results.append({"server": name, "log": lf, "entries": out.split("\n")})
     return results
 
-def follow_log(server_name, log_file="/var/log/syslog"):
+def follow_log(server_name, log_file=None):
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
     host, user, key = srv.get("host"), srv.get("user", "root"), srv.get("key", "")
+    if log_file is None:
+        log_file = _default_log_path(srv)
     cmd = f"tail -f {log_file} 2>/dev/null"
     try:
         from cloudmesh.core.ssh_util import build_ssh_cmd

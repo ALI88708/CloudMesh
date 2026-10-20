@@ -270,7 +270,14 @@ class ServerManager:
     def detect_os(self, name):
         try:
             result = self.execute(name, "uname -s 2>/dev/null || echo windows")
-            if "linux" in result["stdout"].lower() or "darwin" in result["stdout"].lower():
+            uname = result["stdout"].lower()
+            if "freebsd" in uname:
+                os_type = "freebsd"
+            elif "openbsd" in uname:
+                os_type = "openbsd"
+            elif "netbsd" in uname:
+                os_type = "netbsd"
+            elif "linux" in uname or "darwin" in uname:
                 os_type = "linux"
             else:
                 os_type = "windows"

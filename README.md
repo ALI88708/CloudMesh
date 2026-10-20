@@ -16,10 +16,10 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20BSD-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-286-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-3.5.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-955-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Version](https://img.shields.io/badge/Version-4.0.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-1034-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
@@ -114,6 +114,38 @@ The installer also runs unattended, which is how CI verifies it on every pull re
 ```
 
 `cm_for-windows.bat` accepts the same switches as `/Y`, `/VERIFYONLY`, and `/S=DIR`.
+
+### FreeBSD / OpenBSD / NetBSD (Installer)
+`cm_for-bsd.sh` is POSIX sh, so it runs on a stock base system that has no bash:
+
+```bash
+curl -sL https://raw.githubusercontent.com/ALI88708/CloudMesh/main/cm_for-bsd.sh -o cm-bsd.sh
+sh cm-bsd.sh                      # asks once, then installs
+sh cm-bsd.sh --yes                # unattended, used by CI
+sh cm-bsd.sh --verify-only        # re-run the checks on an existing install
+sh cm-bsd.sh --yes --source=.     # install from this checkout
+```
+
+It installs `python3` with `pkg` (FreeBSD) or `pkg_add` (OpenBSD/NetBSD), keeps the
+controller in `~/.cloudmesh` with its own virtual environment, and then runs the
+node installer, which writes the native boot unit: `service cloudmesh_node start`
+on FreeBSD, `rcctl start cloudmesh_node` on OpenBSD, and
+`/etc/rc.d/cloudmesh_node start` on NetBSD.
+
+### Supported Platforms
+
+| Platform | Controller | Node agent | Installer |
+|----------|-----------|------------|-----------|
+| Linux | Yes | Yes | `cm_for-linux.sh` |
+| Windows | Yes | Yes | `cm_for-windows.bat` |
+| FreeBSD | Yes | Yes | `cm_for-bsd.sh` |
+| OpenBSD | Yes | Yes | `cm_for-bsd.sh` |
+| NetBSD | Yes | Yes | `cm_for-bsd.sh` |
+
+FreeBSD is verified end to end in CI by `.github/workflows/bsd.yml`, which runs the
+whole suite and `scripts/bsd_e2e.sh` inside a FreeBSD VM. OpenBSD and NetBSD share
+the same POSIX code paths and are covered by the profile tests, but their
+`pkg_add` and rc.d branches are not exercised by CI.
 
 ### Update
 ```bash
@@ -821,6 +853,7 @@ curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 |--------|-------------|
 | **pip install** | `pip install cloudmesh` -- simplest method |
 | **Fresh Install** | Download installer, double-click, done |
+| **BSD installer** | `sh cm_for-bsd.sh --yes` on FreeBSD, OpenBSD and NetBSD |
 | **Update** | `cm update` or `pip install --upgrade cloudmesh` |
 | **Uninstall** | `pip uninstall cloudmesh` |
 
@@ -840,6 +873,10 @@ The installer automatically:
 chmod +x cm_for-linux.sh
 ./cm_for-linux.sh
 ```
+
+On FreeBSD, OpenBSD and NetBSD the same installer is POSIX sh, so a base system
+can run it as is: `sh cloudmesh/node/node-install.sh`. It writes the native rc.d
+unit for that system.
 
 ### Remote (via SSH from Controller)
 ```bash

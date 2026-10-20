@@ -1004,7 +1004,8 @@ def cmd_transfer(args):
             result = transfer.transfer_between(args.from_server, args.to_server, args.remote, args.to)
             console.print(f"[green]{result['message']}[/]")
         elif args.to_server:
-            result = transfer.upload(args.to_server, args.file, args.remote or args.file)
+            remote = args.remote or os.path.basename(args.file)
+            result = transfer.upload(args.to_server, args.file, remote)
             console.print(f"[green]{result['message']}[/]")
         elif args.from_server:
             result = transfer.download(args.from_server, args.remote, args.file)
@@ -4142,7 +4143,7 @@ def main():
 
     lgs = subparsers.add_parser("logs", help="Recent server logs")
     lgs.add_argument("--name", "-n", required=True)
-    lgs.add_argument("--file", "-f", default="/var/log/syslog")
+    lgs.add_argument("--file", "-f", default=None, help="Log file to read (default: the server profile's log paths)")
     lgs.add_argument("--lines", "-l", type=int, default=20)
 
     exp = subparsers.add_parser("export", help="Export config")
