@@ -629,8 +629,28 @@ def test_node_installer_rc_units_do_not_block():
     assert "-p \\$pidfile -f" not in text, (
         "FreeBSD daemon(8) must fork; -f keeps the agent attached and blocks start"
     )
-    assert text.count("start.sh >/dev/null 2>&1 &") == 2, (
+    assert len(re.findall(r"start\.sh(?: </dev/null)? >/dev/null 2>&1 &", text)) == 2, (
         "the OpenBSD and NetBSD units must background the start script"
+    )
+
+
+def test_freebsd_unit_keeps_rc_subr_and_ssh_happy():
+    """rc.subr matches procname against argv[0] of the pid in the pidfile, and
+    the agent's argv[0] is the interpreter, so the unit must name it. The unit
+    must also take the agent off the caller's stdio: daemon(8) keeps those
+    descriptors open, which holds an ssh session open while the agent serves."""
+    text = _node_install_text()
+    assert 'procname="$(command -v python3)"' in text, (
+        "status compares the pidfile process with procname"
+    )
+    assert 'start_cmd="cloudmesh_start"' in text, (
+        "the FreeBSD unit starts the agent through its own script"
+    )
+    assert 'start.sh </dev/null >>"$INSTALL_DIR/cloudmesh_node.out" 2>&1 &' in text, (
+        "the agent must not inherit the caller's stdio"
+    )
+    assert "/usr/sbin/daemon" not in text, (
+        "daemon(8) keeps the caller's descriptors open"
     )
 
 
