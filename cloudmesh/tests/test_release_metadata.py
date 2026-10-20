@@ -33,7 +33,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
-RELEASE = "4.0.0"
+RELEASE = "4.1.2"
 
 _H2 = re.compile(r"^##\s+\[([^\]]+)\]", re.M)
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\b")
@@ -48,6 +48,32 @@ def _declared_version() -> str:
     declared = re.search(r'^version\s*=\s*"([^"]+)"', _read("pyproject.toml"), re.M)
     assert declared, "pyproject.toml has no version field"
     return declared.group(1)
+
+
+def test_the_python_floor_is_3_11():
+    pyproject = _read("pyproject.toml")
+    assert re.search(r'^requires-python\s*=\s*">=3\.11"', pyproject, re.M)
+    assert "Programming Language :: Python :: 3.10" not in pyproject
+    assert "Programming Language :: Python :: 3.11" in pyproject
+
+
+def test_the_readme_python_badge_is_3_11():
+    readme = _read("README.md")
+    assert "Python-3.11" in readme
+    assert "Python-3.10" not in readme
+
+
+def test_the_site_python_floor_is_3_11():
+    site = _read("site/index.html")
+    assert "Python</strong> 3.11+" in site
+    assert "PYTHON 3.11+" in site
+    assert "3.10+" not in site
+
+
+def test_ci_matrix_drops_python_3_10():
+    workflow = _read(".github/workflows/ci.yml")
+    assert '"3.10"' not in workflow
+    assert '"3.11"' in workflow
 
 
 def test_runtime_version_uses_installed_metadata(monkeypatch):

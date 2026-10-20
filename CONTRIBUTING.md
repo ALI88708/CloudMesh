@@ -159,7 +159,7 @@ CloudMesh is a **command-line tool** that connects multiple servers and devices 
 **Core concept:** You have a **Controller** (your laptop) and one or more **Nodes** (cloud servers, VPS, Raspberry Pis, anything running Python). The controller talks to nodes via SSH or a lightweight TCP agent.
 
 **Key facts:**
-- Written in pure Python (3.10+)
+- Written in pure Python (3.11+)
 - 286 CLI commands
 - Works on Windows and Linux
 - Zero web interface — pure terminal

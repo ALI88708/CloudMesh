@@ -14,11 +14,11 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 #### Made By MRSX PRO
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20BSD-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-286-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-4.0.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Version](https://img.shields.io/badge/Version-4.1.2-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
 [![Tests](https://img.shields.io/badge/Tests-1065-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
@@ -32,7 +32,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
 [![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
-[![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Lint](https://img.shields.io/badge/linting-ok-green?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Deps](https://img.shields.io/badge/dependencies-verified-green?style=flat-square)](cloudmesh/requirements.txt)
 
@@ -291,7 +291,7 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 - **DDoS Protection**: REST API has built-in rate limiting (30 req/min), connection limits (5 per IP, 100 total), IP auto-banning (5 failures = 5min ban), packet validation, and slowloris guard.
 
 #### CI/CD
-- GitHub Actions CI: runs on Python 3.10-3.13
+- GitHub Actions CI: runs on Python 3.11-3.13
 - 58 security tests all passing
 
 ---

@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudmesh"
-version = "4.0.0"
+version = "4.1.2"
 description = "Unified multi-cloud resource manager — CLI tool connecting servers into one pool"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     {name = "MRSX PRO"}
 ]
@@ -24,7 +24,6 @@ classifiers = [
     "Operating System :: POSIX :: BSD :: OpenBSD",
     "Operating System :: POSIX :: BSD :: NetBSD",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
