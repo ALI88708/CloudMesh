@@ -1004,7 +1004,8 @@ def cmd_transfer(args):
             result = transfer.transfer_between(args.from_server, args.to_server, args.remote, args.to)
             console.print(f"[green]{result['message']}[/]")
         elif args.to_server:
-            result = transfer.upload(args.to_server, args.file, args.remote or args.file)
+            remote = args.remote or os.path.basename(args.file)
+            result = transfer.upload(args.to_server, args.file, remote)
             console.print(f"[green]{result['message']}[/]")
         elif args.from_server:
             result = transfer.download(args.from_server, args.remote, args.file)

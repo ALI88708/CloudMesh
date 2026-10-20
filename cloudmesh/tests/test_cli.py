@@ -218,3 +218,49 @@ def test_queue_submit_forwards_resource_claim_flags(monkeypatch, capsys):
         )
     ]
     capsys.readouterr()
+
+
+def _stub_transfer(monkeypatch, uploaded):
+    class TransferStub:
+        def __init__(self, server_mgr):
+            pass
+
+        def upload(self, server, local, remote):
+            uploaded.update(server=server, local=local, remote=remote)
+            return {"success": True, "message": "uploaded"}
+
+    monkeypatch.setattr(cloudmesh_main, "init_components", lambda: (None, None))
+    monkeypatch.setattr(cloudmesh_main, "FileTransfer", TransferStub)
+
+
+def _transfer_namespace(**overrides):
+    values = {
+        "from_server": None,
+        "to_server": "edge",
+        "to": None,
+        "file": "scripts/bsd_e2e.sh",
+        "remote": None,
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def test_transfer_defaults_the_remote_path_to_the_file_name(monkeypatch):
+    """`cm cp dir/file server` reused the local path on the remote side, so the
+    upload failed with "No such file" whenever dir/ did not exist in $HOME."""
+    uploaded = {}
+    _stub_transfer(monkeypatch, uploaded)
+
+    cloudmesh_main.cmd_transfer(_transfer_namespace())
+
+    assert uploaded["remote"] == "bsd_e2e.sh"
+
+
+def test_transfer_keeps_an_explicit_remote_path(monkeypatch):
+    uploaded = {}
+    _stub_transfer(monkeypatch, uploaded)
+
+    cloudmesh_main.cmd_transfer(_transfer_namespace(remote="/tmp/e2e.sh"))
+
+    assert uploaded["remote"] == "/tmp/e2e.sh"
+
