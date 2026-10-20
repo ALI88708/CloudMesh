@@ -84,3 +84,11 @@ def test_documentation_has_no_pypi_cloudmesh_command():
         text = (Path(__file__).resolve().parent.parent.parent / name).read_text(encoding="utf-8")
         assert "pip install cloudmesh" not in text
         assert "pip install --upgrade cloudmesh" not in text
+
+
+def test_parse_sha256sums_accepts_pathed_filenames():
+    digest = "a" * 64
+    sums = releases.parse_sha256sums(
+        f"{digest}  artifacts/cloudmesh-4.1.2-py3-none-any.whl\n"
+    )
+    assert sums["cloudmesh-4.1.2-py3-none-any.whl"] == digest

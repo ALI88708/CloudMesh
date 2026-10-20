@@ -101,6 +101,7 @@ def parse_sha256sums(text: str) -> dict[str, str]:
         name = name.strip()
         if name.startswith("*"):
             name = name[1:]
+        name = Path(name).name
         if name:
             sums[name] = digest.lower()
     return sums
