@@ -14,16 +14,20 @@ This document describes what security measures exist in the codebase — not wha
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 2.1.x   | Yes |
-| 2.0.x   | Yes |
-| < 2.0   | No |
+| Version | Supported | Notes |
+|---------|-----------|-------|
+| 4.1.x   | Yes | LTS; security fixes until **2027-10-20** |
+| 4.0.x   | No | Internal checkpoint; never published |
+| 3.4.x   | No | Upgrade to 4.1.2 |
+| < 3.4   | No | Upgrade to 4.1.2 |
 
-Always run the latest version for the most recent security patches:
+CloudMesh is distributed through GitHub Releases. The `cloudmesh` name on
+PyPI belongs to a different project; do not install it from PyPI.
+
+Always run the latest 4.1.x patch for the most recent security fixes:
 
 ```bash
-cm update
+cm update --pip
 ```
 
 ---
@@ -339,9 +343,23 @@ safe_path = shlex.quote(user_input)
 
 ---
 
-### 12. Dangerous Command Blocklist (API)
+### 12. API Exec Is Opt-In
 
-The REST API blocks dangerous commands from being executed:
+The REST API is read-only by default. `/api/exec` returns `403` until the
+operator starts it with `cm api --enable-exec`.
+
+```bash
+# Read-only API (default)
+cm api
+
+# Enable exec explicitly
+cm api --enable-exec
+
+# Enable exec and allow only exact commands
+cm api --enable-exec --allow-command "uptime" --allow-command "df -h"
+```
+
+The existing dangerous-command blocklist remains defence in depth:
 
 ```python
 BLOCKED = ["rm -rf", "mkfs", "dd if=", ":(){ :|:& };:", "chmod 777", "> /dev/sda"]
@@ -349,27 +367,34 @@ BLOCKED = ["rm -rf", "mkfs", "dd if=", ":(){ :|:& };:", "chmod 777", "> /dev/sda
 
 **File:** `cloudmesh/core/advanced.py` — `CloudMeshAPI` class
 
-**Limitation:** This is a simple string-matching blocklist. It can be bypassed with variations (e.g., `rm -rf /` with extra spaces, or using variables). It is NOT a sandbox.
+**Limitation:** The blocklist is simple string matching and can be bypassed
+with variations. Even with `--allow-command`, the API is not a sandbox. The
+API stays on `127.0.0.1`; remote access requires an SSH tunnel.
 
 ---
 
 ### 13. Database Password Safety
 
-Database passwords are never stored in config files. They use temporary files:
+Database passwords are never stored in config files. They use a per-command
+temporary file with a cleanup trap:
 
 **File:** `cloudmesh/core/database.py`
 
-```python
-# MySQL: writes temp config, executes query, deletes config
-my_cnf = f"[client]\nuser={user}\npassword={password}\n..."
-remote_conf = "/tmp/.cm_my.conf"
-create = f"printf '%s' '{my_cnf}' > {remote_conf} && chmod 600 {remote_conf}"
-run = f"mysql --defaults-extra-file={remote_conf} -e \"{sql}\""
-cleanup = f"rm -f {remote_conf}"
-# All three combined in one SSH command
+```sh
+remote_conf=$(mktemp "${TMPDIR:-/tmp}/cm_my.XXXXXX") || exit 1
+trap 'rm -f "$remote_conf"' EXIT HUP INT TERM
+umask 077
+printf '%s' "<client config>" > "$remote_conf"
+chmod 600 "$remote_conf"
+mysql --defaults-extra-file="$remote_conf" -e "<sql>"
 ```
 
-**Limitation:** Password is visible in the SSH command string. If someone has root access on the remote server, they could see it in process listings (`ps aux`).
+The fixed `/tmp/.cm_my.conf` and `/tmp/.cm_pgpass` paths are gone. A failed
+`mktemp` aborts instead of falling back to a predictable path.
+
+**Limitation:** Password is visible in the SSH command string. If someone has
+root access on the remote server, they could see it in process listings
+(`ps aux`).
 
 ---
 
@@ -533,20 +558,22 @@ Be aware of these limitations:
 
 ### For API Usage
 
-1. **Bind to localhost only** — `127.0.0.1` (default, never expose publicly)
-2. **Use SSH tunnel for remote access** — not direct port exposure
-3. **Never expose API to the internet**
+1. **Keep the API on localhost** — it binds to `127.0.0.1` and has no
+   external-bind flag.
+2. **Use an SSH tunnel for remote access** — not direct port exposure.
+3. **Leave `/api/exec` disabled** unless a specific workflow needs it.
+4. **Prefer `--allow-command`** over an unrestricted exec API.
 
 ```bash
-# Safe: local only
+# Safe: local only, read-only
 cm api --port 8080
+
+# Safe: explicit exec allowlist
+cm api --enable-exec --allow-command "uptime"
 
 # Safe: via SSH tunnel
 ssh -L 8080:127.0.0.1:8080 user@server
 # Then access at http://localhost:8080
-
-# DANGEROUS: never do this
-cm api --port 8080 --bind 0.0.0.0  # Exposes to internet!
 ```
 
 ---
@@ -575,9 +602,11 @@ On Linux, sensitive files are created with restricted permissions:
 | HMAC-SHA256 | Node auth, SPA packet signing | Timing-safe comparison used |
 | SHA-256 | Command ledger hash chain | Standard hashing |
 | Shamir's Secret Sharing over GF(p) | Panic key splitting | Mathematical, not custom crypto |
-| SHA-256 + salt | ACL password hashing | Not bcrypt/argon2 — weaker against brute force |
+| bcrypt (PBKDF2-HMAC-SHA256 fallback) | ACL password hashing | bcrypt is used when the dependency is available |
 
-**Note:** ACL uses SHA-256 for password hashing, which is weaker than bcrypt or argon2 against offline brute-force attacks. If you need stronger password protection, consider using the API with strong keys instead of password-based ACL.
+**Note:** The ACL uses bcrypt when `bcrypt` is installed; the fallback is
+PBKDF2-HMAC-SHA256 with 300,000 iterations. Neither replaces a strong,
+unique password.
 
 ---
 
@@ -585,11 +614,13 @@ On Linux, sensitive files are created with restricted permissions:
 
 | Issue | Status | Impact |
 |-------|--------|--------|
-| ACL uses SHA-256 instead of bcrypt | Known | Weaker offline brute-force resistance |
-| Plugin execution is not sandboxed | Known | Malicious plugins can do anything |
-| Command ledger can be deleted (not just tampered) | Known | Log deletion not detected |
-| Database passwords visible in SSH command | Known | Process listing exposure on remote server |
-| DDoS protection is basic | Known | Not designed for sophisticated attacks |
+| Plugin execution is not sandboxed | Accepted | Malicious plugins can do anything |
+| Command ledger can be deleted (not just tampered) | Accepted | Local log deletion is not detected; the ledger is local tamper evidence, not notarization |
+| Database passwords visible in SSH command | Accepted | Process listing exposure on the remote server |
+| DDoS protection is basic | Accepted | Not designed for sophisticated attacks |
+| Node protocol has no message replay cache | Accepted for 4.1.x | Use TLS; a protocol change is deferred |
+| `docker exec` runs the operator's command | Accepted | The container is the trust boundary; it is the feature, not an injection |
+| REST API is HTTP on loopback | Accepted | A local process with the key can call it; remote use requires an SSH tunnel |
 
 ---
 
@@ -597,13 +628,20 @@ On Linux, sensitive files are created with restricted permissions:
 
 Security patches are applied as version updates:
 
-- **v2.0.0 patches**: SPA source IP binding, fail-closed SPA, remote panic rotation, SSH tunnel unification
-- **v1.4.0**: Centralized SSH, TLS/SPA warnings, firewall validation, DB temp files
+- **v4.1.2 LTS**: API exec opt-in, per-run API keys, security headers,
+  verified GitHub-release updates, `mktemp` database credentials, ledger
+  rotation checkpoint, secret-permission checks, Python 3.11 floor.
+- **v4.0.0**: BSD family support and hardening (internal checkpoint).
+- **v3.5.0**: command-surface and dependency fixes.
+- **v2.0.0**: SPA source IP binding, fail-closed SPA, remote panic rotation,
+  SSH tunnel unification.
+- **v1.4.0**: centralized SSH, TLS/SPA warnings, firewall validation, DB
+  temporary files.
 
 Check for updates:
 ```bash
-cm update
-cm doctor    # Run health checks
+cm update --pip   # verified GitHub release wheel
+cm doctor         # health and permission checks
 ```
 
 ---
