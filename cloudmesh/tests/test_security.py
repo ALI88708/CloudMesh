@@ -261,10 +261,10 @@ class FakeRequest:
         self.headers = headers or {}
 
 
-def _make_api(api_key=None):
+def _make_api(api_key=None, enable_exec=False):
     from core.advanced import CloudMeshAPI
     key = api_key or secrets.token_hex(32)
-    return CloudMeshAPI(api_key=key), key
+    return CloudMeshAPI(api_key=key, enable_exec=enable_exec), key
 
 
 class TestAPIAuth:
@@ -300,7 +300,7 @@ class TestAPIAuth:
         assert result[1] == 401
 
     def test_exec_endpoint_valid_key_no_server(self):
-        api, key = _make_api()
+        api, key = _make_api(enable_exec=True)
         result = api._handle(FakeRequest("/api/exec/nonexistent?cmd=whoami", {"X-Api-Key": key}))
         assert isinstance(result, dict)
         assert "not found" in result["error"].lower()

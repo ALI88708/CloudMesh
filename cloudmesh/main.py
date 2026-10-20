@@ -2,6 +2,7 @@ import argparse
 import sys
 import os
 import json
+import secrets
 import subprocess
 import tempfile
 import shlex
@@ -56,7 +57,7 @@ from cloudmesh.core import git_support
 from cloudmesh.core.advanced import (
     discover_network, run_full_benchmark, ScheduleManager, NotifyManager,
     CloudMeshAPI, ProfileManager, audit_server, quick_ssh,
-    TemplateManager, generate_network_map,
+    TemplateManager, generate_network_map, load_api_key_file,
 )
 
 console = Console()
@@ -3283,14 +3284,45 @@ def cmd_notify(args):
 
 
 def cmd_api(args):
+    allow_commands = getattr(args, "allow_command", None) or []
+    enable_exec = bool(getattr(args, "enable_exec", False))
+    if allow_commands and not enable_exec:
+        console.print("[red]--allow-command requires --enable-exec[/]")
+        sys.exit(2)
+
+    api_key_file = getattr(args, "api_key_file", None)
+    if api_key_file:
+        try:
+            api_key = load_api_key_file(api_key_file)
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            sys.exit(2)
+    else:
+        api_key = secrets.token_hex(32)
+
     _, server_mgr, monitor, *_ = init_components()
     keys = _load_node_keys()
-    api = CloudMeshAPI(server_mgr, monitor, keys, args.port)
+    api = CloudMeshAPI(
+        server_mgr,
+        monitor,
+        keys,
+        args.port,
+        api_key=api_key,
+        enable_exec=enable_exec,
+        exec_allowlist=allow_commands or None,
+    )
     port = api.start()
     console.print(f"[green]API running on http://127.0.0.1:{port}[/]")
-    console.print(f"[bold yellow]API Key: {api.api_key}[/]")
+    if api_key_file:
+        console.print(f"[dim]Using API key from {api_key_file}[/]")
+    else:
+        console.print(f"[bold yellow]API Key: {api.api_key}[/]")
     console.print("[dim]Use header: X-Api-Key: <key>[/]")
-    console.print("[dim]Endpoints: /api/status, /api/servers, /api/nodes, /api/exec/{server}?cmd={command}[/]")
+    if enable_exec:
+        console.print("[dim]Endpoints: /api/status, /api/servers, /api/nodes, /api/exec/{server}?cmd={command}[/]")
+    else:
+        console.print("[dim]Endpoints: /api/status, /api/servers, /api/nodes[/]")
+        console.print("[dim]/api/exec is disabled; restart with --enable-exec to allow it[/]")
     console.print("[dim]Press Ctrl+C to stop[/]")
     try:
         while True:
@@ -4330,6 +4362,22 @@ def main():
 
     api_p = subparsers.add_parser("api", help="Start REST API server")
     api_p.add_argument("--port", "-p", type=int, default=8080)
+    api_p.add_argument(
+        "--enable-exec",
+        action="store_true",
+        help="Enable /api/exec (disabled by default)",
+    )
+    api_p.add_argument(
+        "--allow-command",
+        action="append",
+        default=[],
+        metavar="COMMAND",
+        help="Allow only this exact /api/exec command (repeatable; requires --enable-exec)",
+    )
+    api_p.add_argument(
+        "--api-key-file",
+        help="Read the API key from an owner-only file instead of printing a per-run key",
+    )
 
     # === v1.2.0 NEW COMMANDS ===
 

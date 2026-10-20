@@ -1,6 +1,8 @@
 import json
+import logging
 import os
 import re
+import stat
 import tempfile
 import time
 import socket
@@ -13,9 +15,13 @@ from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
+from .cmdlog import CommandLog
 from .features import get_version
 from .osprofile import get_profile
 from .paths import state_file
+
+
+logger = logging.getLogger(__name__)
 
 
 # === 1. AUTO-DISCOVERY ===
@@ -445,8 +451,39 @@ class NotifyManager:
 
 # === 5. REST API ===
 
+def load_api_key_file(path):
+    """Read a stable API key from an owner-only file.
+
+    Generated keys are per-run by design. Automation that cannot scrape the
+    startup banner can keep a key in a file instead. On POSIX the file must not
+    be group- or world-accessible.
+    """
+    key_path = Path(path).expanduser()
+    try:
+        info = key_path.stat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"API key file not found: {key_path}") from exc
+    except OSError as exc:
+        raise ValueError(f"Could not read API key file {key_path}: {exc}") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError(f"API key file is not a regular file: {key_path}")
+    if os.name != "nt" and stat.S_IMODE(info.st_mode) & 0o077:
+        raise ValueError(
+            f"API key file {key_path} is accessible by group or others; "
+            f"run: chmod 600 {key_path}"
+        )
+    try:
+        key = key_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(f"Could not read API key file {key_path}: {exc}") from exc
+    if len(key) < 32:
+        raise ValueError("API key file must contain at least 32 characters")
+    return key
+
+
 class CloudMeshAPI:
-    def __init__(self, server_mgr=None, monitor=None, node_keys=None, port=8080, api_key=None):
+    def __init__(self, server_mgr=None, monitor=None, node_keys=None, port=8080,
+                 api_key=None, enable_exec=False, exec_allowlist=None):
         self.server_mgr = server_mgr
         self.monitor = monitor
         self.node_keys = node_keys or {}
@@ -454,8 +491,37 @@ class CloudMeshAPI:
         self._running = False
         self._server = None
         self.api_key = api_key or secrets.token_hex(32)
+        self.enable_exec = bool(enable_exec)
+        self.exec_allowlist = set(exec_allowlist) if exec_allowlist is not None else None
+        self._auth_failures = {}
+        self._auth_log_lock = threading.Lock()
         from cloudmesh.core.ddos import DDoSProtection
         self._ddos = DDoSProtection(rate_max=60, rate_window=60, ban_threshold=10)
+
+    def _log_auth_failure(self, ip):
+        """Log an API auth failure at most once per minute per address."""
+        now = time.monotonic()
+        with self._auth_log_lock:
+            last = self._auth_failures.get(ip)
+            if last is not None and now - last < 60:
+                return
+            self._auth_failures.pop(ip, None)
+            self._auth_failures[ip] = now
+            while len(self._auth_failures) > 1024:
+                self._auth_failures.pop(next(iter(self._auth_failures)))
+        logger.warning("API authentication failure from %s", ip)
+
+    def _send_json(self, handler, status, payload):
+        """Send a JSON response with the API security headers on every status."""
+        body = json.dumps(payload, indent=2).encode("utf-8")
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("X-Content-Type-Options", "nosniff")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("X-Frame-Options", "DENY")
+        handler.end_headers()
+        handler.wfile.write(body)
 
     def _handle(self, request):
         import urllib.parse
@@ -496,16 +562,21 @@ class CloudMeshAPI:
                 }
             return {"nodes": safe_nodes}
         elif path.startswith("/api/exec/"):
+            if not self.enable_exec:
+                return {"error": "API exec is disabled; start with --enable-exec"}, 403
             server = path.split("/")[-1]
             cmd = params.get("cmd", [""])[0]
             if not cmd:
                 return {"error": "Missing cmd parameter"}
+            if self.exec_allowlist is not None and cmd not in self.exec_allowlist:
+                return {"error": "Command not in allowlist"}, 403
             blocked = ["rm -rf /", "mkfs", "> /dev/sda", "dd if=/dev/zero", ":(){:|:&};:"]
             for pattern in blocked:
                 if pattern in cmd:
                     return {"error": f"Blocked dangerous command pattern: {pattern}"}
             if self.server_mgr and server in self.server_mgr.list_servers():
                 try:
+                    CommandLog().log("api:exec", f"{server}: {cmd}")
                     r = self.server_mgr.execute(server, cmd)
                     return {"output": r["stdout"], "exit_code": r["exit_code"]}
                 except Exception as e:
@@ -528,19 +599,14 @@ class CloudMeshAPI:
                 ip = self.client_address[0]
                 allowed, reason = api._ddos.check_connection(ip)
                 if not allowed:
-                    self.send_response(429)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"error": reason}).encode())
+                    api._send_json(self, 429, {"error": reason})
                     return
                 try:
                     api_key = self.headers.get("X-Api-Key", "")
                     if not secrets.compare_digest(api_key, _api_key):
                         api._ddos.on_auth_failure(ip)
-                        self.send_response(401)
-                        self.send_header("Content-Type", "application/json")
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"error": "Unauthorized"}).encode())
+                        api._log_auth_failure(ip)
+                        api._send_json(self, 401, {"error": "Unauthorized"})
                         return
                     api._ddos.on_auth_success(ip)
                     result = api._handle(self)
@@ -548,10 +614,7 @@ class CloudMeshAPI:
                     if isinstance(result, tuple):
                         status = result[1]
                         result = result[0]
-                    self.send_response(status)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(json.dumps(result, indent=2).encode())
+                    api._send_json(self, status, result)
                 finally:
                     # A handler exception (including a client disconnect) must
                     # not leak the per-IP connection slot forever.
