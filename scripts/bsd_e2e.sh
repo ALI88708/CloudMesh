@@ -88,15 +88,42 @@ step "Phase 2/4: node installer and rc.d"
 
 run_required "sh cloudmesh/node/node-install.sh"
 run_required "sysrc cloudmesh_node_enable=YES"
-run_required "timeout 60 service cloudmesh_node start"
+
+# daemon(8) is the only part of the unit that is supposed to return control to
+# rc.subr, so probe each layer separately when start misbehaves.
+set +e
+timeout 15 /usr/sbin/daemon /bin/sh -c 'sleep 20'
+DAEMON_RC=$?
+timeout 15 /usr/bin/limits -C daemon /usr/sbin/daemon /bin/sh -c 'sleep 20'
+LIMITS_RC=$?
+timeout 15 /usr/bin/env -i -L -/daemon HOME=/ PATH=/sbin:/bin:/usr/sbin:/usr/bin \
+    /usr/sbin/daemon /bin/sh -c 'sleep 20'
+ENV_RC=$?
+set -e
+printf '[E2E] daemon probe rc=%s, limits probe rc=%s, env probe rc=%s\n' \
+    "$DAEMON_RC" "$LIMITS_RC" "$ENV_RC"
+printf '[E2E] --- daemon.sh ---\n'
+ls -l "$HOME/.cloudmesh-node/daemon.sh" 2>&1 || true
+sed -n '1,5p' "$HOME/.cloudmesh-node/daemon.sh" 2>/dev/null || true
+
+timeout 90 service cloudmesh_node start > /tmp/cm-node-start.log 2>&1 &
+STARTER=$!
 NODE_UP=0
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
     if timeout 30 service cloudmesh_node status > /tmp/cm-node-status.log 2>&1; then
         NODE_UP=1
         break
     fi
     sleep 1
 done
+
+printf '[E2E] --- start process tree ---\n'
+ps -ax -o pid,ppid,pgid,stat,command | grep -E 'cloudmesh|/usr/sbin/daemon|limits|sleep 20' | grep -v grep || true
+printf '[E2E] --- start output ---\n'
+cat /tmp/cm-node-start.log 2>/dev/null || true
+if kill -0 "$STARTER" 2>/dev/null; then
+    printf '[WARN] service start did not return within 30s\n' >&2
+fi
 run_tolerant "service cloudmesh_node status"
 if [ "$NODE_UP" -ne 1 ]; then
     printf '[E2E] FAILED: service cloudmesh_node status never reported running\n' >&2
