@@ -47,6 +47,10 @@ jobs:
             # FreeBSD marks its python ports as externally managed; CI installs
             # into that interpreter on purpose, inside a throwaway VM.
             export PIP_BREAK_SYSTEM_PACKAGES=1
+            # The workspace reaches the VM over rsync and is owned by another
+            # user, so git refuses to inspect it as root until the path is
+            # trusted. The installer tests read the committed file mode.
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
             python3 --version
             python3 -m pip install --upgrade pip
             python3 -m pip install -r cloudmesh/requirements.txt

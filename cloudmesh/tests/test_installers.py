@@ -642,9 +642,15 @@ BSD_SH = ROOT / "cm_for-bsd.sh"
 def test_bsd_installer_exists_gitattributes_and_is_executable():
     assert BSD_SH.exists()
     assert ".sh" in (ROOT / ".gitattributes").read_text(encoding="utf-8")
-    mode = subprocess.run(["git", "ls-files", "-s", "cm_for-bsd.sh"],
-                          cwd=ROOT, capture_output=True, text=True).stdout.split()
-    assert mode and mode[0] == "100755"
+    completed = subprocess.run(["git", "ls-files", "-s", "cm_for-bsd.sh"],
+                               cwd=ROOT, capture_output=True, text=True)
+    assert completed.returncode == 0, (
+        f"git ls-files failed in {ROOT}: {completed.stderr.strip()}"
+    )
+    mode = completed.stdout.split()
+    assert mode and mode[0] == "100755", (
+        f"cm_for-bsd.sh is committed as {completed.stdout.strip()!r}, not 100755"
+    )
 
 
 def test_bsd_installer_parses_and_detects_bsd():
