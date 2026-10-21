@@ -39,6 +39,12 @@ checkpoint. Support runs until **2027-10-20**.
 - The node agent records `AUTH_FAIL` in its local log before the DDoS counter
   handles a rejected key.
 - Python 3.10 is no longer supported. Python 3.11, 3.12, and 3.13 are supported.
+- The release workflow publishes a wheel and an sdist that are actually
+  installable. The publish job no longer merges two build artifacts that
+  contain the same file name, it opens the wheel and the sdist before
+  attaching them, and the published `SHA256SUMS` names the assets without a
+  build-directory prefix, so `sha256sum -c SHA256SUMS` works next to the
+  downloaded files. Earlier releases could ship without a wheel at all.
 
 ## [4.1.1] - 2026-10-20 — internal checkpoint
 

@@ -137,6 +137,10 @@ jobs:
           set -euo pipefail
           TAG="${{ inputs.tag || github.ref_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # The title is derived from the changelog heading, so the support
+          # line is written once: "## [4.1.2] - 2026-10-20 - LTS" names
+          # the release "CloudMesh 4.1.2 LTS".
+          echo "title=$(python3 scripts/release_notes.py "$TAG" --title)" >> "$GITHUB_OUTPUT"
           {
             echo 'notes<<CMEOF'
             python3 scripts/release_notes.py "$TAG"
@@ -147,6 +151,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.notes.outputs.tag }}
+          name: ${{ steps.notes.outputs.title }}
           body: ${{ steps.notes.outputs.notes }}
           draft: false
           prerelease: ${{ contains(steps.notes.outputs.tag, '-') }}

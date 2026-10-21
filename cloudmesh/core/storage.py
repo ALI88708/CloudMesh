@@ -10,6 +10,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,14 @@ from cryptography.fernet import Fernet, InvalidToken
 logger = logging.getLogger(__name__)
 
 FERNET_PREFIX = "gAAAAA"
+
+# Reading a backup's schema is a read-only probe, and on Windows it can
+# block: a virus scanner or the write that created the file may still hold
+# the handle. The probe is bounded and retried instead of waiting out a
+# 30-second lock, which turned a transient lock into a failed restore.
+_SCHEMA_READ_ATTEMPTS = 3
+_SCHEMA_READ_TIMEOUT = 2.0
+_SCHEMA_READ_RETRY_DELAY = 0.3
 
 
 def _is_posix() -> bool:
@@ -993,27 +1002,40 @@ class StorageManager:
         Returns None if the file cannot be opened as a database. Opening
         with mode=ro guarantees a missing file can never be silently
         recreated as an empty database.
+
+        The read is bounded and retried. A backup that was written moments
+        ago can be momentarily unreadable on Windows -- a virus scanner
+        holding the handle, or the write not yet released -- and the old
+        30-second lock wait turned that into a failed restore instead of
+        a brief wait.
         """
         try:
             uri = path.as_uri() + "?mode=ro"
         except (OSError, ValueError) as e:
             logger.error("Cannot build read-only URI for backup: %s", e)
             return None
-        try:
-            conn = sqlite3.connect(uri, uri=True, timeout=30)
-        except sqlite3.Error as e:
-            logger.error("Cannot open backup read-only: %s", e)
-            return None
-        try:
-            rows = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            ).fetchall()
-            return [r[0] for r in rows]
-        except sqlite3.Error as e:
-            logger.error("Cannot read backup schema: %s", e)
-            return None
-        finally:
-            conn.close()
+
+        last_error: Optional[Exception] = None
+        for attempt in range(_SCHEMA_READ_ATTEMPTS):
+            try:
+                conn = sqlite3.connect(uri, uri=True, timeout=_SCHEMA_READ_TIMEOUT)
+            except sqlite3.Error as e:
+                last_error = e
+            else:
+                try:
+                    rows = conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                    return [r[0] for r in rows]
+                except sqlite3.Error as e:
+                    last_error = e
+                finally:
+                    conn.close()
+            if attempt + 1 < _SCHEMA_READ_ATTEMPTS:
+                time.sleep(_SCHEMA_READ_RETRY_DELAY)
+
+        logger.error("Cannot read backup schema: %s", last_error)
+        return None
 
     def restore_backup(self, backup_path: str) -> bool:
         """Restore database from backup using the SQLite backup API."""

@@ -51,6 +51,20 @@ def extract_section(changelog: str, version: str) -> str | None:
     return rest.strip("\n")
 
 
+def release_title(changelog: str, version: str) -> str:
+    """The release title: the product, the version, and the support line.
+
+    The changelog heading is the source of truth for the support line, so
+    `## [4.1.2] - 2026-10-20 - LTS` names the release "CloudMesh 4.1.2 LTS"
+    and a plain heading names it "CloudMesh 4.1.2". Nothing about the title
+    is written twice.
+    """
+    heading = re.compile(rf"^##\s+\[{re.escape(version)}\][^\n]*", re.MULTILINE)
+    match = heading.search(changelog)
+    suffix = " LTS" if match is not None and "LTS" in match.group(0) else ""
+    return f"CloudMesh {version}{suffix}"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Print the tag's changelog section to stdout and return 0 on success.
 
@@ -58,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     --changelog path (default: the repository's CHANGELOG.md). A missing or
     empty section prints an error to stderr and returns 1; a section that
     contains only spaces or tabs is printed as-is.
+
+    With --title, the release title is printed instead of the section.
 
     Argument parsing raises SystemExit for help or invalid arguments. File
     access errors (OSError) and UTF-8 decoding errors (UnicodeDecodeError)
@@ -72,10 +88,20 @@ def main(argv: list[str] | None = None) -> int:
         default=str(DEFAULT_CHANGELOG),
         help="path to CHANGELOG.md (default: the repository's own)",
     )
+    parser.add_argument(
+        "--title",
+        action="store_true",
+        help="print the release title instead of the section",
+    )
     args = parser.parse_args(argv)
 
     version = version_from_tag(args.tag)
     changelog = Path(args.changelog).read_text(encoding="utf-8")
+
+    if args.title:
+        print(release_title(changelog, version))
+        return 0
+
     section = extract_section(changelog, version)
 
     if not section:

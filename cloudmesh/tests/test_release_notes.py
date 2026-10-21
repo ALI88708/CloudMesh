@@ -50,6 +50,29 @@ def test_the_heading_and_its_date_stay_out_of_the_body():
     assert body == "### Fixed\n\n- the thing that broke."
 
 
+def test_the_release_title_comes_from_the_changelog_heading():
+    """The support line is written once, in the changelog.
+
+    A release title that names the LTS line has to come from the same
+    heading the notes come from, or the two drift apart: the changelog
+    says LTS and the release says nothing, and only one of them is
+    derived.
+    """
+    lts = "## [4.1.2] - 2026-10-20 — LTS\n\n### Security\n\n- a fix.\n"
+    plain = "## [3.5.0] - 2026-10-16\n\n### Fixed\n\n- a fix.\n"
+
+    assert release_notes.release_title(lts, "4.1.2") == "CloudMesh 4.1.2 LTS"
+    assert release_notes.release_title(plain, "3.5.0") == "CloudMesh 3.5.0"
+    # A version with no section at all still names the release.
+    assert release_notes.release_title(plain, "9.9.9") == "CloudMesh 9.9.9"
+
+
+def test_the_title_can_be_printed_on_its_own(tmp_path):
+    """The workflow asks for the title in a separate step from the notes."""
+    changelog = _write(tmp_path, "## [4.1.2] - 2026-10-20 — LTS\n\n- a fix.\n")
+    assert release_notes.main(["v4.1.2", "--changelog", changelog, "--title"]) == 0
+
+
 @pytest.mark.parametrize("tag", ["3.5.0", "v3.5.0", "V3.5.0"])
 def test_the_tag_may_carry_a_leading_v(tmp_path, capsys, tag):
     """Accept bare versions and either case of the optional leading v."""
