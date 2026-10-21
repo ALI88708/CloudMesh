@@ -98,3 +98,15 @@ def test_the_release_checks_the_artifacts_are_readable_before_publishing():
     assert "zipfile -t" in publish
     assert "tar -tzf" in publish
 
+
+def test_the_release_is_titled_with_the_version():
+    """The title is the first thing the releases list shows.
+
+    Without a name the action falls back to the tag, so the release reads
+    "v4.1.2" while every earlier release was titled "CloudMesh 3.4.0
+    Enterprise" or similar.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "title=CloudMesh ${TAG#v}" in workflow
+    assert "name: ${{ steps.notes.outputs.title }}" in workflow
+
