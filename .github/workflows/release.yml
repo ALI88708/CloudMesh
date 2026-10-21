@@ -30,7 +30,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
+      # `ref` pins the build to the tag being released. A manual dispatch
+      # passes the tag as an input, and a tag push resolves `github.ref` to
+      # it, so both paths build the released commit rather than whatever
+      # happens to be on the default branch.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -80,18 +86,29 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # The checkout has to come first. `actions/checkout` runs
+      # `git clean -ffdx`, which deletes the untracked `artifacts/` directory
+      # that `download-artifact` just wrote -- and the release then uploads
+      # nothing. The v3.4.0 release shipped without a wheel because of this
+      # ordering.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - uses: actions/checkout@v4
-
       - name: Generate SHA256SUMS
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum artifacts/*.whl artifacts/*.tar.gz > artifacts/SHA256SUMS
+          mkdir -p artifacts
+          # Written from inside the directory so the file names are bare:
+          # the published checksum file has to work with a plain
+          # `sha256sum -c SHA256SUMS` next to the downloaded assets.
+          (cd artifacts && sha256sum *.whl *.tar.gz > SHA256SUMS)
 
       - name: Attest wheel provenance
         uses: actions/attest-build-provenance@v2
