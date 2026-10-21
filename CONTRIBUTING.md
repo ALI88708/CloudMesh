@@ -49,7 +49,7 @@ python -m pytest cloudmesh/tests -q
 - Run the same suite through the CLI with `python cloudmesh/main.py test --suite`.
 - Add `--coverage` to include a coverage report (`pytest-cov` is required).
 - All new features must come with tests.
-- Security-related changes **must** extend `cloudmesh/tests/test_security.py` (currently **63 tests**).
+- Security-related changes **must** extend `cloudmesh/tests/test_security.py` (currently **97 tests**).
 - Keep the whole suite green before opening a Pull Request.
 - The suite runs on Windows and Linux on every push. FreeBSD paths are verified
   by `.github/workflows/bsd.yml`, which runs the same suite plus

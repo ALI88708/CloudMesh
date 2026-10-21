@@ -110,6 +110,42 @@ def test_the_security_policy_lists_the_lts_line():
     assert "2027-10-20" in policy
 
 
+def test_the_contributing_guide_states_the_real_security_test_count():
+    """The guide says which file a security change has to extend, and how
+    big that file is.
+
+    The count was hand-written and drifted: it said 63 tests for a file
+    that collected 97, for the same reason the badges drifted -- nothing
+    compared the number with the file. This derives it.
+    """
+    guide = _read("CONTRIBUTING.md")
+    claimed = re.search(r"test_security\.py` \(currently \*\*(\d+) tests\*\*\)", guide)
+    assert claimed, "the contributing guide no longer states the security test count"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_security.py",
+            "--collect-only",
+            "-q",
+            "--no-header",
+        ],
+        cwd=str(ROOT / "cloudmesh"),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, f"collection failed:\n{proc.stdout}\n{proc.stderr}"
+    collected = re.search(r"(\d+)\s+tests?\s+collected", proc.stdout)
+    assert collected, f"could not read the collected count from:\n{proc.stdout[-500:]}"
+    assert int(claimed.group(1)) == int(collected.group(1)), (
+        f"the guide claims {claimed.group(1)} security tests "
+        f"but the file collects {collected.group(1)}"
+    )
+
+
 def test_runtime_version_uses_installed_metadata(monkeypatch):
     import importlib.metadata
     from unittest.mock import Mock
