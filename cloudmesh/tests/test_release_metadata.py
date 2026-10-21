@@ -90,6 +90,24 @@ def test_the_bsd_gate_runs_on_the_branches_that_carry_released_code():
     assert "feature/bsd-support" not in trigger
 
 
+def test_the_bsd_e2e_script_does_not_hardcode_a_version():
+    """The FreeBSD gate went red on every release after 4.0.0.
+
+    The script asserted that `cm --version` reports 4.0.0 -- a number
+    written when the BSD support branch was cut. The check has to follow
+    the version in pyproject.toml, or it fails on a version bump and says
+    nothing at all about the released code.
+    """
+    script = _read("scripts/bsd_e2e.sh")
+    # The comment above the check explains the history and names the old
+    # number, so the comparison is read from the code alone.
+    code = "\n".join(
+        line for line in script.splitlines() if not line.strip().startswith("#")
+    )
+    assert "pyproject.toml" in code
+    assert "4.0.0" not in code
+
+
 def test_the_lts_policy_names_the_support_window():
     policy = _read("docs/LTS.md")
     assert "2027-10-20" in policy

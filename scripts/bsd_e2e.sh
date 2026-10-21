@@ -45,10 +45,22 @@ export PIP_BREAK_SYSTEM_PACKAGES=1
 
 run_required "python3 -m pip install -q -e ."
 
+# The expected version comes from pyproject.toml. It was hardcoded as
+# 4.0.0, and the check then failed every release after that one -- the
+# FreeBSD gate went red on a version bump and nobody read it as "the
+# released code is broken on FreeBSD" because it was really "the script
+# still expects last year's number".
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+EXPECTED_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/pyproject.toml" | head -1)"
+if [ -z "$EXPECTED_VERSION" ]; then
+    printf '[E2E] FAILED: no version in %s/pyproject.toml\n' "$REPO_ROOT" >&2
+    exit 1
+fi
+
 VERSION_OUT="$(cm --version 2>&1)"
 printf '%s\n' "$VERSION_OUT"
-if ! printf '%s' "$VERSION_OUT" | grep -q '4\.0\.0'; then
-    printf '[E2E] FAILED: cm --version did not report 4.0.0\n' >&2
+if ! printf '%s' "$VERSION_OUT" | grep -qF "$EXPECTED_VERSION"; then
+    printf '[E2E] FAILED: cm --version did not report %s\n' "$EXPECTED_VERSION" >&2
     exit 1
 fi
 ok "cm --version"
