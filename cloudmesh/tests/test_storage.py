@@ -91,6 +91,41 @@ def test_restore_rejects_path_traversal_and_non_db(tmp_path):
     assert s.restore_backup(str(evil)) is False
 
 
+def test_the_backup_schema_probe_retries_a_locked_file(tmp_path, monkeypatch):
+    """A backup written moments ago can be briefly unreadable on Windows.
+
+    A virus scanner or the write itself may still hold the handle, and the
+    probe used to wait out a 30-second lock -- which turned a transient
+    lock into a failed restore, and a 10-second test into a timeout. The
+    probe is retried, so a lock that clears is not an error.
+    """
+    backup = tmp_path / "backup.db"
+    backup.write_bytes(b"SQLite format 3\x00")
+    real_connect = sqlite3.connect
+    calls = []
+
+    def flaky_connect(target, *args, **kwargs):
+        calls.append(target)
+        if len(calls) < 3:
+            raise sqlite3.OperationalError("database is locked")
+        return real_connect(target, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", flaky_connect)
+
+    assert StorageManager._source_table_names_ro(backup) is None
+    assert len(calls) == 3, "the probe must try again before giving up"
+
+
+def test_the_backup_schema_probe_reports_a_readable_backup(tmp_path):
+    """The probe still reads a good backup, and the retry does not change
+    what a successful read returns."""
+    s = StorageManager(tmp_path)
+    src = Path(s.backup_database())
+    tables = StorageManager._source_table_names_ro(src)
+    assert tables is not None
+    assert "servers" in tables
+
+
 def test_restore_with_max_backups_one_keeps_source(tmp_path):
     s = StorageManager(tmp_path)
     s.set_setting("max_backups", 1)
