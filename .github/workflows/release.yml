@@ -105,7 +105,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          sha256sum artifacts/*.whl artifacts/*.tar.gz > artifacts/SHA256SUMS
+          # Written from inside the directory so the file names are bare:
+          # the published checksum file has to work with a plain
+          # `sha256sum -c SHA256SUMS` next to the downloaded assets.
+          (cd artifacts && sha256sum *.whl *.tar.gz > SHA256SUMS)
 
       - name: Attest wheel provenance
         uses: actions/attest-build-provenance@v2

@@ -43,3 +43,24 @@ def test_the_release_workflow_builds_the_tagged_commit():
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert workflow.count("ref: ${{ inputs.tag || github.ref }}") == 2
 
+
+def test_the_published_checksum_file_names_the_assets_without_a_path():
+    """`sha256sum -c SHA256SUMS` has to work in the directory the assets
+    were downloaded into.
+
+    The checksum file is published next to the wheel, so a name that keeps
+    the build directory (`artifacts/cloudmesh-...whl`) points at a file the
+    reader does not have. The upgrade guide tells users to verify the wheel
+    with `sha256sum -c SHA256SUMS --ignore-missing`, and that command finds
+    nothing when the names carry a prefix.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    step = workflow.split("- name: Generate SHA256SUMS", 1)[1].split("- name:", 1)[0]
+    command = next(
+        line
+        for line in step.splitlines()
+        if "sha256sum" in line and not line.strip().startswith("#")
+    )
+    assert "artifacts/*.whl" not in command
+    assert "*.whl" in command
+
