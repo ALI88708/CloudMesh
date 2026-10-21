@@ -94,11 +94,22 @@ def test_api_sends_security_headers_on_401():
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission check")
 def test_api_key_file_requires_owner_only_mode(tmp_path):
+    """A group- or world-readable key file must be refused, with the fix.
+
+    The message is matched on what it actually says. The old assertion
+    looked for "0600", which the message never contained -- it names the
+    remediation command instead, "chmod 600". The test only ever ran on
+    POSIX, and the release machine is Windows, so nothing caught it until
+    the Linux CI job did.
+    """
     key_file = tmp_path / "api.key"
     key_file.write_text("a" * 64)
     key_file.chmod(0o644)
-    with pytest.raises(ValueError, match="0600"):
+    with pytest.raises(ValueError) as excinfo:
         load_api_key_file(key_file)
+    message = str(excinfo.value)
+    assert "group or others" in message
+    assert "chmod 600" in message
     key_file.chmod(0o600)
     assert load_api_key_file(key_file) == "a" * 64
 
