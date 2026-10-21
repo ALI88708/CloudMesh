@@ -76,6 +76,20 @@ def test_ci_matrix_drops_python_3_10():
     assert '"3.11"' in workflow
 
 
+def test_the_bsd_gate_runs_on_the_branches_that_carry_released_code():
+    """`docs/LTS.md` names the BSD VM as part of the release gate.
+
+    The FreeBSD workflow only triggered on `feature/bsd-support`, so no
+    released commit had ever been checked on FreeBSD and the policy was
+    satisfied by assertion rather than by a green run. The trigger has to
+    cover the branches that ship.
+    """
+    workflow = _read(".github/workflows/bsd.yml")
+    trigger = workflow.split("on:", 1)[1].split("permissions:", 1)[0]
+    assert 'branches: [ main, "release/**" ]' in trigger
+    assert "feature/bsd-support" not in trigger
+
+
 def test_the_lts_policy_names_the_support_window():
     policy = _read("docs/LTS.md")
     assert "2027-10-20" in policy

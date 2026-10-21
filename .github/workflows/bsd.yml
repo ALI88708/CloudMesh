@@ -1,9 +1,17 @@
 name: BSD
 
+# The FreeBSD gate is part of the release gate: `docs/LTS.md` requires "a
+# green full suite on Windows, Linux, and the BSD VM" before a release
+# ships. It only ever ran on `feature/bsd-support`, so no released commit
+# was ever checked on FreeBSD -- the policy was satisfied by assertion.
+# The trigger now covers the branches that carry released code, and a
+# pull request is checked before it lands rather than after.
 on:
   workflow_dispatch:
   push:
-    branches: [ feature/bsd-support ]
+    branches: [ main, "release/**" ]
+  pull_request:
+    branches: [ main, "release/**" ]
 
 permissions:
   contents: read
