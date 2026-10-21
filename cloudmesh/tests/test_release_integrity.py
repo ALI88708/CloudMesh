@@ -64,3 +64,37 @@ def test_the_published_checksum_file_names_the_assets_without_a_path():
     assert "artifacts/*.whl" not in command
     assert "*.whl" in command
 
+
+def test_the_release_publishes_one_artifact_not_a_merge_of_two():
+    """Two artifacts with the same file name must not be merged.
+
+    The Linux and Windows builds both produce `cloudmesh-4.1.2-py3-none-any.whl`.
+    With `merge-multiple: true` both are extracted into `artifacts/` at the
+    same time, and the published wheel came out as the first 331800 bytes of
+    the Linux build followed by the tail of the Windows one -- a corrupt zip
+    whose digest matched the checksum file, because the checksum was taken
+    from the same corrupt bytes.
+
+    The digest check could not catch this: the checksum file described the
+    corruption faithfully. Only opening the wheel can.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish = workflow.split("  publish:", 1)[1]
+    step = publish.split("- uses: actions/download-artifact@v4", 1)[1].split("- name:", 1)[0]
+    assert "merge-multiple" not in step
+    assert "dist-ubuntu-latest" in step
+
+
+def test_the_release_checks_the_artifacts_are_readable_before_publishing():
+    """A checksum proves the download matches; it does not prove the file
+    is a valid archive.
+
+    The wheel was published corrupt and its digest still matched
+    `SHA256SUMS`, so the checksum said nothing about the artifact being
+    installable. The publish job has to open the wheel and the sdist.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish = workflow.split("  publish:", 1)[1]
+    assert "zipfile -t" in publish
+    assert "tar -tzf" in publish
+

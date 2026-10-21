@@ -95,10 +95,25 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
+      # Only the Linux build is published. Both builds produce a wheel with
+      # the same name, and `merge-multiple: true` extracts them into the
+      # same directory at the same time -- the published wheel came out as
+      # the first 331800 bytes of one file and the tail of the other, which
+      # is a corrupt zip. The Windows build still earns its place: it
+      # installs the wheel and walks the command surface, so the artifact
+      # is proven to work on Windows without being published twice.
       - uses: actions/download-artifact@v4
         with:
+          name: dist-ubuntu-latest
           path: artifacts
-          merge-multiple: true
+
+      - name: Check the artifacts are intact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m zipfile -t artifacts/*.whl
+          tar -tzf artifacts/*.tar.gz > /dev/null
+          echo "[OK] the wheel and the sdist are readable"
 
       - name: Generate SHA256SUMS
         shell: bash
