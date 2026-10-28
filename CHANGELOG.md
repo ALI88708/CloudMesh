@@ -4,6 +4,53 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.2.3] - 2026-10-28 — New UPDATE
+
+Published release of the 4.2 line. Three changes close gaps that until now
+had no answer short of a shell loop, a deleted node, or scraping a Rich table.
+
+### Added
+
+- `cm wait` blocks until every target reports CPU, RAM and disk below the
+  given thresholds: `cm wait --cpu-below 40 --timeout 900`. It exits 0 when
+  the condition holds, 1 on timeout and 2 when there is nothing to wait for,
+  so a cron entry or a CI step can gate on it. The first sample is taken
+  immediately, a target that raises is retried instead of aborting the wait,
+  and a metric a box did not report counts as unmet rather than satisfied.
+- `cm node drain --name NODE [--reason TEXT]` takes a node out of queue
+  scheduling without deleting it. `cm node undrain --name NODE` puts it back.
+  The state lives in `.node_drain.json` beside the node keyring and is
+  re-read on every scheduling pass, so a worker that has been running for
+  weeks honours a drain immediately. Draining keeps the auth key and the job
+  history, and `cm node exec` and `cm ssh` still reach the node.
+- `cm monitor`, `cm disk` and `cm ping` accept `--json` / `-j`. The payload is
+  plain JSON on stdout — no tables, no markup — with one entry per target and
+  an `{"error": ...}` entry for a target that could not be reached, so one
+  unreachable server does not fail the whole call.
+
+### Fixed
+
+- Keeping queued work off a machine required `cm node remove`, which also
+  destroyed the node's auth key and its job history. The scheduler now has a
+  reversible state, and `cm node list` shows `ACTIVE` or `DRAINED`.
+- A wait with no condition used to have no defined behaviour; it is now
+  rejected with exit code 2 instead of looping.
+
+## [4.2.2] - 2026-10-28 — internal checkpoint
+
+Not published. The `--json` output for `cm monitor`, `cm disk` and `cm ping`,
+validated together in 4.2.3.
+
+## [4.2.1] - 2026-10-28 — internal checkpoint
+
+Not published. `cm node drain` / `cm node undrain` and the scheduler hook,
+validated together in 4.2.3.
+
+## [4.2.0] - 2026-10-28 — internal checkpoint
+
+Not published. The 4.2 line opens with `cm wait`, validated together with the
+rest of the line in 4.2.3.
+
 ## [4.1.2] - 2026-10-20 — LTS
 
 This is the first published 4.x release and the supported LTS artifact.

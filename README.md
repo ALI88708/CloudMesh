@@ -17,9 +17,9 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20BSD-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Commands](https://img.shields.io/badge/Commands-286-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-4.1.2-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-1115-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Commands](https://img.shields.io/badge/Commands-289-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
+[![Version](https://img.shields.io/badge/Version-4.2.3-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-1151-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
@@ -88,7 +88,7 @@ The Releases section reads published releases from the GitHub Releases API, so r
 ### GitHub release (Recommended)
 Download [Python](https://www.python.org/) 3.11+ for Linux or Windows, then install the verified release wheel:
 ```bash
-pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.1.2/cloudmesh-4.1.2-py3-none-any.whl
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.2.3/cloudmesh-4.2.3-py3-none-any.whl
 cm --help
 ```
 
@@ -216,7 +216,13 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v3.1.0 (Latest)
+### v4.2.3 (Latest)
+
+- **`cm wait`:** blocks until CPU, RAM and disk fall below the thresholds you pass, with exit codes a script can gate on (`0` met, `1` timeout, `2` nothing to wait for).
+- **`cm node drain` / `cm node undrain`:** takes a node out of queue scheduling without deleting it, keeping its auth key and job history; `cm node list` shows `ACTIVE` or `DRAINED`.
+- **`--json` output:** `cm monitor`, `cm disk` and `cm ping` emit plain JSON on stdout, with an `error` entry for a target that could not be reached.
+
+### v3.1.0
 
 - **Transactional queue storage:** jobs are stored in SQLite with full synchronous commits and database locking; existing JSON job records are imported automatically on first startup.
 - **Safer queue state:** the SQLite database is created with private POSIX permissions, and malformed legacy job records stop migration with an actionable error instead of being silently lost.
@@ -395,15 +401,16 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 ### Monitoring
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `cm monitor` | `cm mon` | CPU/RAM/Disk live view |
+| `cm monitor` | `cm mon` | CPU/RAM/Disk live view (`--json` for automation) |
 | `cm dashboard` | `cm dash` | Live dashboard |
 | `cm watch` | - | Real-time monitoring dashboard (v2.0.0) |
+| `cm wait --cpu-below 40 --timeout 900` | - | Block until CPU/RAM/disk drop below the thresholds |
 | `cm uptime` | `cm up` | System uptime |
-| `cm disk` | `cm df` | Disk usage per mount |
+| `cm disk` | `cm df` | Disk usage per mount (`--json` for automation) |
 | `cm network` | `cm net` | Network interfaces |
 | `cm top` | - | Top processes |
 | `cm who` | - | Logged-in users |
-| `cm ping` | - | Ping all servers/nodes |
+| `cm ping` | - | Ping all servers/nodes (`--json` for automation) |
 | `cm compare` | - | Compare devices |
 
 ### Node Management
@@ -420,6 +427,8 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 | `cm exec --all "cmd"` | - | Execute on all nodes (v2.0.0) |
 | `cm node gpu -n NAME` | `cm gpunode` | GPU telemetry |
 | `cm node dashboard` | - | Node dashboard |
+| `cm node drain -n NAME [--reason TEXT]` | - | Stop queue jobs on a node, keeping its key and history |
+| `cm node undrain -n NAME` | - | Return a drained node to scheduling |
 
 ### Node Jobs
 | Command | Description |
@@ -858,7 +867,7 @@ curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 
 | Option | What it does |
 |--------|-------------|
-| **GitHub release wheel** | Install the verified `cloudmesh-4.1.2-py3-none-any.whl` from GitHub Releases |
+| **GitHub release wheel** | Install the verified `cloudmesh-4.2.3-py3-none-any.whl` from GitHub Releases |
 | **Fresh Install** | Download installer, double-click, done |
 | **BSD installer** | `sh cm_for-bsd.sh --yes` on FreeBSD, OpenBSD and NetBSD |
 | **Update** | `cm update` in a checkout, or `cm update --pip` for a verified release wheel |

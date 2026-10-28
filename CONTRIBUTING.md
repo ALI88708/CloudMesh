@@ -248,7 +248,7 @@ When you install a node agent, here is what gets placed on the remote server:
 ### Method 1: GitHub release wheel (Recommended)
 
 ```bash
-pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.1.2/cloudmesh-4.1.2-py3-none-any.whl
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.2.3/cloudmesh-4.2.3-py3-none-any.whl
 cm --help
 ```
 
@@ -478,6 +478,19 @@ cm node dashboard
 
 Shows an overview of all connected nodes with CPU, RAM, disk, GPU info.
 
+### Draining a Node for Maintenance
+
+```bash
+cm node drain -n NAME --reason "nvme swap"
+cm node undrain -n NAME
+```
+
+`drain` takes a node out of queue scheduling without deleting it. The auth
+key and the job history stay, and direct commands (`cm node exec`, `cm ssh`)
+still reach the node; only `cm queue` routes around it. `cm node list` shows
+`ACTIVE` or `DRAINED`, and the state survives restarts in `.node_drain.json`.
+`undrain` puts the node back in rotation.
+
 ---
 
 ## 7. Monitoring & Dashboards
@@ -493,6 +506,34 @@ cm mon --local      # This machine only
 ```
 
 Shows: CPU%, RAM%, Disk%, swap, uptime for each server.
+
+Add `--json` (`-j`) to get plain JSON on stdout instead of a table, with one
+entry per server and an `error` entry for a server that could not be reached:
+
+```bash
+cm monitor --json
+cm monitor --local --json
+```
+
+### Waiting for a Quiet Machine
+
+```bash
+cm wait --cpu-below 40 --ram-below 80 --timeout 900
+cm wait -n NAME --disk-below 90 --interval 30
+cm wait --local --cpu-below 50
+```
+
+Polls every target until all the given thresholds hold, then exits. The first
+sample is taken immediately, so an already-quiet machine returns at once.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | The condition holds |
+| `1` | Timed out; the table shows what was still over the threshold |
+| `2` | No condition, or no target, was given |
+
+A metric a target did not report counts as unmet, and a target that raises is
+retried on the next pass, so a box that is rebooting does not abort the wait.
 
 ### Live Dashboard
 
