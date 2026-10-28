@@ -111,3 +111,36 @@ def test_the_release_is_titled_with_the_version():
     assert "name: ${{ steps.notes.outputs.title }}" in workflow
     assert "--title" in workflow
 
+
+def test_the_release_attaches_every_installer():
+    """The one-line installers belong on the release page.
+
+    v4.2.3 went out with a wheel, an sdist, a SBOM and a checksum file, and no
+    installer at all, so the page a user lands on did not carry the script the
+    README tells them to download. The publish job copies them next to the
+    build artifacts and names them in `files:`.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish = workflow.split("  publish:", 1)[1]
+
+    for installer in ("cm_for-linux.sh", "cm_for-windows.bat", "cm_for-bsd.sh"):
+        assert installer in publish, f"{installer} is never attached to the release"
+
+    files = publish.split("files: |", 1)[1]
+    assert "artifacts/*.sh" in files
+    assert "artifacts/*.bat" in files
+
+
+def test_the_published_checksums_cover_the_installers():
+    """A checksum file that skips half the assets verifies half the release."""
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    step = workflow.split("- name: Generate SHA256SUMS", 1)[1].split("- name:", 1)[0]
+    command = next(
+        line
+        for line in step.splitlines()
+        if "sha256sum" in line and not line.strip().startswith("#")
+    )
+    assert "*.sh" in command
+    assert "*.bat" in command
+
+

@@ -4,6 +4,26 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.2.4] - 2026-10-28 — New UPDATE
+
+Patch release for the install path. The code in 4.2.3 is unchanged; what was
+wrong was the wrapper around it.
+
+### Fixed
+
+- The interactive menu in all three installers still announced
+  `CloudMesh Installer v2.0` long after the package had passed 4.x, so the
+  first line a user read named a version that does not exist. The banners now
+  carry the declared version, and `test_installers.py` derives that string
+  from `pyproject.toml`, so a release cannot leave them behind again.
+- The `v4.2.3` release page carried a wheel and nothing to install it with.
+  The publish job now stages `cm_for-linux.sh`, `cm_for-windows.bat` and
+  `cm_for-bsd.sh` beside the build artifacts and attaches them, which is what
+  the README has always told a new user to download.
+- `SHA256SUMS` covered only the wheel and the sdist, so the checksum file
+  verified half of what the page offered. It now covers every attached asset,
+  installers included.
+
 ## [4.2.3] - 2026-10-28 — New UPDATE
 
 Published release of the 4.2 line. Three changes close gaps that until now

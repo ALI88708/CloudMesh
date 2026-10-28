@@ -115,6 +115,16 @@ jobs:
           tar -tzf artifacts/*.tar.gz > /dev/null
           echo "[OK] the wheel and the sdist are readable"
 
+      - name: Stage the installers beside the build artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # These are the scripts the README tells a new user to download, and
+          # 4.2.3 shipped without them: the release page carried a wheel and
+          # nothing to install it with. They are staged before the checksum
+          # file is written so that one SHA256SUMS covers every asset.
+          cp cm_for-linux.sh cm_for-windows.bat cm_for-bsd.sh artifacts/
+
       - name: Generate SHA256SUMS
         shell: bash
         run: |
@@ -123,7 +133,7 @@ jobs:
           # Written from inside the directory so the file names are bare:
           # the published checksum file has to work with a plain
           # `sha256sum -c SHA256SUMS` next to the downloaded assets.
-          (cd artifacts && sha256sum *.whl *.tar.gz > SHA256SUMS)
+          (cd artifacts && sha256sum *.whl *.tar.gz *.sh *.bat > SHA256SUMS)
 
       - name: Attest wheel provenance
         uses: actions/attest-build-provenance@v2
@@ -158,5 +168,7 @@ jobs:
           files: |
             artifacts/*.whl
             artifacts/*.tar.gz
+            artifacts/*.sh
+            artifacts/*.bat
             artifacts/SHA256SUMS
             artifacts/sbom.cdx.json
