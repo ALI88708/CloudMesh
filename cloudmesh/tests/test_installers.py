@@ -742,3 +742,22 @@ def test_bsd_installer_refuses_non_bsd_hosts():
     )
     assert result.returncode == 1
     assert "cm_for-linux.sh" in result.stdout + result.stderr
+
+
+def test_every_installer_advertises_the_declared_version():
+    """The banner said v2.0 while the package said 4.2.3.
+
+    The installers fetch `main`, so the version a user actually gets is the one
+    `pyproject.toml` declares. Reading it here, instead of trusting three
+    hand-edited banners, is what keeps this number from being the one nobody
+    updates at release time.
+    """
+    declared = re.search(
+        r'^version\s*=\s*"([^"]+)"', PYPROJECT.read_text(encoding="utf-8"), re.M
+    )
+    assert declared, "pyproject.toml has no version field"
+    banner = f"CloudMesh Installer v{declared.group(1)}"
+
+    for installer in (LINUX_INSTALLER, WINDOWS_INSTALLER, BSD_SH):
+        text = installer.read_text(encoding="utf-8")
+        assert banner in text, f"{installer.name} never states {banner!r}"
