@@ -216,7 +216,12 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v4.2.3 (Latest)
+### v4.2.4 (Latest)
+
+- **Installers on the release page:** `cm_for-linux.sh`, `cm_for-windows.bat` and `cm_for-bsd.sh` are attached to the release, and `SHA256SUMS` covers them.
+- **Honest banner:** every installer menu now states the version it installs instead of `v2.0`, derived from `pyproject.toml` so it cannot drift again.
+
+### v4.2.3
 
 - **`cm wait`:** blocks until CPU, RAM and disk fall below the thresholds you pass, with exit codes a script can gate on (`0` met, `1` timeout, `2` nothing to wait for).
 - **`cm node drain` / `cm node undrain`:** takes a node out of queue scheduling without deleting it, keeping its auth key and job history; `cm node list` shows `ACTIVE` or `DRAINED`.
