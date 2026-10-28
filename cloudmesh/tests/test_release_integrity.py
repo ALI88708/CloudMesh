@@ -142,5 +142,9 @@ def test_the_published_checksums_cover_the_installers():
     )
     assert "*.sh" in command
     assert "*.bat" in command
+    # The SBOM is an asset like any other. It shipped beside the wheel and was
+    # the one file the published SHA256SUMS did not name, so a reader verifying
+    # the release had to take it on trust.
+    assert "*.json" in command
 
 

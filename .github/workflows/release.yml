@@ -133,7 +133,7 @@ jobs:
           # Written from inside the directory so the file names are bare:
           # the published checksum file has to work with a plain
           # `sha256sum -c SHA256SUMS` next to the downloaded assets.
-          (cd artifacts && sha256sum *.whl *.tar.gz *.sh *.bat > SHA256SUMS)
+          (cd artifacts && sha256sum *.whl *.tar.gz *.sh *.bat *.json > SHA256SUMS)
 
       - name: Attest wheel provenance
         uses: actions/attest-build-provenance@v2

@@ -21,8 +21,9 @@ wrong was the wrapper around it.
   `cm_for-bsd.sh` beside the build artifacts and attaches them, which is what
   the README has always told a new user to download.
 - `SHA256SUMS` covered only the wheel and the sdist, so the checksum file
-  verified half of what the page offered. It now covers every attached asset,
-  installers included.
+  verified half of what the page offered. It now covers the three installers;
+  the SBOM, which was the one asset the file left out, joins them at the next
+  build.
 
 ## [4.2.3] - 2026-10-28 — New UPDATE
 
