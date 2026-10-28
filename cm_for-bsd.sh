@@ -32,7 +32,7 @@ for arg in "$@"; do
         --verify-only)     VERIFY_ONLY=1 ;;
         -h|--help)
             cat <<'USAGE'
-CloudMesh Installer v4.2.4 - BSD (FreeBSD, OpenBSD, NetBSD) (MRSX PRO)
+CloudMesh Installer v4.2.5 - BSD (FreeBSD, OpenBSD, NetBSD) (MRSX PRO)
 
   sh cm_for-bsd.sh                 interactive (asks once before installing)
   sh cm_for-bsd.sh --yes           install with no prompts (used by CI)
@@ -477,7 +477,7 @@ if [ "$NONINTERACTIVE" = "1" ] || [ "$VERIFY_ONLY" = "1" ]; then
     exit $?
 fi
 
-banner "   CloudMesh Installer v4.2.4 - $OS_TYPE"
+banner "   CloudMesh Installer v4.2.5 - $OS_TYPE"
 printf '%s\n' "   This installs CloudMesh into $INSTALL_DIR"
 printf '%s' "   Continue? [y/N]: "
 REPLY=""

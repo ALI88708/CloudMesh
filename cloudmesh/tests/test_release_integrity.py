@@ -148,3 +148,37 @@ def test_the_published_checksums_cover_the_installers():
     assert "*.json" in command
 
 
+
+def test_the_release_verifies_the_published_checksums_before_it_publishes():
+    """`sha256sum -c` belongs in CI, not only in the reviewer's shell.
+
+    The check has to run before the release exists, because that is the last
+    moment a mismatch can still be fixed: an immutable release cannot have an
+    asset added, replaced or removed afterwards.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish = workflow.split("  publish:", 1)[1]
+    parts = publish.split("- name: Verify the checksums before publishing", 1)
+    assert len(parts) == 2, "the publish job never checks the checksum file"
+
+    step = parts[1].split("- name:", 1)[0]
+    assert "sha256sum -c SHA256SUMS" in step
+    assert publish.index("Verify the checksums before publishing") < publish.index(
+        "Create or update the release"
+    )
+
+
+def test_the_release_refuses_a_checksum_file_that_skips_an_asset():
+    """A checksum file naming four of five assets is a false assurance.
+
+    `sbom.cdx.json` sat on the 4.2.4 release and was absent from SHA256SUMS, so
+    the one file a reader could not verify described everything that shipped.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    parts = workflow.split("- name: Verify the checksums before publishing", 1)
+    assert len(parts) == 2, "the publish job never checks the checksum file"
+
+    step = parts[1].split("- name:", 1)[0]
+    assert "for file in artifacts/*" in step, "the guard never enumerates the assets"
+    assert "SHA256SUMS" in step
+    assert "exit 1" in step, "the guard can never fail the build"

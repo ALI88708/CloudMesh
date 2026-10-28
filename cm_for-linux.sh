@@ -669,7 +669,7 @@ while true; do
     ui_clear
     echo ""
     echo -e "${BLUE}+==========================================+${NC}"
-    echo -e "${BLUE}|        CloudMesh Installer v4.2.4        |${NC}"
+    echo -e "${BLUE}|        CloudMesh Installer v4.2.5        |${NC}"
     echo -e "${BLUE}|            Created by MRSX PRO           |${NC}"
     echo -e "${BLUE}+==========================================+${NC}"
     echo ""

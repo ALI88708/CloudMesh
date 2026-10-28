@@ -135,6 +135,32 @@ jobs:
           # `sha256sum -c SHA256SUMS` next to the downloaded assets.
           (cd artifacts && sha256sum *.whl *.tar.gz *.sh *.bat *.json > SHA256SUMS)
 
+      - name: Verify the checksums before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A published release is immutable: an asset missing from SHA256SUMS
+          # cannot be added afterwards, and a corrupt one cannot be replaced.
+          # Both checks therefore run while the release still does not exist.
+          (cd artifacts && sha256sum -c SHA256SUMS)
+
+          declared="$(cut -d' ' -f3- artifacts/SHA256SUMS | sort)"
+          missing=0
+          for file in artifacts/*; do
+            name="$(basename "$file")"
+            if [ "$name" = "SHA256SUMS" ]; then
+              continue
+            fi
+            if ! printf '%s\n' "$declared" | grep -qxF "$name"; then
+              echo "::error::$name would be attached but is missing from SHA256SUMS"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "[OK] every attached asset is covered by SHA256SUMS"
+
       - name: Attest wheel provenance
         uses: actions/attest-build-provenance@v2
         with:

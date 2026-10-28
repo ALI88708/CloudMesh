@@ -4,6 +4,23 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.2.5] - 2026-10-28 — New UPDATE
+
+Patch release for the release pipeline. No command, output or stored data
+changes; what was wrong was the packaging around a working tool.
+
+### Fixed
+
+- `SHA256SUMS` on 4.2.4 named the wheel, the sdist and the three installers and
+  left out `sbom.cdx.json`, so the file that describes what shipped was the one
+  asset a reader had to take on trust. The checksum step now covers `*.json`
+  as well.
+- The publish job shipped without checking its own work. It now runs
+  `sha256sum -c SHA256SUMS` and refuses to publish when an attached asset is
+  missing from the checksum file. The check runs before the release exists,
+  which is the only point where the problem is still fixable: an immutable
+  release cannot gain or replace an asset afterwards.
+
 ## [4.2.4] - 2026-10-28 — New UPDATE
 
 Patch release for the install path. The code in 4.2.3 is unchanged; what was

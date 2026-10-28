@@ -248,7 +248,7 @@ When you install a node agent, here is what gets placed on the remote server:
 ### Method 1: GitHub release wheel (Recommended)
 
 ```bash
-pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.2.4/cloudmesh-4.2.4-py3-none-any.whl
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.2.5/cloudmesh-4.2.5-py3-none-any.whl
 cm --help
 ```
 
