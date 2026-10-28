@@ -22,9 +22,11 @@ class SmartTaskQueue:
 
     def __init__(
         self, nodes, queue_dir=None, client_factory=NodeClient,
-        failover_grace_seconds=30,
+        failover_grace_seconds=30, drained=None, drained_provider=None,
     ):
         self.nodes = nodes
+        self.drained = set(drained or ())
+        self.drained_provider = drained_provider
         default_dir = os.environ.get("CLOUDMESH_QUEUE_DIR")
         self.queue_dir = Path(
             queue_dir or default_dir or state_file(".task_queue")
@@ -138,10 +140,33 @@ class SmartTaskQueue:
             return NodeClient.from_config(info)
         return self.client_factory(info["host"], info.get("port", 9999), info.get("key"))
 
+    def _drained_names(self):
+        """Return the nodes in maintenance, re-read on every scheduling pass.
+
+        A worker runs for weeks, so a set captured at start-up would make
+        `cm node drain` a lie until the next restart. If the provider fails,
+        fall back to the set given at construction: an unreadable drain file
+        must not freeze the whole queue.
+        """
+        if self.drained_provider is None:
+            return set(self.drained)
+        try:
+            return set(self.drained_provider())
+        except Exception:
+            return set(self.drained)
+
     def _rank_nodes(self):
         ranked = []
         errors = []
+        drained = self._drained_names()
         for name in sorted(self.nodes):
+            if name in drained:
+                errors.append({
+                    "node": name,
+                    "error": "drained for maintenance",
+                    "drained": True,
+                })
+                continue
             try:
                 client = self._client(name)
                 metrics = client.get_metrics()
@@ -349,11 +374,16 @@ class SmartTaskQueue:
 
         ranked, errors = self._rank_nodes()
         if not ranked:
-            message = "No node returned usable resource metrics"
-            if errors:
-                message += ": " + "; ".join(
-                    f"{item['node']}: {item['error']}" for item in errors
+            if errors and all(item.get("drained") for item in errors):
+                message = "Every node is drained for maintenance: " + ", ".join(
+                    sorted(item["node"] for item in errors)
                 )
+            else:
+                message = "No node returned usable resource metrics"
+                if errors:
+                    message += ": " + "; ".join(
+                        f"{item['node']}: {item['error']}" for item in errors
+                    )
             for job in pending:
                 job["last_error"] = message
                 self._save_job(job)

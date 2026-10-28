@@ -28,6 +28,8 @@ from cloudmesh.core.security import SecurityManager, private_mode_ok
 from cloudmesh.core.storage import resolve_base_dir
 from cloudmesh.core.server import ServerManager
 from cloudmesh.core.monitor import ResourceMonitor
+from cloudmesh.core.drain import DrainRegistry
+from cloudmesh.core.wait import wait_for_conditions
 from cloudmesh.core.scheduler import TaskScheduler
 from cloudmesh.core.dashboard import Dashboard
 from cloudmesh.core.transfer import FileTransfer
@@ -71,7 +73,7 @@ COMPLETION_COMMANDS = (
     "alias version doctor update status discover bench schedule notify api panic tripwire "
     "weather trust profile audit ssh template map docker firewall ssl logagg reshistory "
     "plugins acl webhooks watcher tunnel database migrate storage drift diagnose node exec watch keys config completions "
-    "tw triw test"
+    "tw triw test wait"
 ).split()
 
 COMPLETION_SUBCOMMANDS = {
@@ -79,7 +81,7 @@ COMPLETION_SUBCOMMANDS = {
     "group": ("list", "create", "delete", "add", "remove", "run"),
     "service": ("start", "stop", "status", "logs"),
     "node": ("add", "remove", "list", "test", "info", "monitor", "exec",
-             "install", "dashboard", "gpu", "job"),
+             "install", "dashboard", "gpu", "job", "drain", "undrain"),
     "node job": ("start", "status", "list", "kill", "checkpoint", "recover", "checkpoints"),
     "queue": ("submit", "status", "list", "cancel", "worker"),
     "keys": ("generate", "list", "show", "deploy", "remove-managed"),
@@ -115,7 +117,11 @@ COMPLETION_SUBCOMMANDS = {
 COMPLETION_OPTIONS = {
     "": ("--help", "-h", "--version", "-V"),
     "test": ("--name", "-n", "--suite", "--coverage", "--help", "-h"),
-    "monitor": ("--name", "-n", "--local", "-l"),
+    "monitor": ("--name", "-n", "--local", "-l", "--json", "-j"),
+    "ping": ("--no-nodes", "--json", "-j"),
+    "disk": ("--name", "-n", "--json", "-j"),
+    "wait": ("--name", "-n", "--local", "-l", "--cpu-below", "--ram-below",
+             "--disk-below", "--timeout", "--interval"),
     "dashboard": ("--live", "-l", "--interval", "-i"),
     "watch": ("--interval", "-i"),
     "run": ("--best", "-b", "--servers", "-s"),
@@ -136,6 +142,8 @@ COMPLETION_OPTIONS = {
     "queue cancel": ("--state-dir", "--help", "-h"),
     "node add": ("--name", "-n", "--host", "-H", "--port", "-p", "--auth-key", "-k",
                  "--tls", "--ca-file"),
+    "node drain": ("--name", "-n", "--reason"),
+    "node undrain": ("--name", "-n"),
     "node job start": ("--name", "-n", "--timeout", "-t"),
     "node job status": ("--name", "-n", "--job-id", "-j"),
     "node job list": ("--name", "-n"),
@@ -916,15 +924,40 @@ def cmd_test(args):
     sys.exit(result.returncode)
 
 
+def _print_json(payload):
+    """Emit machine-readable output without rich's tables or markup parsing.
+
+    `console.print` would try to read `[...]` inside JSON as style markup,
+    and a table cannot be parsed by the cron job that asked for this.
+    """
+    print(json.dumps(payload, indent=2, default=str, sort_keys=True))
+
+
 def cmd_monitor(args):
     _, server_mgr, monitor, *_ = init_components()
+    as_json = getattr(args, "as_json", False)
     if args.local:
         metrics = monitor.get_local_metrics()
+        if as_json:
+            _print_json({"local": metrics})
+            return
         _print_metrics("Local Machine", metrics)
         return
     names = [args.name] if args.name else server_mgr.list_servers()
     if not names:
-        console.print("[dim]No servers configured.[/]")
+        if as_json:
+            _print_json({})
+        else:
+            console.print("[dim]No servers configured.[/]")
+        return
+    if as_json:
+        payload = {}
+        for name in names:
+            try:
+                payload[name] = monitor.get_all_metrics(name)
+            except Exception as e:
+                payload[name] = {"error": str(e)}
+        _print_json(payload)
         return
     for name in names:
         try:
@@ -946,6 +979,70 @@ def _print_metrics(name, metrics):
     lines.append(f"  RAM:  {ram.get('used_gb', '?')}/{ram.get('total_gb', '?')} GB ({ram.get('percent', '?')}%)")
     lines.append(f"  Disk: {disk.get('used_gb', '?')}/{disk.get('total_gb', '?')} GB ({disk.get('percent', '?')}%)")
     console.print(Panel("\n".join(lines), title=f"[bold]{name}[/]", border_style="cyan", padding=(1, 2)))
+
+
+def cmd_wait(args):
+    """Block until every target satisfies the given thresholds.
+
+    Exit 0 once the condition holds, 1 on timeout, 2 when there is nothing
+    to wait for. The exit codes are the feature: this belongs in front of
+    another command in a script, not in front of a human.
+    """
+    _, server_mgr, monitor, *_ = init_components()
+    thresholds = {
+        "cpu": args.cpu_below,
+        "ram": args.ram_below,
+        "disk": args.disk_below,
+    }
+    if all(limit is None for limit in thresholds.values()):
+        console.print(
+            "[red]Nothing to wait for: pass --cpu-below, --ram-below or --disk-below.[/]"
+        )
+        raise SystemExit(2)
+
+    if args.local:
+        targets = ["local"]
+
+        def collect(_target):
+            return monitor.get_local_metrics()
+    else:
+        targets = [args.name] if args.name else server_mgr.list_servers()
+
+        def collect(target):
+            return monitor.get_all_metrics(target)
+
+    if not targets:
+        console.print(
+            "[yellow]No servers configured. Use --local to wait on this machine.[/]"
+        )
+        raise SystemExit(2)
+
+    result = wait_for_conditions(
+        collect, targets, thresholds,
+        timeout=args.timeout, interval=args.interval,
+    )
+    if result["satisfied"]:
+        conditions = ", ".join(
+            f"{name} <= {limit}%" for name, limit in result["conditions"].items()
+        )
+        console.print(
+            f"[green]Condition met[/] for {', '.join(targets)} ({conditions}) "
+            f"after {result['attempts']} sample(s) in {result['elapsed_seconds']:.1f}s."
+        )
+        return
+
+    table = Table(title="Still over the threshold", box=box.ROUNDED)
+    table.add_column("Target", style="cyan")
+    table.add_column("Condition")
+    table.add_column("Observed")
+    for target, failed in result["unmet"].items():
+        for name, (value, limit) in failed.items():
+            observed = "not reported" if value is None else f"{value:.1f}%"
+            table.add_row(target, f"{name} <= {limit}%", observed)
+    for target, message in result["errors"].items():
+        table.add_row(target, "reachable", f"[red]{message}[/]")
+    console.print(table)
+    raise SystemExit(1)
 
 
 def cmd_dashboard(args):
@@ -1530,7 +1627,9 @@ def cmd_node_job(args):
 
 def cmd_task_queue(args):
     task_queue = SmartTaskQueue(
-        _load_node_keys(), queue_dir=getattr(args, "state_dir", None)
+        _load_node_keys(),
+        queue_dir=getattr(args, "state_dir", None),
+        drained_provider=lambda: _drain_registry().names(),
     )
     if args.action == "submit":
         try:
@@ -1725,6 +1824,10 @@ def _save_node_keys(keys):
         save_private_json(NODE_KEYS_FILE, keys)
 
 
+def _drain_registry():
+    return DrainRegistry(resolve_base_dir())
+
+
 def cmd_node_add_cloud(args):
     keys = _load_node_keys()
     ca_file = getattr(args, "ca_file", None)
@@ -1765,17 +1868,53 @@ def cmd_node_list_cloud(args):
     if not keys:
         console.print("[dim]No nodes configured.[/]")
         return
+    drained = _drain_registry().names()
     table = Table(title="Cloud Nodes", box=box.ROUNDED)
     table.add_column("Name", style="bold")
     table.add_column("Host")
     table.add_column("Port")
     table.add_column("Status")
+    table.add_column("State")
     for name, info in keys.items():
         client = NodeClient.from_config(info)
         online = client.ping()
         status = "[green]ONLINE[/]" if online else "[red]OFFLINE[/]"
-        table.add_row(name, info["host"], str(info["port"]), status)
+        state = "[yellow]DRAINED[/]" if name in drained else "[green]ACTIVE[/]"
+        table.add_row(name, info["host"], str(info["port"]), status, state)
     console.print(table)
+
+
+def cmd_node_drain(args):
+    """Take a node out of queue scheduling without deleting it.
+
+    Deleting a node was the only way to keep queued work off a machine, and
+    it took the auth key and the job history with it. A drained node stays
+    addressable for direct commands (`cm node exec`, `cm ssh`); only the
+    scheduler routes around it.
+    """
+    keys = _load_node_keys()
+    if args.name not in keys:
+        console.print(f"[red]Node '{args.name}' not found.[/]")
+        raise SystemExit(2)
+    reason = getattr(args, "reason", None)
+    entry = _drain_registry().drain(args.name, reason=reason)
+    suffix = f" ({entry['reason']})" if entry.get("reason") else ""
+    console.print(
+        f"[yellow]Node '{args.name}' drained{suffix}.[/] "
+        "New queue jobs skip it; direct commands still reach it."
+    )
+
+
+def cmd_node_undrain(args):
+    keys = _load_node_keys()
+    if args.name not in keys:
+        console.print(f"[red]Node '{args.name}' not found.[/]")
+        raise SystemExit(2)
+    if _drain_registry().undrain(args.name):
+        console.print(f"[green]Node '{args.name}' is schedulable again.[/]")
+    else:
+        console.print(f"[dim]Node '{args.name}' was not drained.[/]")
+
 
 
 def cmd_node_test(args):
@@ -1954,6 +2093,9 @@ def cmd_ping(args):
     security, server_mgr, *_ = init_components()
     keys = _load_node_keys() if not args.no_nodes else {}
     results = ping_all(server_mgr, keys)
+    if getattr(args, "as_json", False):
+        _print_json(results)
+        return
     table = Table(title="Ping Results", box=box.ROUNDED)
     table.add_column("Name", style="bold")
     table.add_column("Type")
@@ -1990,6 +2132,15 @@ def cmd_top(args):
 def cmd_disk(args):
     _, server_mgr, *_ = init_components()
     names = [args.name] if args.name else server_mgr.list_servers()
+    if getattr(args, "as_json", False):
+        payload = {}
+        for name in names:
+            try:
+                payload[name] = get_disk_detail(server_mgr, name)
+            except Exception as e:
+                payload[name] = {"error": str(e)}
+        _print_json(payload)
+        return
     for name in names:
         disks = get_disk_detail(server_mgr, name)
         table = Table(title=f"Disk Usage: {name}", box=box.ROUNDED)
@@ -4037,6 +4188,19 @@ def main():
     mon = subparsers.add_parser("monitor", help="Monitor resources")
     mon.add_argument("--name", "-n", help="Server name")
     mon.add_argument("--local", "-l", action="store_true")
+    mon.add_argument("--json", "-j", action="store_true", dest="as_json",
+                     help="Output as JSON")
+
+    wait_p = subparsers.add_parser(
+        "wait", help="Wait until resources drop below a threshold"
+    )
+    wait_p.add_argument("--name", "-n", help="Server name (default: every server)")
+    wait_p.add_argument("--local", "-l", action="store_true", help="This machine")
+    wait_p.add_argument("--cpu-below", type=float, metavar="PCT")
+    wait_p.add_argument("--ram-below", type=float, metavar="PCT")
+    wait_p.add_argument("--disk-below", type=float, metavar="PCT")
+    wait_p.add_argument("--timeout", type=float, default=300, metavar="SEC")
+    wait_p.add_argument("--interval", type=float, default=10, metavar="SEC")
 
     dash = subparsers.add_parser("dashboard", help="Show dashboard")
     dash.add_argument("--live", "-l", action="store_true")
@@ -4153,6 +4317,15 @@ def main():
     gpu_p = node_sub.add_parser("gpu", help="GPU status on nodes")
     gpu_p.add_argument("--name", "-n", help="Node name")
 
+    drain_p = node_sub.add_parser(
+        "drain", help="Stop scheduling queue jobs on a node"
+    )
+    drain_p.add_argument("--name", "-n", required=True)
+    drain_p.add_argument("--reason", help="Why the node is out of rotation")
+
+    undrain_p = node_sub.add_parser("undrain", help="Put a drained node back in rotation")
+    undrain_p.add_argument("--name", "-n", required=True)
+
     job_p = node_sub.add_parser("job", help="Async jobs on nodes")
     # Dedicated dest: sharing "action" with node_sub made `cm node job start`
     # look up "start" in the node dispatch table (which only knows "job"),
@@ -4227,6 +4400,8 @@ def main():
     # === 20 NEW COMMANDS ===
     png = subparsers.add_parser("ping", help="Ping all servers/nodes")
     png.add_argument("--no-nodes", action="store_true", help="Skip nodes")
+    png.add_argument("--json", "-j", action="store_true", dest="as_json",
+                     help="Output as JSON")
 
     upt = subparsers.add_parser("uptime", help="Show server uptime")
     upt.add_argument("--name", "-n")
@@ -4238,6 +4413,8 @@ def main():
 
     dsk = subparsers.add_parser("disk", help="Detailed disk usage")
     dsk.add_argument("--name", "-n")
+    dsk.add_argument("--json", "-j", action="store_true", dest="as_json",
+                     help="Output as JSON")
 
     net = subparsers.add_parser("network", help="Network interfaces")
     net.add_argument("--name", "-n")
@@ -4947,11 +5124,13 @@ def main():
             "exec": cmd_node_exec, "install": cmd_node_install,
             "dashboard": cmd_node_dashboard,
             "gpu": cmd_node_gpu, "job": cmd_node_job,
+            "drain": cmd_node_drain, "undrain": cmd_node_undrain,
             "checkpoint": cmd_job_checkpoint,
             "recover": cmd_job_recover,
             "checkpoints": cmd_job_checkpoints,
         }.get(args.action, lambda _a: node.print_help())(args),
         "monitor": lambda: cmd_monitor(args),
+        "wait": lambda: cmd_wait(args),
         "mon": lambda: cmd_monitor(args),
         "dashboard": lambda: cmd_dashboard(args),
         "dash": lambda: cmd_dashboard(args),

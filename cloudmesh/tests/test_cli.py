@@ -180,7 +180,7 @@ def test_queue_submit_forwards_resource_claim_flags(monkeypatch, capsys):
     calls = []
 
     class FakeQueue:
-        def __init__(self, nodes, queue_dir=None):
+        def __init__(self, nodes, queue_dir=None, **kwargs):
             pass
 
         def submit(self, command, **kwargs):
