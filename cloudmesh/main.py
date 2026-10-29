@@ -908,10 +908,17 @@ def cmd_test(args):
     command = [sys.executable, "-m", "pytest", "tests", "-q", "--tb=short"]
     if args.coverage:
         command.extend([
+            # The product code only. `--cov=.` from this directory also picks
+            # up `tests/`, which are fully executed by definition and inflated
+            # the reported number by fifteen points.
             "--cov=core",
-            "--cov=cloudmesh_node",
-            "--cov-report=term-missing",
-            "--cov-fail-under=25",
+            "--cov=node",
+            "--cov=main",
+            "--cov-report=term-missing:skip-covered",
+            # Measured at 48% when the gate was raised from 25%. Three points
+            # of headroom cover the tests that skip on one platform. This is a
+            # floor, not a target: it may go up, never down.
+            "--cov-fail-under=45",
         ])
     console.print("[cyan]Running the CloudMesh test suite...[/]")
     result = subprocess.run(command, cwd=Path(__file__).parent, check=False)
@@ -2384,6 +2391,18 @@ def cmd_doctor(args):
         ))
     except Exception as e:
         checks.append(("Data directory", False, f"check failed: {e}"))
+
+    # A config that exists but cannot be read used to look exactly like a
+    # fresh install: no servers, no error. Loading still returns defaults so
+    # every command keeps working, which makes this row the only place the
+    # damage is visible.
+    try:
+        from cloudmesh.core.security import config_health
+
+        config_ok, config_detail = config_health()
+        checks.append(("Config: readable", config_ok, config_detail))
+    except Exception as e:
+        checks.append(("Config: readable", False, f"check failed: {e}"))
 
     ssh_src = base / "core" / "ssh_util.py"
     if ssh_src.exists():

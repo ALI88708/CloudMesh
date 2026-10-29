@@ -280,7 +280,7 @@ if not "%NONINTERACTIVE%"=="0" goto :run_scripted
 cls
 echo.
 echo   +==========================================+
-echo   ^|        CloudMesh Installer v4.2.5        ^|
+echo   ^|        CloudMesh Installer v4.2.6        ^|
 echo   +==========================================+
 echo.
 

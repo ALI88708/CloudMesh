@@ -24,17 +24,26 @@ class DrainRegistry:
     def __init__(self, base_dir=None):
         base = Path(base_dir) if base_dir is not None else resolve_base_dir()
         self.path = base / DRAIN_FILENAME
+        # Set when the file exists but cannot be read. `load` still returns a
+        # usable mapping because the scheduler calls it on every pass, but the
+        # caller can report the damage instead of silently returning a drained
+        # node to rotation.
+        self.last_error = None
 
     def load(self):
         """Return {name: {"reason": ..., "at": ...}}; {} when unreadable."""
         if not self.path.exists():
+            self.last_error = None
             return {}
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            self.last_error = str(exc) or "unreadable drain file"
             return {}
         if not isinstance(data, dict):
+            self.last_error = "the drain file is not an object"
             return {}
+        self.last_error = None
         return {name: entry for name, entry in data.items() if isinstance(entry, dict)}
 
     def names(self):

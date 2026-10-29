@@ -29,8 +29,9 @@ def test_test_command_runs_the_suite_with_coverage_when_requested(monkeypatch):
     assert exc_info.value.code == 0
     assert command[:4] == [sys.executable, "-m", "pytest", "tests"]
     assert "--cov=core" in command
-    assert "--cov=cloudmesh_node" in command
-    assert "--cov-fail-under=25" in command
+    assert "--cov=node" in command
+    assert "--cov=main" in command
+    assert "--cov-fail-under=45" in command
     assert kwargs["cwd"] == ROOT
     assert kwargs["check"] is False
 

@@ -16,11 +16,11 @@ This document describes what security measures exist in the codebase — not wha
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| 4.2.x   | Yes | Current feature line; latest patch is **4.2.5** |
+| 4.2.x   | Yes | Current feature line; latest patch is **4.2.6** |
 | 4.1.x   | Yes | LTS; security fixes until **2027-10-20** |
 | 4.0.x   | No | Internal checkpoint; never published |
-| 3.4.x   | No | Upgrade to 4.2.5 or 4.1.2 (LTS) |
-| < 3.4   | No | Upgrade to 4.2.5 or 4.1.2 (LTS) |
+| 3.4.x   | No | Upgrade to 4.2.6 or 4.1.2 (LTS) |
+| < 3.4   | No | Upgrade to 4.2.6 or 4.1.2 (LTS) |
 
 CloudMesh is distributed through GitHub Releases. The `cloudmesh` name on
 PyPI belongs to a different project; do not install it from PyPI.

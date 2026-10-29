@@ -21,6 +21,36 @@ def private_mode_ok(path) -> bool:
     return (stat.S_IMODE(Path(path).stat().st_mode) & 0o077) == 0
 
 
+def config_health(base_dir=None):
+    """Return ``(ok, message)`` for the stored config, writing nothing.
+
+    :meth:`SecurityManager.load_config` deliberately falls back to defaults so
+    every command keeps running, which makes a corrupt config look like a fresh
+    install. This probe exists for ``cm doctor``: it reads the same files
+    without creating the base directory, the backup directory, or a key, so a
+    health check cannot turn a missing data directory into a created one.
+    """
+    try:
+        from cloudmesh.core.storage import resolve_base_dir
+    except ImportError:  # pragma: no cover - source checkout without installed package
+        from core.storage import resolve_base_dir
+
+    base = resolve_base_dir(base_dir)
+    config_path = base / "config.json"
+    key_path = base / ".secret.key"
+
+    if not config_path.exists():
+        return True, "no config yet"
+    if not key_path.exists():
+        return False, f"Config exists but the key is missing: {key_path}"
+    try:
+        decrypted = Fernet(key_path.read_bytes()).decrypt(config_path.read_bytes())
+        json.loads(decrypted.decode())
+    except Exception as exc:
+        return False, f"Config could not be read: {exc}"
+    return True, "config decrypts and parses"
+
+
 class SecurityManager:
     def __init__(self, base_dir=None):
         """Set config, encryption key, and backup paths and create backup directories.
@@ -50,6 +80,11 @@ class SecurityManager:
         # nested base) would otherwise raise FileNotFoundError on this line.
         self.backups_dir.mkdir(parents=True, exist_ok=True)
         self._fernet = None
+        # Set when the config file exists but cannot be decrypted or parsed.
+        # `load_config` still returns a usable mapping so commands keep
+        # running, but the failure is remembered instead of being presented as
+        # a fresh install with no servers.
+        self.last_load_error = None
 
     def _get_or_create_key(self):
         if self.key_path.exists():
@@ -120,12 +155,20 @@ class SecurityManager:
 
     def load_config(self) -> dict:
         if not self.config_path.exists():
+            self.last_load_error = None
             return {"servers": {}, "settings": {"monitor_interval": 5, "max_backups": 10}}
         encrypted = self.config_path.read_bytes()
         try:
             decrypted = self.fernet.decrypt(encrypted)
-            return json.loads(decrypted.decode())
+            config = json.loads(decrypted.decode())
+            self.last_load_error = None
+            return config
         except Exception as e:
+            # Returning defaults keeps every command usable, but doing it
+            # silently made a corrupt config indistinguishable from a fresh
+            # install -- and the next save then replaced the only copy of the
+            # data. The error is kept for `cm doctor` and the caller.
+            self.last_load_error = f"Config could not be read: {e}"
             logger.error("Failed to load config: %s", e)
             return {"servers": {}, "settings": {"monitor_interval": 5, "max_backups": 10}}
 

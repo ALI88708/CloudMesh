@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +52,13 @@ class CommandLog:
         self.log_file = self.base_dir / "command_log.json"
         self.checkpoint_file = self.base_dir / "command_log.checkpoint.json"
         self.max_entries = max_entries
+        # Every append rewrites the whole list, so two writers that read it at
+        # the same time lose each other's entries. The lock covers `log`,
+        # `_save` and `verify`; it is re-entrant so `log` can hold it across
+        # the nested save.
+        self._lock = threading.RLock()
+        self._load_error = None
+        self.last_log_error = None
         self._entries = []
         self._checkpoint = None
         self._checkpoint_error = None
@@ -60,9 +68,15 @@ class CommandLog:
         if self.log_file.exists():
             try:
                 entries = json.loads(self.log_file.read_text())
-                if isinstance(entries, list):
-                    self._entries = entries
-            except Exception:
+                if not isinstance(entries, list):
+                    raise ValueError("the log is not a list of entries")
+                self._entries = entries
+            except Exception as exc:
+                # The file is the tamper evidence. Recording that it could not
+                # be read is what stops an empty list from being presented as
+                # an intact chain, and what stops the next append from
+                # rewriting the file from scratch.
+                self._load_error = str(exc) or "unreadable log"
                 self._entries = []
 
         if self.checkpoint_file.exists():
@@ -111,19 +125,27 @@ class CommandLog:
         self._checkpoint_error = None
 
     def log(self, command, args=""):
-        timestamp = datetime.now().isoformat()
-        prev_hash = self._entries[-1].get("entry_hash", GENESIS_HASH) if self._entries else GENESIS_HASH
-        entry_hash = _compute_hash(prev_hash, timestamp, command, args)
-        entry = {
-            "timestamp": timestamp,
-            "command": command,
-            "args": args,
-            "prev_hash": prev_hash,
-            "entry_hash": entry_hash,
-            "version": 2,
-        }
-        self._entries.append(entry)
-        self._save()
+        with self._lock:
+            if self._load_error:
+                # Appending would rewrite the file from the empty list left by
+                # the failed load, erasing whatever survived. The command still
+                # runs; `verify` reports the ledger as unreadable.
+                self.last_log_error = self._load_error
+                return
+            timestamp = datetime.now().isoformat()
+            prev_hash = self._entries[-1].get("entry_hash", GENESIS_HASH) if self._entries else GENESIS_HASH
+            entry_hash = _compute_hash(prev_hash, timestamp, command, args)
+            entry = {
+                "timestamp": timestamp,
+                "command": command,
+                "args": args,
+                "prev_hash": prev_hash,
+                "entry_hash": entry_hash,
+                "version": 2,
+            }
+            self._entries.append(entry)
+            self._save()
+            self.last_log_error = None
 
     def get_recent(self, limit=50):
         return self._entries[-limit:]
@@ -132,6 +154,16 @@ class CommandLog:
         return [e for e in self._entries if keyword.lower() in e.get("command", "").lower() or keyword.lower() in e.get("args", "").lower()]
 
     def verify(self):
+        with self._lock:
+            return self._verify_locked()
+
+    def _verify_locked(self):
+        if self._load_error:
+            return {
+                "valid": False,
+                "total": 0,
+                "message": f"Log unreadable — {self._load_error}.",
+            }
         if self._checkpoint_error:
             return {
                 "valid": False,
@@ -196,11 +228,17 @@ class CommandLog:
         return result
 
     def clear(self):
-        self._entries = []
-        self._checkpoint = None
-        self._checkpoint_error = None
-        try:
-            self.checkpoint_file.unlink()
-        except FileNotFoundError:
-            pass
-        self._save()
+        with self._lock:
+            self._entries = []
+            self._checkpoint = None
+            self._checkpoint_error = None
+            # Clearing is the explicit repair for a ledger that cannot be
+            # parsed: without this reset the next append would still be
+            # refused by the remembered load error.
+            self._load_error = None
+            self.last_log_error = None
+            try:
+                self.checkpoint_file.unlink()
+            except FileNotFoundError:
+                pass
+            self._save()

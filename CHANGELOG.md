@@ -4,6 +4,41 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.2.6] - 2026-10-29 — Stability
+
+Patch release for failure behaviour. No command was added or removed; what
+changed is what happens when a write fails, a file is corrupt, or two writers
+race for the same file.
+
+### Fixed
+
+- A config that exists but cannot be decrypted is no longer presented as a
+  fresh install. `load_config` still returns defaults so every command keeps
+  running, but the failure is kept in `last_load_error`, and `cm doctor` shows
+  a `Config: readable` row. The row inspects the files without creating the
+  data directory or a key, so a health check cannot repair the path it was
+  asked to report on.
+- A command ledger that cannot be parsed is reported as unreadable instead of
+  verifying as an empty log. Appending no longer rewrites the damaged file
+  from an empty list; the command still runs, and `cm cmdlog --verify` names
+  the damage.
+- Concurrent ledger writers keep a verifiable chain. Every append rewrites the
+  whole list, so two threads could drop each other's entries; a re-entrant
+  lock now covers append, save, and verify.
+- A corrupt drain file is still usable by the scheduler, but records
+  `last_error` instead of silently returning a drained node to rotation.
+- `cm test --coverage` measures the product code (`core`, `node`, `main.py`)
+  instead of the nonexistent `cloudmesh_node` path, and the floor rises from
+  25% to 45% against a measured 48%.
+
+### Tests
+
+- New `test_fault_injection.py` injects thirteen faults -- a full disk at
+  commit time, a truncated config, a corrupt ledger, a corrupt drain file,
+  concurrent writers, a second queue worker, and a dead or missing `ssh` --
+  and asserts either the correct result or a named failure, never a silent
+  success.
+
 ## [4.2.5] - 2026-10-28 — New UPDATE
 
 Patch release for the release pipeline. No command, output or stored data
