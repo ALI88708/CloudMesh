@@ -502,8 +502,12 @@ stale token that `cm relay revoke` can remove later).
 
 **SSH mode (default).**
 
-`cm node relay enable -n NAME --relay HOST:PORT --ssh-user USER
-[--ssh-key PATH] [--ssh-port 22] [--pool 4] [--cert PATH --key PATH]`
+`cm node relay enable -n NAME --relay HOST:PORT --ssh-host HOST
+--ssh-user USER [--ssh-key PATH] [--ssh-port 22] [--pool 4]
+[--cert PATH --key PATH]`
+
+`--ssh-host` defaults to the node's keyring host when that record is a direct
+one; it is required when the node is new or already stored as relay-backed.
 
 1. Generate `relay_id`, `node_token`, and (unless supplied) the node's
    cert/key on the controller.
@@ -571,7 +575,7 @@ cm relay revoke -n NAME [--relay HOST:PORT]
     Remove the token and close that node's parked connections.
 
 cm node relay enable -n NAME --relay HOST:PORT
-    (--ssh-user USER [--ssh-key PATH] [--ssh-port 22] | --local)
+    (--ssh-host HOST --ssh-user USER [--ssh-key PATH] [--ssh-port 22] | --local)
     [--pool 4] [--cert PATH --key PATH]
     Provision relay mode on the node (see 9.8).
 
@@ -579,16 +583,17 @@ cm node relay import -n NAME --relay HOST:PORT --relay-id ID --token TOKEN
     --node-fingerprint FP --relay-fingerprint FP
     Controller-side half of local mode.
 
-cm node relay disable -n NAME [--ssh-user ... | --local]
+cm node relay disable -n NAME [--ssh-host ... --ssh-user ... | --local]
     Remove the node config, revoke the token, restart the agent.
 
 cm node relay status -n NAME
     Show relay URL, connection state, pool slots, last error, fingerprints.
 
-cm node add -n NAME --relay HOST:PORT --ssh-user ... | --local ...
+cm node add -n NAME --relay HOST:PORT --ssh-host HOST --ssh-user ...
     Add a relay-backed node in one step (implies `relay enable`). `-H` is not
     required in this form; the keyring stores the relay host and port for
     display compatibility. If enable fails, the keyring entry is removed.
+    Local provisioning is not part of `add`; use `cm node relay import`.
 ```
 
 `cm node list` gains a `Transport` column (`DIRECT` or `RELAY`) and keeps
