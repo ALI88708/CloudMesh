@@ -2,19 +2,23 @@ import hashlib
 import hmac as hmac_mod
 import json
 import os
-import ssl
+import secrets
 import socket
+import ssl
 import tempfile
 import time
 import uuid
 from pathlib import Path
 
 try:
+    from cloudmesh.core import node_relay
     from cloudmesh.core.storage import resolve_base_dir
 except ImportError:  # pragma: no cover - source checkout without installed package
+    from core import node_relay
     from core.storage import resolve_base_dir
 
 MAX_RESPONSE_BYTES = 50 * 1024 * 1024
+CLIENT_ID = secrets.token_hex(16)
 
 
 def save_private_json(path, data):
@@ -37,12 +41,30 @@ def save_private_json(path, data):
 
 
 class NodeClient:
-    def __init__(self, host, port=9999, auth_key=None, tls=False, ca_file=None):
+    def __init__(
+        self,
+        host,
+        port=9999,
+        auth_key=None,
+        tls=False,
+        ca_file=None,
+        transport="direct",
+        relay_entry=None,
+        relay_profile=None,
+        relay_error=None,
+        client_id=None,
+    ):
         self.host = host
         self.port = port
         self.auth_key = auth_key
         self.tls = tls
         self.ca_file = ca_file
+        self.transport = transport
+        self.relay_entry = relay_entry
+        self.relay_profile = relay_profile
+        self.relay_error = relay_error
+        self.last_error = relay_error
+        self.client_id = client_id or CLIENT_ID
         self._ssl_context = (
             ssl.create_default_context(cafile=ca_file) if tls else None
         )
@@ -50,13 +72,65 @@ class NodeClient:
         self._keys = self._load_keys()
 
     @classmethod
-    def from_config(cls, node):
+    def from_config(cls, node, name=None):
+        direct = {
+            "host": node["host"],
+            "port": node.get("port", 9999),
+            "auth_key": node.get("key"),
+            "tls": node.get("tls", False),
+            "ca_file": node.get("ca_file"),
+        }
+        if name is None:
+            return cls(**direct)
+
+        store = node_relay.NodeRelayStore()
+        entries = store.load()
+        if store.last_error:
+            return cls(
+                **direct,
+                transport="relay",
+                relay_error=f"relay config is corrupt: {store.last_error}",
+            )
+        entry = entries.get(name)
+        if entry is None:
+            return cls(**direct)
+
+        missing = [
+            field
+            for field in ("relay_id", "url", "relay_fingerprint", "node_fingerprint")
+            if not entry.get(field)
+        ]
+        if missing:
+            return cls(
+                **direct,
+                transport="relay",
+                relay_entry=entry,
+                relay_error=(
+                    "relay config is incomplete: missing " + ", ".join(missing)
+                ),
+            )
+
+        profiles = node_relay.RelayProfileStore()
+        profile = profiles.get(entry["url"])
+        if profiles.last_error:
+            return cls(
+                **direct,
+                transport="relay",
+                relay_entry=entry,
+                relay_error=f"relay profile is corrupt: {profiles.last_error}",
+            )
+        if profile is None:
+            return cls(
+                **direct,
+                transport="relay",
+                relay_entry=entry,
+                relay_error=f"relay profile is missing for {entry['url']}",
+            )
         return cls(
-            node["host"],
-            node.get("port", 9999),
-            node.get("key"),
-            tls=node.get("tls", False),
-            ca_file=node.get("ca_file"),
+            **direct,
+            transport="relay",
+            relay_entry=entry,
+            relay_profile=profile,
         )
 
     def _load_keys(self):
@@ -101,12 +175,14 @@ class NodeClient:
             sock.close()
 
     def _send(self, request, timeout=10, spa=False, spa_port=9998, spa_delay=0.5):
+        if self.transport == "relay":
+            return self._send_relay(request, timeout)
+
         if spa:
             self.send_spa_knock(self.host, self.auth_key or "", spa_port)
             time.sleep(spa_delay)
 
         sock = None
-        request_sent = False
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
@@ -115,8 +191,38 @@ class NodeClient:
                 sock = self._ssl_context.wrap_socket(
                     sock, server_hostname=self.host
                 )
+            return self._send_on_socket(sock, request, timeout)
+        except TimeoutError:
+            return {
+                "type": "error",
+                "message": "Connection timed out",
+                "request_sent": False,
+            }
+        except ConnectionRefusedError:
+            if spa:
+                message = "Connection refused — TCP port may not be open yet (try increasing --spa-delay)"
+            else:
+                message = "Connection refused - is the node running?"
+            return {"type": "error", "message": message, "request_sent": False}
+        except Exception as e:
+            return {
+                "type": "error",
+                "message": str(e),
+                "request_sent": False,
+            }
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    def _send_on_socket(self, sock, request, timeout=10):
+        request_sent = False
+        try:
+            sock.settimeout(timeout)
             msg = json.dumps(request).encode()
-            sock.sendall(len(msg).to_bytes(4, 'big') + msg)
+            sock.sendall(len(msg).to_bytes(4, "big") + msg)
             request_sent = True
             length_bytes = b""
             while len(length_bytes) < 4:
@@ -128,7 +234,7 @@ class NodeClient:
                         "request_sent": request_sent,
                     }
                 length_bytes += chunk
-            length = int.from_bytes(length_bytes, 'big')
+            length = int.from_bytes(length_bytes, "big")
             if length > MAX_RESPONSE_BYTES:
                 return {
                     "type": "error",
@@ -146,30 +252,57 @@ class NodeClient:
                     }
                 data += chunk
             return json.loads(data.decode())
-        except socket.timeout:
+        except TimeoutError:
             return {
                 "type": "error",
                 "message": "Connection timed out",
                 "request_sent": request_sent,
             }
-        except ConnectionRefusedError:
-            if spa:
-                message = "Connection refused — TCP port may not be open yet (try increasing --spa-delay)"
-            else:
-                message = "Connection refused - is the node running?"
-            return {"type": "error", "message": message, "request_sent": request_sent}
-        except Exception as e:
+        except OSError as exc:
             return {
                 "type": "error",
-                "message": str(e),
+                "message": str(exc),
                 "request_sent": request_sent,
             }
+        except ValueError as exc:
+            return {
+                "type": "error",
+                "message": str(exc),
+                "request_sent": request_sent,
+            }
+
+    def _send_relay(self, request, timeout=10):
+        if self.last_error:
+            return {
+                "type": "error",
+                "message": self.last_error,
+                "request_sent": False,
+            }
+        try:
+            transport = node_relay.RelayTransport(
+                self.relay_entry or {},
+                self.relay_profile or {},
+                self.client_id,
+                timeout=timeout,
+            )
+            sock = transport.connect()
+        except node_relay.RelayError as exc:
+            self.last_error = str(exc)
+            return {
+                "type": "error",
+                "message": str(exc),
+                "request_sent": False,
+            }
+        try:
+            result = self._send_on_socket(sock, request, timeout)
+            if result.get("type") == "error" and not result.get("request_sent"):
+                self.last_error = result.get("message") or "relay request failed"
+            return result
         finally:
-            if sock:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
+            try:
+                sock.close()
+            except OSError:
+                pass
 
     def ping(self, auth_key=None, spa=False, spa_port=9998):
         key = auth_key or self.auth_key
