@@ -10,8 +10,10 @@ import hmac
 import json
 import os
 import re
+import secrets
 import socket
 import ssl
+import sys
 import tempfile
 import threading
 import time
@@ -255,7 +257,7 @@ def cert_fingerprint(cert_path):
 
 
 def generate_self_signed_cert(cert_path, key_path, common_name, days=3650):
-    from datetime import datetime, timedelta, timezone
+    from datetime import UTC, datetime, timedelta
 
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -264,7 +266,7 @@ def generate_self_signed_cert(cert_path, key_path, common_name, days=3650):
 
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     certificate = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -601,7 +603,7 @@ class RelayServer:
         while not self._stop.is_set():
             try:
                 client, addr = listener.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -673,7 +675,7 @@ class RelayServer:
             except (ssl.SSLError, OSError):
                 return
             handed_off = self._handle_connection(tls_sock, addr, state)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a client thread must never kill the server
             handed_off = False
         finally:
             self._release_once(ip, state)
@@ -894,3 +896,381 @@ class RelayServer:
             remaining = CAPTURE_LIMIT_BYTES - len(self._captured)
             if remaining > 0:
                 self._captured.extend(chunk[:remaining])
+
+
+def open_outer_tls(host, port, relay_fingerprint, ca_file=None, timeout=10.0):
+    """Open the outer TLS leg to a relay and pin who answered.
+
+    With ``ca_file`` the chain and hostname are verified normally. Without it
+    the certificate is accepted and pinned by its SHA-256 DER fingerprint.
+    """
+    if not ca_file and not relay_fingerprint:
+        raise RelayError("relay fingerprint is required")
+    if ca_file:
+        context = ssl.create_default_context(cafile=ca_file)
+        server_hostname = host
+    else:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        server_hostname = None
+    try:
+        raw = socket.create_connection((host, port), timeout=timeout)
+    except OSError as exc:
+        raise RelayError(f"relay unreachable: {exc}") from exc
+    try:
+        sock = context.wrap_socket(raw, server_hostname=server_hostname)
+    except (ssl.SSLError, OSError) as exc:
+        raw.close()
+        raise RelayError(f"relay TLS failed: {exc}") from exc
+    if not ca_file:
+        peer = sock.getpeercert(binary_form=True)
+        if not peer or not hmac.compare_digest(
+            der_fingerprint(peer), relay_fingerprint
+        ):
+            sock.close()
+            raise RelayError("relay identity mismatch")
+    return sock
+
+
+class InnerTLSSocket:
+    """TLS inside TLS over memory BIOs.
+
+    Calling ``SSLContext.wrap_socket`` on an already wrapped ``SSLSocket``
+    reuses the raw descriptor and bypasses the outer TLS layer. This class
+    writes inner ciphertext through the outer socket instead, so the outer
+    session stays byte-for-byte intact.
+    """
+
+    def __init__(
+        self,
+        sock,
+        context,
+        server_side=False,
+        server_hostname=None,
+        timeout=10.0,
+    ):
+        self.sock = sock
+        self._incoming = ssl.MemoryBIO()
+        self._outgoing = ssl.MemoryBIO()
+        self._ssl = context.wrap_bio(
+            self._incoming,
+            self._outgoing,
+            server_side=server_side,
+            server_hostname=None if server_side else server_hostname,
+        )
+        self._lock = threading.RLock()
+        self._closed = False
+        if timeout is not None:
+            self.sock.settimeout(timeout)
+        self._handshake()
+
+    def _flush_locked(self):
+        while True:
+            data = self._outgoing.read()
+            if not data:
+                return
+            self.sock.sendall(data)
+
+    def _read_raw_locked(self):
+        self._flush_locked()
+        chunk = self.sock.recv(65536)
+        if not chunk:
+            self._incoming.write_eof()
+            return False
+        self._incoming.write(chunk)
+        return True
+
+    def _handshake(self):
+        with self._lock:
+            while True:
+                try:
+                    self._ssl.do_handshake()
+                except ssl.SSLWantReadError:
+                    if not self._read_raw_locked():
+                        raise RelayError("inner TLS peer closed during handshake")
+                    continue
+                except ssl.SSLWantWriteError:
+                    self._flush_locked()
+                    continue
+                self._flush_locked()
+                return
+
+    def recv(self, size):
+        with self._lock:
+            while True:
+                try:
+                    return self._ssl.read(size)
+                except ssl.SSLWantReadError:
+                    if not self._read_raw_locked():
+                        return b""
+                except ssl.SSLZeroReturnError:
+                    return b""
+
+    def sendall(self, data):
+        with self._lock:
+            view = memoryview(data)
+            while view:
+                try:
+                    written = self._ssl.write(view)
+                except ssl.SSLWantWriteError:
+                    self._flush_locked()
+                    continue
+                except ssl.SSLWantReadError:
+                    if not self._read_raw_locked():
+                        raise RelayError("inner TLS peer closed while writing")
+                    continue
+                self._flush_locked()
+                view = view[written:]
+
+    def settimeout(self, seconds):
+        self.sock.settimeout(seconds)
+
+    def getpeercert(self, binary_form=False):
+        return self._ssl.getpeercert(binary_form=binary_form)
+
+    def unwrap(self):
+        with self._lock:
+            if self._closed:
+                return self.sock
+            try:
+                self._ssl.unwrap()
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                pass
+            self._flush_locked()
+            self._closed = True
+            return self.sock
+
+    def close(self):
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self._ssl.unwrap()
+            except (ssl.SSLError, OSError):
+                pass
+            try:
+                self._flush_locked()
+            except OSError:
+                pass
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def wrap_inner_tls(sock, context, server_side, server_hostname=None, timeout=10.0):
+    return InnerTLSSocket(
+        sock,
+        context,
+        server_side=server_side,
+        server_hostname=server_hostname,
+        timeout=timeout,
+    )
+
+
+def admin_request(
+    host,
+    port,
+    admin_key,
+    relay_fingerprint,
+    payload,
+    ca_file=None,
+    timeout=10.0,
+):
+    if not admin_key:
+        raise RelayError("relay admin key is required")
+    sock = open_outer_tls(
+        host, port, relay_fingerprint, ca_file=ca_file, timeout=timeout
+    )
+    try:
+        send_frame(sock, payload)
+        reply = recv_frame(sock)
+    except (ssl.SSLError, OSError) as exc:
+        raise RelayError(f"relay unreachable: {exc}") from exc
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    if reply is None:
+        raise RelayError("relay unreachable: the relay closed the connection")
+    return reply
+
+
+def init_relay(
+    config_path,
+    url=None,
+    bind="0.0.0.0",
+    port=DEFAULT_RELAY_PORT,
+    tls_cert=None,
+    tls_key=None,
+    days=3650,
+    force=False,
+):
+    config_path = Path(config_path)
+    if config_path.exists() and not force:
+        raise RelayError(f"relay config already exists: {config_path}")
+    directory = config_path.parent
+    directory.mkdir(parents=True, exist_ok=True)
+
+    host_hint = None
+    if url:
+        host_part, separator, port_part = url.rpartition(":")
+        if separator and host_part:
+            host_hint = host_part
+            try:
+                port = int(port_part)
+            except ValueError as exc:
+                raise RelayError(f"relay url is not host:port: {url}") from exc
+        else:
+            host_hint = url
+
+    if bool(tls_cert) != bool(tls_key):
+        raise RelayError("both tls_cert and tls_key must be supplied together")
+    if tls_cert:
+        cert_path = Path(tls_cert).resolve()
+        key_path = Path(tls_key).resolve()
+        if not cert_path.is_file() or not key_path.is_file():
+            raise RelayError("relay TLS certificate or key not found")
+        fingerprint = cert_fingerprint(cert_path)
+    else:
+        cert_path = directory / "relay-cert.pem"
+        key_path = directory / "relay-key.pem"
+        fingerprint = generate_self_signed_cert(
+            cert_path,
+            key_path,
+            host_hint or "cloudmesh-relay",
+            days=days,
+        )
+
+    admin_key = secrets.token_hex(32)
+    tokens_path = directory / "tokens.json"
+    tokens_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def stored(path):
+        candidate = Path(path).resolve()
+        try:
+            return candidate.relative_to(directory.resolve()).as_posix()
+        except ValueError:
+            return str(candidate)
+
+    config = RelayConfig(
+        bind=bind,
+        port=port,
+        admin_key=admin_key,
+        tls_cert=stored(cert_path),
+        tls_key=stored(key_path),
+        tokens_file=stored(tokens_path),
+    )
+    config.save(config_path)
+
+    public = f"{host_hint or bind}:{port}"
+    return {
+        "config": str(config_path),
+        "admin_key": admin_key,
+        "tls_cert": str(cert_path),
+        "tls_key": str(key_path),
+        "relay_fingerprint": fingerprint,
+        "controller_command": (
+            f"python cloudmesh/node/cloudmesh_relay.py status --config {config_path}"
+        ),
+        "node_hint": f"point the node agent at {public} and pin {fingerprint}",
+    }
+
+
+def serve_relay(config_path, bind=None, port=None):
+    config = RelayConfig.load(config_path)
+    if bind:
+        config.bind = bind
+    if port is not None:
+        config.port = int(port)
+    server = RelayServer(config)
+    host, bound_port = server.start()
+    print(f"relay listening on {host}:{bound_port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.stop()
+
+
+def main(argv=None):
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="cloudmesh_relay.py",
+        description="CloudMesh relay: nodes dial out, controllers pair through it.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    init_p = sub.add_parser(
+        "init", help="create relay config, admin key, and certificate"
+    )
+    init_p.add_argument("--config", default="relay.json")
+    init_p.add_argument("--url", default=None)
+    init_p.add_argument("--bind", default="0.0.0.0")
+    init_p.add_argument("--port", type=int, default=DEFAULT_RELAY_PORT)
+    init_p.add_argument("--tls-cert", default=None)
+    init_p.add_argument("--tls-key", default=None)
+    init_p.add_argument("--days", type=int, default=3650)
+    init_p.add_argument("--force", action="store_true")
+
+    serve_p = sub.add_parser("serve", help="run the relay server")
+    serve_p.add_argument("--config", default="relay.json")
+    serve_p.add_argument("--bind", default=None)
+    serve_p.add_argument("--port", type=int, default=None)
+
+    status_p = sub.add_parser("status", help="query a running relay")
+    status_p.add_argument("--config", default="relay.json")
+    status_p.add_argument("--host", default="127.0.0.1")
+    status_p.add_argument("--port", type=int, default=None)
+
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "init":
+            result = init_relay(
+                Path(args.config),
+                url=args.url,
+                bind=args.bind,
+                port=args.port,
+                tls_cert=args.tls_cert,
+                tls_key=args.tls_key,
+                days=args.days,
+                force=args.force,
+            )
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.command == "serve":
+            serve_relay(Path(args.config), bind=args.bind, port=args.port)
+            return 0
+        config = RelayConfig.load(args.config)
+        port = args.port if args.port is not None else config.port
+        ts = int(time.time())
+        nonce = secrets.token_hex(8)
+        payload = {
+            "type": "admin",
+            "action": "status",
+            "relay_id": "",
+            "ts": ts,
+            "nonce": nonce,
+            "mac": admin_mac(config.admin_key, "status", "", ts, nonce),
+        }
+        reply = admin_request(
+            args.host,
+            port,
+            config.admin_key,
+            cert_fingerprint(config.tls_cert),
+            payload,
+        )
+        print(json.dumps(reply, indent=2))
+        return 0
+    except RelayError as exc:
+        print(f"relay error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

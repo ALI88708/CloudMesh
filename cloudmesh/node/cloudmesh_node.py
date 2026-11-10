@@ -1229,7 +1229,8 @@ def main():
                          help="Seconds TCP port stays open after knock (default: 5)")
     sub.add_parser("stop")
     sub.add_parser("status")
-    args = p.parse_args()
+    sub.add_parser("relay", add_help=False)
+    args, unknown = p.parse_known_args()
     if args.command == "start":
         if bool(args.tls_cert) != bool(args.tls_key):
             p.error("both --tls-cert and --tls-key must be supplied together")
@@ -1239,6 +1240,12 @@ def main():
         cmd_stop()
     elif args.command == "status":
         cmd_status()
+    elif args.command == "relay":
+        try:
+            from . import cloudmesh_relay
+        except ImportError:
+            import cloudmesh_relay
+        return cloudmesh_relay.main(unknown)
     else:
         p.print_help()
 
