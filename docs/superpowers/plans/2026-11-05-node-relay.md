@@ -95,9 +95,10 @@ def test_frame_rejects_oversized_and_malformed():
 
 
 def test_register_mac_matches_documented_formula():
-    expected = relay.register_mac("ab" * 32, "cd" * 16, 1700000000, "ef" * 16)
-    assert expected == pytest.approx(expected)  # deterministic string
-    assert len(expected) == 64
+    # Independent vector: HMAC-SHA256(key, "register|<relay_id>|<ts>|<nonce>").
+    assert relay.register_mac("00" * 32, "11" * 16, 1700000000, "22" * 8) == (
+        "aafc2e5fa28530f986fe017250e07fe721095ccc4db5fe006063021a161367a5"
+    )
 
 
 def test_nonce_replay_and_clock_skew_are_rejected(tmp_path):
@@ -187,12 +188,19 @@ git commit -m "feat: add relay protocol primitives and token registry"
   - `DEFAULT_RELAY_PORT = 9997`
   - `PAIR_TIMEOUT_SECONDS = 5.0`
   - `class RelayConfig` with `bind`, `port`, `admin_key`, `tls_cert`, `tls_key`, `tokens_file`, `load(path)`, `save(path)`
-  - `class RelayServer` with `start() -> tuple[str, int]`, `serve_forever()`, `stop()`, `address`, `stats()`
+  - `class RelayServer` with `start() -> tuple[str, int]`, `serve_forever()`, `stop()`, `address`, `stats()`, `revoke(relay_id)`, and `captured_bytes()`
+  - `RelayServer(config, registry=None, pair_timeout=PAIR_TIMEOUT_SECONDS, capture=False)`; `capture=True` records every byte the pump forwards so tests can prove the inner leg is ciphertext.
+  - `revoke(relay_id)` removes the token from the registry and closes that node's parked connections; it also sets the flag that rejects further registrations for that ID. It returns whether the ID existed.
   - `class ParkingRegistry` with `park`, `take(relay_id, timeout)`, `close_all(relay_id)`, `counts()`
 
 - [ ] **Step 1: Write the failing server tests**
 
-Use `relay.generate_self_signed_cert` and `relay.open_outer_tls` (implemented in Task 3; for this task, the test may use `ssl` directly). Keep every wait under 1 second by passing `pair_timeout=0.3`.
+Use `relay.generate_self_signed_cert`. `open_outer_tls` arrives in Task 3, so
+this task's tests use a local helper built on `ssl.SSLContext` with
+`check_hostname=False` and `verify_mode=CERT_NONE`. The test file defines
+`connect_and_register`, `connect_controller`, `connect_register_expect_error`,
+`admin`, and `wait_for`; `wait_for` polls every 10 ms with a 2-second cap.
+Keep every wait under 1 second by passing `pair_timeout=0.3`.
 
 ```python
 def start_relay(tmp_path, pair_timeout=0.3):
@@ -345,6 +353,7 @@ git commit -m "feat: add relay server pairing and admin API"
 - Consumes: Task 2 `RelayServer`, `RelayConfig`.
 - Produces:
   - `def open_outer_tls(host: str, port: int, relay_fingerprint: str | None, ca_file: str | None = None, timeout: float = 10.0) -> ssl.SSLSocket`
+  - `class InnerTLSSocket` and `def wrap_inner_tls(sock, context: ssl.SSLContext, server_side: bool, server_hostname: str | None = None, timeout: float = 10.0) -> InnerTLSSocket`
   - `def admin_request(host: str, port: int, admin_key: str, relay_fingerprint: str, payload: dict, ca_file: str | None = None, timeout: float = 10.0) -> dict`
   - `def init_relay(config_path: Path, url: str | None = None, bind: str = "0.0.0.0", port: int = DEFAULT_RELAY_PORT, tls_cert: str | None = None, tls_key: str | None = None, days: int = 3650) -> dict`
   - `def serve_relay(config_path: Path, bind: str | None = None, port: int | None = None) -> None`
@@ -394,6 +403,17 @@ def test_main_rejects_an_unknown_subcommand(capsys):
         relay.main(["nonsense"])
 ```
 
+Add `test_inner_tls_nests_inside_outer_tls_without_touching_the_wire`. Build a
+tap the way the real relay does: two `socket.socketpair()`s and a pump thread
+that copies bytes between them and records every byte. Wrap one end of each
+pair in outer TLS (server on one side, client on the other, pinned by
+fingerprint), then wrap both outer sockets with `wrap_inner_tls`. Send
+`b"TOP-SECRET-INNER"` from the inner client and assert the inner server
+receives it, that the tapped bytes are longer than the plaintext, and that
+`b"TOP-SECRET-INNER"` does not appear in the tapped bytes. Finish by closing
+the inner layers and calling `unwrap()` on both outer sockets; both unwraps
+must succeed, which proves the outer TLS stream was never bypassed.
+
 Also add `test_cloudmesh_node_relay_help_lists_serve` by running `python cloudmesh/node/cloudmesh_node.py relay --help` with `subprocess.run` and asserting `serve` and `init` in stdout.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -404,6 +424,20 @@ Expected: FAIL because `init_relay`, `open_outer_tls`, and `main` do not exist.
 - [ ] **Step 3: Implement the TLS helper and CLI**
 
 - `open_outer_tls`: with a CA file use `ssl.create_default_context(cafile=...)` and `server_hostname=host`; without a CA file use `ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)`, `check_hostname=False`, `verify_mode=CERT_NONE`, then compare `der_fingerprint(sock.getpeercert(binary_form=True))` with the pinned value using `hmac.compare_digest`. Raise `RelayError("relay fingerprint is required")` when no CA file and no fingerprint are supplied, and `RelayError("relay identity mismatch")` on a mismatch. Close the socket before raising.
+- `wrap_inner_tls` / `InnerTLSSocket`: never call `SSLContext.wrap_socket` on
+  an `SSLSocket` — it reuses the raw file descriptor and bypasses the outer TLS
+  layer, corrupting it. Use `ssl.MemoryBIO`: create `incoming`, `outgoing`,
+  then `context.wrap_bio(incoming, outgoing, server_side=..., server_hostname=...)`.
+  `InnerTLSSocket` exposes `recv(n)`, `sendall(data)`, `settimeout(seconds)`,
+  `getpeercert(binary_form=True)`, `unwrap()`, and `close()`. Flush `outgoing`
+  to the underlying socket under a lock after every write and before every raw
+  read; feed raw reads into `incoming`. `recv` maps `SSLWantReadError` to a raw
+  read and preserves `socket.timeout` by re-raising it, because
+  `cloudmesh_node._recv_msg` relies on that exception to bound reads. The
+  handshake runs in a `do_handshake()` loop that flushes on `SSLWantWriteError`
+  and reads on `SSLWantReadError`. `getpeercert` returns the inner peer's DER.
+  `unwrap()` first flushes, then unwraps the SSLObject and returns the outer
+  socket with its TLS session intact.
 - `admin_request`: open TLS, send the payload, read one frame, close, return the frame; translate socket/TLS errors into `RelayError("relay unreachable: ...")`.
 - `init_relay`: generate the admin key (`secrets.token_hex(32)`); if `--tls-cert/--tls-key` are absent, generate `relay-cert.pem`/`relay-key.pem` next to the config; write `relay.json` with relative filenames; create the tokens file parent; return `{config, admin_key, tls_cert, tls_key, relay_fingerprint, controller_command, node_hint}`. Refuse to overwrite an existing config unless `--force` is added to the signature (add `force: bool = False`).
 - `serve_relay`: load config, apply `bind`/`port` overrides, print `relay listening on host:port`, call `serve_forever()`.
@@ -499,7 +533,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'cloudmesh.core.node_r
 - `split_relay_url`: accept `host:port`, `[v6]:port`; reject a missing/empty port, a non-integer port, and a bare IPv6 literal with `RelayError("relay URL must be host:port")`. Return `(host_without_brackets, int(port))`.
 - Both stores: default base dir from `resolve_base_dir()`; `load()` returns `{}` and sets `last_error` on a non-object or invalid JSON; `set` writes atomically via the same pattern as `cloudmesh.core.drain`, `0600` on POSIX; `remove` returns whether the key existed and does not create the file when absent.
 - `RelayAdminClient.__init__`: call `split_relay_url`; require a non-empty admin key and fingerprint. `_request` sends `{"type":"admin","action":...,"relay_id":...,"ts":...,"nonce":...,"mac":...}` through `open_outer_tls` and one `send_frame`/`recv_frame` pair. `enroll` includes `token` and `pool`; `revoke`, `status`, `ping` follow the spec.
-- `RelayTransport.__init__(entry, profile, client_id, timeout=10)`: store `relay_id`, `url`, `relay_fingerprint`, `node_fingerprint`, admin key, CA file. `connect()` opens the outer TLS, sends `connect` with `connect_mac`, reads `paired`, then wraps the socket with an inner client context (`CERT_NONE`, `check_hostname=False`, `server_hostname=relay_id`), completes the handshake, compares the node certificate fingerprint with `hmac.compare_digest`, and returns the socket. On any mismatch or handshake failure, close and raise `RelayError("relay node identity mismatch")` or `RelayError("relay inner TLS failed: ...")`.
+- `RelayTransport.__init__(entry, profile, client_id, timeout=10)`: store `relay_id`, `url`, `relay_fingerprint`, `node_fingerprint`, admin key, CA file. `connect()` opens the outer TLS, sends `connect` with `connect_mac`, reads `paired`, builds an inner client context (`CERT_NONE`, `check_hostname=False`), calls `wrap_inner_tls(sock, context, server_side=False, server_hostname=relay_id)`, compares the inner peer certificate DER fingerprint with `hmac.compare_digest`, and returns the `InnerTLSSocket`. On any mismatch or handshake failure, close and raise `RelayError("relay node identity mismatch")` or `RelayError("relay inner TLS failed: ...")`.
 - `RelayTransport` must send no application bytes before the fingerprint check succeeds.
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -621,6 +655,8 @@ git commit -m "feat: route NodeClient requests through the relay"
   - `class RelayClient` with `start()`, `stop()`, `status()`
   - `NodeAgent.__init__(..., relay_config=None, relay_only=False)`
   - `NodeAgent.serve()` starts the relay pool and skips the inbound listener when `relay_only` is true.
+  - `NodeAgent.start_relay_only_for_test()` and `NodeAgent.stop_relay_for_test()`: test-facing wrappers that start and stop only the relay client, without entering the listener loop.
+  - `NodeAgent.received_application_bytes() -> int`: test-facing counter of application bytes `_handle` has read (incremented as soon as a payload chunk arrives, before parsing). Used to prove a fingerprint mismatch never delivers the auth key.
   - `NodeAgent.info` includes `relay`: `{enabled, url, connected_slots, pool_size, last_error, last_connected_at}`.
 
 - [ ] **Step 1: Write the failing agent tests**
@@ -692,7 +728,10 @@ Expected: FAIL because `load_relay_config` and `relay_config` do not exist.
   1. `open_outer_tls(host, port, relay_fingerprint, timeout=10)`.
   2. Send `register` with `register_mac(node_token, ...)`.
   3. Read `parked`; loop answering `ping` with `pong` and waiting for `paired`. A read timeout of 35 seconds means a missed keepalive; close and reconnect.
-  4. On `paired` with `client_id`, wrap the socket with the inner server context from `tls_cert`/`tls_key` (raise and log if missing), call `self.agent._handle(sock, ("relay", 0), client_id=client_id)`.
+  4. On `paired` with `client_id`, build an inner server context from
+     `tls_cert`/`tls_key` (raise and log if missing), call
+     `wrap_inner_tls(sock, context, server_side=True)`, then
+     `self.agent._handle(inner, ("relay", 0), client_id=client_id)`.
   5. Close and reconnect with exponential backoff 1 s → 60 s, ±20% jitter; reset the backoff after a successful registration.
 - `start()` starts the supervisor; `stop()` sets a stop event, closes parked sockets, and joins threads for at most 2 seconds.
 - `status()` returns the fields from the spec; `last_error` is the most recent error string and `last_connected_at` an ISO timestamp.
@@ -996,7 +1035,10 @@ Expected: FAIL because `RelayProvisioner` and `SSHRunner` do not exist.
   4. Upload `relay-cert.pem` (`0644`), `relay-key.pem` (`0600`), and `.node_relay.json` (`0600`) to `~/.cloudmesh-node/`.
   5. Enroll at the relay; save the controller sidecar.
   6. Restart the agent; if restart fails, keep the config but return `restart_ok=False` and the manual command.
-  7. Verify with the injected `verify` callback or a `NodeClient` ping; on failure, revoke and remove the sidecar, then raise `RelayError`.
+  7. Verify with the injected `verify` callback or a `NodeClient` ping. The
+     agent needs a moment to restart and re-park its pool, so retry the
+     verification every 0.5 s for up to 15 s before declaring failure. On
+     failure, revoke and remove the sidecar, then raise `RelayError`.
 - `enable_local`: generate the same material under `base_dir/.cloudmesh-node` (default `Path.home()/".cloudmesh-node"`), write `.node_relay.json`, and return `{relay_id, token, node_fingerprint, relay_fingerprint, import_command}`. Do not contact the relay.
 - `import_local`: save the controller sidecar and enroll the token at the relay. Use the profile for the URL.
 - `disable_ssh`: remove the node config and key files over SSH, restart, revoke the token, and remove the controller sidecar. `disable_local`: remove the node config and return the revoke hint.
