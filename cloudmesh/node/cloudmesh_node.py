@@ -794,10 +794,15 @@ class RelayClient:
                 if self._stop.is_set():
                     return
                 self._record_error(str(exc))
+            else:
+                # A served session ended cleanly, so re-park at once. Sleeping
+                # here empties the pool between back-to-back controller calls.
+                if self._stop.is_set():
+                    return
+                backoff = RELAY_BACKOFF_INITIAL
+                continue
             if self._stop.is_set():
                 return
-            if state["registered"]:
-                backoff = RELAY_BACKOFF_INITIAL
             delay = min(
                 backoff * random.uniform(0.8, 1.2), RELAY_BACKOFF_MAX
             )

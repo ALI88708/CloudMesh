@@ -215,6 +215,40 @@ def test_an_incomplete_relay_entry_returns_a_named_error(tmp_path, monkeypatch):
     assert "relay config is incomplete" in client.last_error.lower()
 
 
+def test_a_transient_relay_failure_does_not_poison_the_client(tmp_path):
+    """One failed pairing must not latch: the next attempt has to work.
+
+    The node re-parks between sessions, so a pairing failure is usually the
+    instant between a finished request and the next parked connection. Before
+    this was fixed, `last_error` short-circuited every later call, and a relay
+    restart left the controller permanently convinced the node was down.
+    """
+    relay_server, node_server = start_fake_relay_and_node(tmp_path)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        dead_port = probe.getsockname()[1]
+    entry = dict(node_server.entry)
+    entry["url"] = f"127.0.0.1:{dead_port}"
+    client = NodeClient(
+        "127.0.0.1",
+        relay_server.address[1],
+        "auth",
+        transport="relay",
+        relay_entry=entry,
+        relay_profile=relay_server.profile,
+    )
+    try:
+        assert client.execute("uptime").get("message")
+        assert client.last_error
+
+        client.relay_entry["url"] = f"127.0.0.1:{relay_server.address[1]}"
+        assert client.execute("uptime")["stdout"].startswith("ok")
+        assert client.last_error is None
+    finally:
+        node_server.stop()
+        relay_server.stop()
+
+
 def test_a_missing_relay_profile_returns_a_named_error(tmp_path, monkeypatch):
     monkeypatch.setenv("CLOUDMESH_DIR", str(tmp_path))
     NodeRelayStore(tmp_path).set(

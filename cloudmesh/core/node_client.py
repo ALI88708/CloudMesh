@@ -64,6 +64,10 @@ class NodeClient:
         self.relay_profile = relay_profile
         self.relay_error = relay_error
         self.last_error = relay_error
+        # Configuration errors are permanent: retrying cannot fix a missing
+        # profile or a malformed sidecar. Transport errors are not, so they are
+        # cleared before every attempt.
+        self._config_error = relay_error
         self.client_id = client_id or CLIENT_ID
         self._ssl_context = (
             ssl.create_default_context(cafile=ca_file) if tls else None
@@ -271,21 +275,43 @@ class NodeClient:
                 "request_sent": request_sent,
             }
 
+    def _open_relay(self, timeout):
+        """Pair through the relay, retrying once for availability failures.
+
+        A node re-parks between sessions, so one failed pairing is usually the
+        instant between a finished request and the next parked connection. A
+        certificate identity mismatch is a trust decision, not an availability
+        blip, and is raised at once. Pairing is capped at 15s even when the
+        request timeout is minutes, so a dead relay fails fast.
+        """
+        pairing_timeout = min(timeout, 15.0)
+        last_error = "relay pairing failed"
+        for attempt in range(2):
+            try:
+                return node_relay.RelayTransport(
+                    self.relay_entry or {},
+                    self.relay_profile or {},
+                    self.client_id,
+                    timeout=pairing_timeout,
+                ).connect()
+            except node_relay.RelayError as exc:
+                last_error = str(exc)
+                if "identity mismatch" in last_error:
+                    break
+                if attempt == 0:
+                    time.sleep(0.25)
+        raise node_relay.RelayError(last_error)
+
     def _send_relay(self, request, timeout=10):
-        if self.last_error:
+        if self._config_error:
             return {
                 "type": "error",
-                "message": self.last_error,
+                "message": self._config_error,
                 "request_sent": False,
             }
+        self.last_error = None
         try:
-            transport = node_relay.RelayTransport(
-                self.relay_entry or {},
-                self.relay_profile or {},
-                self.client_id,
-                timeout=timeout,
-            )
-            sock = transport.connect()
+            sock = self._open_relay(timeout)
         except node_relay.RelayError as exc:
             self.last_error = str(exc)
             return {
