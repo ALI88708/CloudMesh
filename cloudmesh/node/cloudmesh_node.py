@@ -980,6 +980,9 @@ class NodeAgent:
         self.relay_config = relay_config
         self.relay_only = relay_only
         self._relay_client = RelayClient(self, relay_config) if relay_config else None
+        self._relay_ddos = _StandaloneDDoSProtection(
+            rate_max=120, rate_window=60, conn_per_ip=8
+        )
         self._received_bytes = 0
         self._stop_event = threading.Event()
 
@@ -1073,6 +1076,14 @@ class NodeAgent:
     def received_application_bytes(self):
         with self._lock:
             return self._received_bytes
+
+    def _rate_key(self, client_id, ip):
+        """Scope relay limits by controller process; direct limits stay per IP."""
+        if not client_id:
+            return ip
+        if not isinstance(client_id, str) or not RELAY_HEX32.fullmatch(client_id):
+            raise ValueError("relay client id must be 32 hex characters")
+        return f"relay:{client_id}"
 
     def relay_status(self):
         if self._relay_client is None:
@@ -1305,13 +1316,25 @@ class NodeAgent:
 
     def _handle(self, client, addr, client_id=None):
         ip = addr[0]
-        scope = client_id or ip
         if client_id:
+            try:
+                key = self._rate_key(client_id, ip)
+            except ValueError:
+                _log(f"Relay: rejected malformed client id from {ip}")
+                try:
+                    client.close()
+                except OSError:
+                    pass
+                return
+            ddos = self._relay_ddos
             _log(f"Relay: paired client {client_id[:8]}")
+        else:
+            key = ip
+            ddos = self._ddos
         try:
-            allowed, reason = self._ddos.check_connection(scope)
+            allowed, reason = ddos.check_connection(key)
             if not allowed:
-                _log(f"DDoS: Rejected {scope}: {reason}")
+                _log(f"DDoS: Rejected {key}: {reason}")
                 self._send_msg(client, {"type": "error", "message": "Rejected"})
                 return
 
@@ -1321,18 +1344,18 @@ class NodeAgent:
 
             auth_key = req.get("auth", "") or ""
             if not hmac_mod.compare_digest(auth_key, self.auth_key):
-                _log(f"AUTH_FAIL: {ip}")
-                is_banned = self._ddos.on_auth_failure(scope)
+                _log(f"AUTH_FAIL: {key}")
+                is_banned = ddos.on_auth_failure(key)
                 is_tripwire, tripwire_name = _check_tripwire(auth_key)
                 if is_tripwire:
-                    _log(f"TRIPWIRE TRIGGERED! Key '{tripwire_name}' used from {ip}")
+                    _log(f"TRIPWIRE TRIGGERED! Key '{tripwire_name}' used from {key}")
                     _log_tripwire_breach(auth_key, ip)
                 if is_banned:
-                    _log(f"DDoS: IP {scope} banned after repeated auth failures")
+                    _log(f"DDoS: {key} banned after repeated auth failures")
                 self._send_msg(client, {"type": "error", "message": "Auth failed"})
                 return
 
-            self._ddos.on_auth_success(scope)
+            ddos.on_auth_success(key)
 
             action = req.get("action", "")
             if action == "ping":
@@ -1413,7 +1436,7 @@ class NodeAgent:
             except Exception:
                 pass
         finally:
-            self._ddos.release_connection(scope)
+            ddos.release_connection(key)
             try:
                 client.close()
             except Exception:
