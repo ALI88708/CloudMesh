@@ -22,7 +22,7 @@ def ping_all(server_mgr, node_keys=None):
         from cloudmesh.core.node_client import NodeClient
         for name, info in node_keys.items():
             try:
-                c = NodeClient.from_config(info)
+                c = NodeClient.from_config(info, name=name)
                 online = c.ping()
                 results[name] = {"type": "node", "online": online, "msg": "OK" if online else "OFFLINE"}
             except Exception as e:
@@ -207,7 +207,7 @@ def generate_report(server_mgr, monitor, node_keys=None):
         from cloudmesh.core.node_client import NodeClient
         for name, info in node_keys.items():
             try:
-                c = NodeClient.from_config(info)
+                c = NodeClient.from_config(info, name=name)
                 m = c.get_metrics()
                 report["nodes"][name] = m
             except Exception:

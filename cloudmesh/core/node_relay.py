@@ -683,7 +683,11 @@ class RelayProvisioner:
         relay_fingerprint,
         pool=DEFAULT_POOL,
     ):
-        """Enroll material generated on the node and save the controller sidecar."""
+        """Enroll material generated on the node and save the controller sidecar.
+
+        Without a stored profile there is no admin key to enroll with, so the
+        sidecar is saved with ``enrolled=False`` and the token stays pending.
+        """
         split_relay_url(url)
         pool = self._pool(pool)
         for label, value, pattern, length in (
@@ -694,13 +698,18 @@ class RelayProvisioner:
         ):
             if not isinstance(value, str) or pattern.fullmatch(value) is None:
                 raise RelayError(f"{label} must be {length} hex characters")
-        profile = self._profile(url)
+        profile = self.profiles.get(url)
         entry = {
             "relay_id": relay_id,
             "url": url,
             "relay_fingerprint": relay_fingerprint,
             "node_fingerprint": node_fingerprint,
         }
+        if not profile:
+            self.nodes.set(name, entry)
+            result = dict(entry)
+            result["enrolled"] = False
+            return result
         client = self._admin(url, profile)
         client.enroll(relay_id, token, pool=pool)
         try:
@@ -711,7 +720,9 @@ class RelayProvisioner:
             except RelayError:
                 pass
             raise
-        return dict(entry)
+        result = dict(entry)
+        result["enrolled"] = True
+        return result
 
     def disable_ssh(
         self, name, url, *, ssh_host, ssh_user, ssh_key=None, ssh_port=22

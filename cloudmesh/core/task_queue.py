@@ -137,7 +137,7 @@ class SmartTaskQueue:
     def _client(self, node):
         info = self.nodes[node]
         if self.client_factory is NodeClient:
-            return NodeClient.from_config(info)
+            return NodeClient.from_config(info, name=node)
         return self.client_factory(info["host"], info.get("port", 9999), info.get("key"))
 
     def _drained_names(self):

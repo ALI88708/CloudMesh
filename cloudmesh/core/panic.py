@@ -163,7 +163,7 @@ class PanicManager:
             pending = self._load_pending()
             for name, info in list(nodes.items()):
                 new_auth = secrets.token_hex(32)
-                client = NodeClient.from_config(info)
+                client = NodeClient.from_config(info, name=name)
                 try:
                     result = client.rotate_key(new_auth)
                     if result.get("success"):
@@ -213,7 +213,7 @@ class PanicManager:
         pending = self._load_pending()
         for name, info in list(nodes.items()):
             new_auth = secrets.token_hex(32)
-            client = NodeClient.from_config(info)
+            client = NodeClient.from_config(info, name=name)
             try:
                 result = client.rotate_key(new_auth)
                 if result.get("success"):
@@ -255,7 +255,9 @@ class PanicManager:
         nodes = self._load_nodes()
 
         for name, info in pending.items():
-            client = NodeClient.from_config({**info, "key": info["old_key"]})
+            client = NodeClient.from_config(
+                {**info, "key": info["old_key"]}, name=name
+            )
             try:
                 result = client.rotate_key(info["new_key"])
                 if result.get("success"):

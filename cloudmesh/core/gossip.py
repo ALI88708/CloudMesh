@@ -146,7 +146,7 @@ class GossipManager:
             for name, info in node_keys.items():
                 try:
                     start = time.time()
-                    client = NodeClient.from_config(info)
+                    client = NodeClient.from_config(info, name=name)
                     reachable = client.ping()
                     latency = round((time.time() - start) * 1000, 1) if reachable else None
 
