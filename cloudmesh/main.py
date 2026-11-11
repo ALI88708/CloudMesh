@@ -41,6 +41,13 @@ from cloudmesh.core.cmdlog import CommandLog
 from cloudmesh.core.sync import DirectorySync
 from cloudmesh.core.service import ServiceMode
 from cloudmesh.core.node_client import NodeClient, save_private_json
+from cloudmesh.core.node_relay import (
+    NodeRelayStore,
+    RelayAdminClient,
+    RelayError,
+    RelayProfileStore,
+)
+from cloudmesh.node.cloudmesh_relay import DEFAULT_RELAY_PORT, init_relay, serve_relay
 from cloudmesh.core.task_queue import SmartTaskQueue, WorkerAlreadyRunningError
 from cloudmesh.core.gpu import GPUTelemetry
 from cloudmesh.core.jobs import JobManager
@@ -4172,7 +4179,158 @@ def _alias_of(subparsers, canonical, alias, help_text):
     return clone
 
 
-def main():
+def _relay_client(url):
+    """Build an admin client for ``url``, using a stored profile when present.
+
+    A missing profile is not fatal here: the client reports the missing
+    credentials as a named ``RelayError`` that the caller prints.
+    """
+    profile = RelayProfileStore().get(url) or {}
+    return RelayAdminClient(
+        url,
+        profile.get("admin_key"),
+        profile.get("relay_fingerprint"),
+        ca_file=profile.get("ca_file"),
+    )
+
+
+def _relay_url(args):
+    """Resolve ``--relay`` or, when omitted, the single stored profile."""
+    url = getattr(args, "relay", None)
+    if url:
+        return url
+    store = RelayProfileStore()
+    profiles = store.load()
+    if store.last_error:
+        raise RelayError(store.last_error)
+    if not profiles:
+        raise RelayError("no relay profiles configured; run cm relay add first")
+    if len(profiles) > 1:
+        raise RelayError("multiple relay profiles configured; pass --relay")
+    return next(iter(profiles))
+
+
+def cmd_relay_init(args):
+    config_path = Path(args.config or "relay.json")
+    try:
+        result = init_relay(
+            config_path,
+            url=args.url,
+            bind=args.bind,
+            port=args.port,
+            tls_cert=args.tls_cert,
+            tls_key=args.tls_key,
+            force=args.force,
+        )
+    except RelayError as exc:
+        print(f"Relay init failed: {exc}")
+        raise SystemExit(1) from exc
+
+    relay_url = args.url or f"<relay-host>:{args.port}"
+    fingerprint = result["relay_fingerprint"]
+    print("Relay initialized.")
+    print(f"  config: {result['config']}")
+    print(f"  admin key (shown once, store it now): {result['admin_key']}")
+    print(f"  relay fingerprint: {fingerprint}")
+    print()
+    print("Trust this relay on the controller:")
+    print(
+        f"  cm relay add --url {relay_url} --key {result['admin_key']} "
+        f"--fingerprint {fingerprint}"
+    )
+    print()
+    print("Enable it on a node (the node dials out to the relay):")
+    print(
+        f"  cm node relay enable -n <name> --url {relay_url} "
+        f"--fingerprint {fingerprint}"
+    )
+    print()
+    print("Start the relay:")
+    print(f"  cm relay serve --config {result['config']}")
+
+
+def cmd_relay_add(args):
+    try:
+        if not args.fingerprint:
+            raise RelayError("--fingerprint is required")
+        RelayProfileStore().set(
+            args.url,
+            args.key,
+            args.fingerprint,
+            ca_file=args.ca_file,
+        )
+    except RelayError as exc:
+        print(f"Relay add failed: {exc}")
+        raise SystemExit(1) from exc
+    print(f"Relay profile saved for {args.url}")
+
+
+def cmd_relay_serve(args):
+    try:
+        serve_relay(
+            Path(args.config or "relay.json"),
+            bind=args.bind,
+            port=args.port,
+        )
+    except RelayError as exc:
+        print(f"Relay serve failed: {exc}")
+        raise SystemExit(1) from exc
+
+
+def cmd_relay_status(args):
+    try:
+        url = _relay_url(args)
+        reply = _relay_client(url).status()
+    except RelayError as exc:
+        print(f"Relay status failed: {exc}")
+        raise SystemExit(1) from exc
+
+    data = reply.get("data") or {}
+    totals = data.get("totals") or {}
+    print(f"Relay {url}")
+    print(f"  uptime: {data.get('uptime_seconds', 0)}s")
+    print(f"  parked: {totals.get('parked', 0)}")
+    print(f"  paired: {totals.get('paired', 0)}")
+    for relay_id, node in sorted((data.get("nodes") or {}).items()):
+        if not isinstance(node, dict):
+            continue
+        print(
+            f"  node {relay_id}: parked={node.get('parked', 0)} "
+            f"paired={node.get('paired', 0)}"
+        )
+
+
+def cmd_relay_revoke(args):
+    store = NodeRelayStore()
+    entry = store.get(args.name)
+    if store.last_error:
+        print(f"Relay revoke failed: {store.last_error}")
+        raise SystemExit(1)
+    if not entry:
+        print(f"No relay configured for node {args.name}")
+        raise SystemExit(1)
+
+    relay_id = entry.get("relay_id")
+    url = getattr(args, "relay", None) or entry.get("url")
+    try:
+        if not relay_id:
+            raise RelayError(f"the relay sidecar for {args.name} has no relay_id")
+        if not url:
+            raise RelayError("pass --relay because the sidecar has no url")
+        reply = _relay_client(url).revoke(relay_id)
+    except RelayError as exc:
+        print(f"Relay revoke failed: {exc}")
+        raise SystemExit(1) from exc
+
+    data = reply.get("data") or {}
+    if data.get("success"):
+        print(f"Revoked relay token for node {args.name} ({relay_id}).")
+    else:
+        print(f"The relay had no token for node {args.name} ({relay_id}).")
+
+
+def build_parser():
+    """Build the CloudMesh command-line parser."""
     """Parse process arguments and dispatch the selected CloudMesh command.
 
     Print help and return when no command is given. Argument parsing may
@@ -4362,6 +4520,33 @@ def main():
     jk_p = job_sub.add_parser("kill", help="Kill a job")
     jk_p.add_argument("--name", "-n", required=True)
     jk_p.add_argument("--job-id", "-j", required=True)
+
+    relay = subparsers.add_parser("relay", help="Manage relay servers")
+    relay_sub = relay.add_subparsers(dest="action")
+    relay_init_p = relay_sub.add_parser(
+        "init", help="Create relay config, admin key, and certificate"
+    )
+    relay_init_p.add_argument("--url", default=None)
+    relay_init_p.add_argument("--config", default=None)
+    relay_init_p.add_argument("--bind", default="0.0.0.0")
+    relay_init_p.add_argument("--port", type=int, default=DEFAULT_RELAY_PORT)
+    relay_init_p.add_argument("--tls-cert", default=None)
+    relay_init_p.add_argument("--tls-key", default=None)
+    relay_init_p.add_argument("--force", action="store_true")
+    relay_add_p = relay_sub.add_parser("add", help="Trust a relay on this controller")
+    relay_add_p.add_argument("--url", required=True)
+    relay_add_p.add_argument("--key", required=True)
+    relay_add_p.add_argument("--fingerprint", default=None)
+    relay_add_p.add_argument("--ca-file", default=None)
+    relay_serve_p = relay_sub.add_parser("serve", help="Run a relay server")
+    relay_serve_p.add_argument("--config", default=None)
+    relay_serve_p.add_argument("--bind", default=None)
+    relay_serve_p.add_argument("--port", type=int, default=None)
+    relay_status_p = relay_sub.add_parser("status", help="Show relay status")
+    relay_status_p.add_argument("--relay", default=None)
+    relay_revoke_p = relay_sub.add_parser("revoke", help="Revoke a node's relay token")
+    relay_revoke_p.add_argument("--name", "-n", required=True)
+    relay_revoke_p.add_argument("--relay", default=None)
 
     queue_p = subparsers.add_parser("queue", help="Submit and manage resource-aware node jobs")
     queue_sub = queue_p.add_subparsers(dest="action")
@@ -5125,7 +5310,28 @@ def main():
     aclrm = subparsers.add_parser("aclrm", help="[alias] Remove ACL user")
     aclrm.add_argument("--username", "-u", required=True)
 
+    parser.help_parsers = {
+        "server": srv,
+        "node": node,
+        "queue": queue_p,
+        "relay": relay,
+    }
+    return parser
+
+
+def main():
+    """Parse process arguments and dispatch the selected CloudMesh command.
+
+    Print help and return when no command is given. Argument parsing may
+    raise SystemExit; command handler exceptions propagate.
+    """
+    parser = build_parser()
     args = parser.parse_args()
+    if args.cmd_name is None:
+        parser.print_help()
+        return
+
+    help_parsers = parser.help_parsers
     if args.cmd_name is None:
         parser.print_help()
         return
@@ -5135,7 +5341,7 @@ def main():
             "add": cmd_server_add, "remove": cmd_server_remove,
             "list": cmd_server_list, "test": cmd_server_test,
             "info": cmd_node_info,
-        }.get(args.action, lambda _a: srv.print_help())(args),
+        }.get(args.action, lambda _a: help_parsers["server"].print_help())(args),
         "node": lambda: {
             "add": cmd_node_add_cloud, "remove": cmd_node_remove,
             "list": cmd_node_list_cloud, "test": cmd_node_test,
@@ -5147,7 +5353,7 @@ def main():
             "checkpoint": cmd_job_checkpoint,
             "recover": cmd_job_recover,
             "checkpoints": cmd_job_checkpoints,
-        }.get(args.action, lambda _a: node.print_help())(args),
+        }.get(args.action, lambda _a: help_parsers["node"].print_help())(args),
         "monitor": lambda: cmd_monitor(args),
         "wait": lambda: cmd_wait(args),
         "mon": lambda: cmd_monitor(args),
@@ -5170,7 +5376,12 @@ def main():
             "submit": cmd_task_queue, "status": cmd_task_queue,
             "list": cmd_task_queue, "cancel": cmd_task_queue,
             "worker": cmd_task_queue,
-        }.get(args.action, lambda _a: queue_p.print_help())(args),
+        }.get(args.action, lambda _a: help_parsers["queue"].print_help())(args),
+        "relay": lambda: {
+            "init": cmd_relay_init, "add": cmd_relay_add,
+            "serve": cmd_relay_serve, "status": cmd_relay_status,
+            "revoke": cmd_relay_revoke,
+        }.get(args.action, lambda _a: help_parsers["relay"].print_help())(args),
         "autosync": lambda: cmd_autosync(args),
         "interactive": lambda: cmd_interactive(args),
         "backup": lambda: cmd_backup(args),
