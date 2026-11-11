@@ -198,6 +198,66 @@ cm completions --shell bash    # Enable shell completions
 - **SSH** - For any server with SSH access
 - **TCP Node** - Lightweight agent on any device (with optional Ghost Ports / SPA)
 
+### Nodes behind NAT (relay)
+
+A node behind NAT, a cloud security group, or a host firewall cannot accept an
+inbound connection on port 9999. Relay mode gives it a reachable meeting point:
+both the node and the controller dial **outbound** to a relay, which pairs the
+two sockets and forwards ciphertext. The node never opens a port, and the
+controller never needs the node's address.
+
+```
+        controller (laptop)                     relay host (public IP)
+        +------------------+  outer TLS         +----------------------+
+        | cm node exec     |------------------->|  cloudmesh_relay.py  |
+        | NodeClient       |                    |  pair(relay_id)      |
+        | inner TLS client |<======= ciphertext =|  raw byte pump       |
+        +------------------+                    +----------+-----------+
+                                                           ^
+                                                           | outer TLS
+                                                +----------+-----------+
+                                                | node agent (NAT)     |
+                                                | inner TLS server     |
+                                                | parked pool (4)      |
+                                                +----------------------+
+```
+
+The relay only forwards bytes. Controller-to-node traffic runs inside a second
+TLS session that the relay cannot read, and both sides pin the certificate
+fingerprints they expect.
+
+```bash
+# 1. On the relay host: create the config, admin key, and certificate.
+#    The admin key is printed once.
+cm relay init --url relay.example.com:9997
+
+# 2. On the controller: trust the relay (init prints this command with the values)
+cm relay add --url relay.example.com:9997 --key ADMIN_KEY --fingerprint RELAY_FP
+
+# 3. On the controller: install relay mode on a node over SSH
+cm node relay enable -n web-1 --relay relay.example.com:9997 \
+  --ssh-host 10.0.0.5 --ssh-user root
+
+# 4. On the relay host: start the relay
+cm relay serve --config relay.json
+```
+
+`cm node add -n web-1 -k AUTH_KEY --relay relay.example.com:9997
+--ssh-host 10.0.0.5 --ssh-user root` performs steps 2 and 3 in one command.
+
+When the node cannot be reached over SSH either, run
+`cm node relay enable -n web-1 --relay relay.example.com:9997 --local` on the
+node itself. It writes `~/.cloudmesh-node/.node_relay.json` and prints a
+`cm node relay import ...` command to run on the controller.
+
+`cm node relay status -n web-1`, `cm relay status`, `cm relay revoke -n web-1`,
+and `cm node relay disable -n web-1` inspect and retire the setup. `cm node
+list` shows `RELAY` in the Transport column.
+
+Phase 1 limitations: nodes cannot command each other, one controller owns a
+node's relay identity, and the relay is trusted for availability only - never
+for confidentiality.
+
 ---
 
 ## Versioning Policy

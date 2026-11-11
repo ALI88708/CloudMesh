@@ -2509,6 +2509,45 @@ def cmd_version(args):
     ))
 
 
+_DOCTOR_WARN = "warn"
+
+
+def _is_hex64(value):
+    """True when ``value`` is exactly 64 lowercase hex characters."""
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def _certificate_row(label, path):
+    """Build a doctor row for a configured certificate path.
+
+    An unreadable or expired certificate fails; one expiring within 30 days
+    warns so a rotation can happen before the relay refuses connections.
+    """
+    from datetime import UTC
+
+    try:
+        from cryptography import x509
+
+        certificate = x509.load_pem_x509_certificate(Path(path).read_bytes())
+        expires = getattr(certificate, "not_valid_after_utc", None)
+        if expires is None:
+            expires = certificate.not_valid_after.replace(tzinfo=UTC)
+    except (OSError, ValueError) as exc:
+        return (label, False, f"{path} is unreadable: {exc}")
+
+    seconds = (expires - datetime.now(UTC)).total_seconds()
+    if seconds < 0:
+        return (label, False, f"{path} expired on {expires.date().isoformat()}")
+    days_left = int((seconds + 86399) // 86400)
+    if days_left <= 30:
+        return (label, _DOCTOR_WARN, f"{path} expires in {days_left} day(s)")
+    return (label, True, f"{path} valid for {days_left} day(s)")
+
+
 def cmd_doctor(args):
     """Print local source, configuration, storage, and Git/update health checks.
 
@@ -2675,6 +2714,127 @@ def cmd_doctor(args):
     else:
         checks.append(("Cloud nodes", False, "No nodes configured"))
 
+    # === Relay transport (direct mode stays the default) ===
+    profile_data = {}
+    try:
+        profiles = RelayProfileStore()
+        profile_data = profiles.load()
+        if profiles.last_error:
+            checks.append(("Relay profile", False, profiles.last_error))
+        elif not profile_data:
+            checks.append((
+                "Relay profile",
+                _DOCTOR_WARN,
+                "No relay profile configured (all nodes direct)",
+            ))
+        else:
+            checks.append((
+                "Relay profile",
+                True,
+                f"{len(profile_data)} relay profile(s)",
+            ))
+    except Exception as e:
+        checks.append(("Relay profile", False, f"check failed: {e}"))
+
+    node_relay_data = {}
+    try:
+        node_relays = NodeRelayStore()
+        node_relay_data = node_relays.load()
+        if node_relays.last_error:
+            checks.append(("Node relay config", False, node_relays.last_error))
+        elif not node_relay_data:
+            checks.append((
+                "Node relay config",
+                _DOCTOR_WARN,
+                "No node uses a relay (all nodes direct)",
+            ))
+        else:
+            checks.append((
+                "Node relay config",
+                True,
+                f"{len(node_relay_data)} node(s) via relay",
+            ))
+    except Exception as e:
+        checks.append(("Node relay config", False, f"check failed: {e}"))
+
+    malformed = [
+        url
+        for url, entry in profile_data.items()
+        if not _is_hex64(entry.get("relay_fingerprint"))
+    ]
+    malformed += [
+        name
+        for name, entry in node_relay_data.items()
+        if not _is_hex64(entry.get("relay_fingerprint"))
+    ]
+    if malformed:
+        checks.append((
+            "Relay fingerprint",
+            False,
+            "malformed: " + ", ".join(sorted(malformed)),
+        ))
+    elif profile_data or node_relay_data:
+        checks.append((
+            "Relay fingerprint",
+            True,
+            "All stored fingerprints are 64 hex characters",
+        ))
+    else:
+        checks.append(("Relay fingerprint", True, "No relay configured (direct mode)"))
+
+    ca_paths = [
+        entry["ca_file"]
+        for entry in profile_data.values()
+        if entry.get("ca_file")
+    ]
+    if not ca_paths:
+        checks.append((
+            "Relay certificate",
+            True,
+            "No relay CA file configured (fingerprint pinning only)",
+        ))
+    else:
+        for path in ca_paths:
+            checks.append(_certificate_row("Relay certificate", path))
+
+    try:
+        local_cert = resolve_base_dir() / ".cloudmesh-node" / "relay-cert.pem"
+        if local_cert.is_file():
+            checks.append(_certificate_row("Node certificate", local_cert))
+        elif node_relay_data:
+            checks.append((
+                "Node certificate",
+                _DOCTOR_WARN,
+                f"No local certificate at {local_cert} (remote node)",
+            ))
+        else:
+            checks.append(("Node certificate", True, "No relay configured (direct mode)"))
+    except Exception as e:
+        checks.append(("Node certificate", False, f"check failed: {e}"))
+
+    if not profile_data:
+        checks.append((
+            "Relay reachable",
+            True,
+            "No relay configured (direct mode)",
+        ))
+    else:
+        for url, entry in profile_data.items():
+            try:
+                RelayAdminClient(
+                    url,
+                    entry.get("admin_key"),
+                    entry.get("relay_fingerprint"),
+                    ca_file=entry.get("ca_file"),
+                    timeout=1.0,
+                ).ping()
+            except RelayError as exc:
+                checks.append(("Relay reachable", _DOCTOR_WARN, f"{url}: {exc}"))
+            except Exception as exc:
+                checks.append(("Relay reachable", False, f"{url}: {exc}"))
+            else:
+                checks.append(("Relay reachable", True, url))
+
     sched = base / ".schedule.json"
     if sched.exists():
         try:
@@ -2756,7 +2916,10 @@ def cmd_doctor(args):
     table.add_column("Details", style="dim")
     all_ok = True
     for label, ok, detail in checks:
-        status = "[green]PASS[/]" if ok else "[red]FAIL[/]"
+        if ok == _DOCTOR_WARN:
+            status = "[yellow]WARN[/]"
+        else:
+            status = "[green]PASS[/]" if ok else "[red]FAIL[/]"
         table.add_row(label, status, detail)
         if not ok:
             all_ok = False

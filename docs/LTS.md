@@ -8,6 +8,9 @@ covers, how patches are released, and what is deliberately out of scope.
 > `4.2.x` series adds new commands on top of the `4.1.x` baseline; this policy
 > continues to cover `4.1.x` only. Feature work lands in `4.2.x`, and security
 > fixes still go to both lines.
+>
+> **`4.3.0` adds node relay mode on the feature line.** It is not backported to
+> `4.1.x`; the support window below remains scoped to `4.1.x`.
 
 ## Support window
 

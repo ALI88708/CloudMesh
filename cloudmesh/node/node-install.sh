@@ -157,6 +157,14 @@ fi
 cp "$NODE_SOURCE" "$INSTALL_DIR/$NODE_SCRIPT"
 chmod +x "$INSTALL_DIR/$NODE_SCRIPT"
 
+# The agent imports cloudmesh_relay only when relay mode is configured. Copy it
+# when it travels beside the agent; a direct-only install still works without it.
+RELAY_SOURCE="$SCRIPT_DIR/cloudmesh_relay.py"
+if [ -f "$RELAY_SOURCE" ]; then
+    cp "$RELAY_SOURCE" "$INSTALL_DIR/cloudmesh_relay.py"
+    chmod 644 "$INSTALL_DIR/cloudmesh_relay.py"
+fi
+
 # ============================================
 # 5. Create helper scripts
 # ============================================
@@ -165,6 +173,9 @@ echo "[5/5] Creating scripts..."
 cat > "$INSTALL_DIR/start.sh" << EOF
 #!/bin/sh
 cd "\$(dirname "\$0")"
+if [ -f .node_relay.json ] && [ ! -f cloudmesh_relay.py ]; then
+    echo "relay module not installed; direct mode only" >&2
+fi
 $PYTHON_BIN cloudmesh_node.py start "\$@"
 EOF
 chmod +x "$INSTALL_DIR/start.sh"
