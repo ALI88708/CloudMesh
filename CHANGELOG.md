@@ -4,7 +4,7 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
-## [4.3.0] - Unreleased — Node relay
+## [4.3.0] - 2026-11-12 — Node relay
 
 Relay mode connects a node that has no inbound port. Both the node and the
 controller dial outbound to a relay, which pairs the two sockets and forwards
