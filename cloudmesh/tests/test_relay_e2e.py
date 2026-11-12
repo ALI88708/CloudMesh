@@ -21,7 +21,7 @@ pytestmark = pytest.mark.timeout(60)
 RELAY_ID = "ab" * 16
 TOKEN = "cd" * 32
 ADMIN_KEY = "11" * 32
-AUTH_KEY = "9f3c1d7a5b2e8046"
+AUTH_KEY = "9f3c1d7a5b2e8046"  # gitleaks:allow - synthetic test fixture
 CLIENT_ID = "ef" * 16
 WRONG_FINGERPRINT = "00" * 32
 
@@ -163,6 +163,57 @@ def test_relay_capture_contains_no_plaintext(tmp_path, monkeypatch):
         assert AUTH_KEY.encode() not in captured
     finally:
         stop_full_stack(server, agent)
+
+
+@pytest.mark.timeout(60)
+def test_registration_racing_shutdown_is_not_left_parked(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(node_module, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(node_module, "JOBS_DIR", tmp_path / "jobs")
+    server = start_relay(tmp_path)
+    cert, key, _fingerprint = node_credentials(tmp_path)
+
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    park_results = []
+    original_park = server._parking.park
+
+    def park_after_shutdown(connection, limit):
+        entered.set()
+        release.wait(5.0)
+        result = original_park(connection, limit)
+        park_results.append(result)
+        finished.set()
+        return result
+
+    monkeypatch.setattr(server._parking, "park", park_after_shutdown)
+    agent = NodeAgent(
+        port=0,
+        auth_key=AUTH_KEY,
+        bind_host="127.0.0.1",
+        relay_config=node_config(server, cert, key, pool=1),
+    )
+    agent.start_relay_only_for_test()
+    try:
+        assert entered.wait(5.0)
+        server.stop()
+        release.set()
+        assert finished.wait(5.0)
+        assert park_results == [False]
+        assert wait_for(
+            lambda: all(
+                entry["parked"] == 0
+                for entry in server._parking.counts().values()
+            )
+        )
+        assert wait_for(
+            lambda: agent.relay_status()["connected_slots"] == 0, timeout=8
+        )
+    finally:
+        release.set()
+        agent.stop_relay_for_test()
+        server.stop()
 
 
 @pytest.mark.timeout(60)

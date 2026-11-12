@@ -109,6 +109,19 @@ def make_agent(server, cert, key, pool=2, **kwargs):
     )
 
 
+def test_parking_registry_rejects_connections_after_shutdown():
+    class FakeParked:
+        relay_id = RELAY_ID
+
+        def __init__(self):
+            self.closed = threading.Event()
+
+    registry = relay.ParkingRegistry()
+    registry.close_everything()
+
+    assert registry.park(FakeParked(), 4) is False
+
+
 def test_agent_parks_the_configured_pool(tmp_path):
     server = start_relay(tmp_path)
     cert, key, _ = node_credentials(tmp_path)

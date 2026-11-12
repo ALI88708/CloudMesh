@@ -27,6 +27,12 @@ the relay cannot read.
 - The node installer copies `cloudmesh_relay.py` beside the agent when it is
   available; direct-only installs continue without it.
 
+### Fixed
+
+- Stopping a relay now rejects registrations that were still in flight, so the
+  listener port is released at once and the relay can restart on the same port
+  instead of failing with `Address already in use`.
+
 ### Security
 
 - Outer TLS is pinned by certificate fingerprint on both legs.

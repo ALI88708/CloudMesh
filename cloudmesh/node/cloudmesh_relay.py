@@ -464,9 +464,12 @@ class ParkingRegistry:
         self._lock = threading.Lock()
         self._parked = {}
         self._paired = {}
+        self._closed = False
 
     def park(self, conn, limit):
         with self._lock:
+            if self._closed:
+                return False
             live = [
                 item
                 for item in self._parked.get(conn.relay_id, [])
@@ -506,6 +509,7 @@ class ParkingRegistry:
 
     def close_everything(self):
         with self._lock:
+            self._closed = True
             relay_ids = list(self._parked)
         for relay_id in relay_ids:
             self.close_all(relay_id)
