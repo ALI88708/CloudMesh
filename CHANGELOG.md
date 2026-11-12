@@ -4,6 +4,43 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.3.0] - Unreleased — Node relay
+
+Relay mode connects a node that has no inbound port. Both the node and the
+controller dial outbound to a relay, which pairs the two sockets and forwards
+ciphertext; controller-to-node traffic stays inside a second TLS session that
+the relay cannot read.
+
+### Added
+
+- `cm relay init|add|serve|status|revoke` configures a relay, trusts it on the
+  controller, runs it, and revokes node tokens.
+- `cm node relay enable|import|disable|status` installs relay mode over SSH or
+  from material generated on the node, and reports the current transport.
+- `cm node add --relay` adds a relayed node in one command, rolling the keyring
+  entry back if provisioning fails.
+- `cm node list` shows a `Transport` column (`RELAY` or `DIRECT`).
+- Relay-aware `NodeClient`: every node command, the task queue, panic rotation,
+  gossip, and the report/ping features use the relay sidecar when present.
+- `cm doctor` reports `Relay profile`, `Node relay config`, `Relay certificate`,
+  `Node certificate`, `Relay fingerprint`, and `Relay reachable`.
+- The node installer copies `cloudmesh_relay.py` beside the agent when it is
+  available; direct-only installs continue without it.
+
+### Fixed
+
+- Stopping a relay now waits for the accept loop to leave the listener and
+  rejects registrations that were still in flight, so the port is released at
+  once and the relay can restart on the same port instead of failing with
+  `Address already in use`.
+
+### Security
+
+- Outer TLS is pinned by certificate fingerprint on both legs.
+- Inner TLS runs end-to-end; the relay only pumps bytes and never parses the
+  node protocol.
+- Relay tokens are enrolled once over the admin channel and can be revoked.
+
 ## [4.2.6] - 2026-10-29 — Stability
 
 Patch release for failure behaviour. No command was added or removed; what

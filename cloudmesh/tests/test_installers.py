@@ -761,3 +761,15 @@ def test_every_installer_advertises_the_declared_version():
     for installer in (LINUX_INSTALLER, WINDOWS_INSTALLER, BSD_SH):
         text = installer.read_text(encoding="utf-8")
         assert banner in text, f"{installer.name} never states {banner!r}"
+
+
+def test_node_installer_copies_the_relay_module():
+    """`cloudmesh_node.py` imports `cloudmesh_relay`, so it must ship beside it.
+
+    Direct-only installs still work when the module is absent, so the copy is
+    conditional and the failure is deferred to a clear start-up message.
+    """
+    text = NODE_SH.read_text(encoding="utf-8")
+    assert "cloudmesh_relay.py" in text
+    assert "RELAY_SOURCE" in text
+    assert "relay module not installed; direct mode only" in text

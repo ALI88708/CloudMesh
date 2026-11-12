@@ -245,6 +245,28 @@ results:
 The two behaviours that are easy to get wrong are the `CLOUDMESH_DIR` switch
 and the `cm config import` limits described above.
 
+## Upgrading to 4.3.0 (node relay)
+
+Relay mode is additive. `4.3.0` reads the same `config.json`, `cloudmesh.db`,
+and `.node_keys.json`, so no migration step is required and `cm migrate` does
+not change.
+
+New sidecar files appear only when relay mode is used:
+
+| File | Written by | Contents |
+| --- | --- | --- |
+| `.relays.json` | `cm relay add` | Trusted relay URL, admin key, pinned fingerprint, optional CA file |
+| `.node_relay.json` | `cm node relay enable` / `import` | Node name to relay ID, URL, and pinned fingerprints |
+
+Both are written atomically and are `0600` on POSIX. Existing direct nodes keep
+working unchanged; `cm node list` gains a `Transport` column showing `DIRECT`
+or `RELAY`.
+
+The relay host runs the same package. `cryptography` is already a dependency,
+so no new install step is needed. The node installer copies
+`cloudmesh_relay.py` beside the agent when it is present; a direct-only node
+still works without it.
+
 ## Getting help
 
 - Security issues: follow `SECURITY.md`; do not open a public issue for a

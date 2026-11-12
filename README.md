@@ -17,9 +17,9 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20BSD-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Commands](https://img.shields.io/badge/Commands-289-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-4.2.6-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-1169-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Commands](https://img.shields.io/badge/Commands-300-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
+[![Version](https://img.shields.io/badge/Version-4.3.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-1287-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
@@ -47,7 +47,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 <br>
 
-**286 commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **DDoS protection** | **Ghost Ports** | **Tripwire Keys** | **Shamir Panic** | **Remote Panic** | **Shell Completions**
+**300 commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **DDoS protection** | **Ghost Ports** | **Tripwire Keys** | **Shamir Panic** | **Remote Panic** | **Shell Completions**
 
 </div>
 
@@ -88,7 +88,7 @@ The Releases section reads published releases from the GitHub Releases API, so r
 ### GitHub release (Recommended)
 Download [Python](https://www.python.org/) 3.11+ for Linux or Windows, then install the verified release wheel:
 ```bash
-pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.2.6/cloudmesh-4.2.6-py3-none-any.whl
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.3.0/cloudmesh-4.3.0-py3-none-any.whl
 cm --help
 ```
 
@@ -162,7 +162,7 @@ wheel. It never installs the unrelated PyPI `cloudmesh` package.
 
 ### First Steps
 ```bash
-cm --help              # Show all 286 commands
+cm --help              # Show all 300 commands
 cm status              # Quick overview of all servers/nodes
 cm interactive         # Interactive TUI menu
 cm mon --local         # Monitor this machine
@@ -198,6 +198,66 @@ cm completions --shell bash    # Enable shell completions
 - **SSH** - For any server with SSH access
 - **TCP Node** - Lightweight agent on any device (with optional Ghost Ports / SPA)
 
+### Nodes behind NAT (relay)
+
+A node behind NAT, a cloud security group, or a host firewall cannot accept an
+inbound connection on port 9999. Relay mode gives it a reachable meeting point:
+both the node and the controller dial **outbound** to a relay, which pairs the
+two sockets and forwards ciphertext. The node never opens a port, and the
+controller never needs the node's address.
+
+```
+        controller (laptop)                     relay host (public IP)
+        +------------------+  outer TLS         +----------------------+
+        | cm node exec     |------------------->|  cloudmesh_relay.py  |
+        | NodeClient       |                    |  pair(relay_id)      |
+        | inner TLS client |<======= ciphertext =|  raw byte pump       |
+        +------------------+                    +----------+-----------+
+                                                           ^
+                                                           | outer TLS
+                                                +----------+-----------+
+                                                | node agent (NAT)     |
+                                                | inner TLS server     |
+                                                | parked pool (4)      |
+                                                +----------------------+
+```
+
+The relay only forwards bytes. Controller-to-node traffic runs inside a second
+TLS session that the relay cannot read, and both sides pin the certificate
+fingerprints they expect.
+
+```bash
+# 1. On the relay host: create the config, admin key, and certificate.
+#    The admin key is printed once.
+cm relay init --url relay.example.com:9997
+
+# 2. On the controller: trust the relay (init prints this command with the values)
+cm relay add --url relay.example.com:9997 --key ADMIN_KEY --fingerprint RELAY_FP
+
+# 3. On the controller: install relay mode on a node over SSH
+cm node relay enable -n web-1 --relay relay.example.com:9997 \
+  --ssh-host 10.0.0.5 --ssh-user root
+
+# 4. On the relay host: start the relay
+cm relay serve --config relay.json
+```
+
+`cm node add -n web-1 -k AUTH_KEY --relay relay.example.com:9997
+--ssh-host 10.0.0.5 --ssh-user root` performs steps 2 and 3 in one command.
+
+When the node cannot be reached over SSH either, run
+`cm node relay enable -n web-1 --relay relay.example.com:9997 --local` on the
+node itself. It writes `~/.cloudmesh-node/.node_relay.json` and prints a
+`cm node relay import ...` command to run on the controller.
+
+`cm node relay status -n web-1`, `cm relay status`, `cm relay revoke -n web-1`,
+and `cm node relay disable -n web-1` inspect and retire the setup. `cm node
+list` shows `RELAY` in the Transport column.
+
+Phase 1 limitations: nodes cannot command each other, one controller owns a
+node's relay identity, and the relay is trusted for availability only - never
+for confidentiality.
+
 ---
 
 ## Versioning Policy
@@ -216,7 +276,14 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v4.2.6 (Latest)
+### v4.3.0 (Latest)
+
+- **Nodes behind NAT:** relay mode lets a node with no inbound port join the pool. Both sides dial outbound to a relay, and controller-to-node traffic stays inside a second TLS session the relay cannot read.
+- **Relay lifecycle commands:** `cm relay init|add|serve|status|revoke` and `cm node relay enable|import|disable|status` set the relay up, enroll nodes, and retire them.
+- **Relay-aware everywhere:** `cm node add --relay` adds a relayed node in one command, `cm node list` shows the transport, and the task queue, panic rotation, gossip, and doctor understand relay nodes.
+- **Permanent failures are no longer sticky:** a transient relay outage no longer poisons a controller process for the rest of its life.
+
+### v4.2.6
 
 - **Corrupt state is reported:** a config, command ledger or drain file that cannot be read is named instead of being treated as empty, and a damaged ledger is never rewritten from scratch.
 - **Concurrent writes stay consistent:** the command ledger serializes appends, so two writers cannot drop each other's entries.
@@ -883,7 +950,7 @@ curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 
 | Option | What it does |
 |--------|-------------|
-| **GitHub release wheel** | Install the verified `cloudmesh-4.2.6-py3-none-any.whl` from GitHub Releases |
+| **GitHub release wheel** | Install the verified `cloudmesh-4.3.0-py3-none-any.whl` from GitHub Releases |
 | **Fresh Install** | Download installer, double-click, done |
 | **BSD installer** | `sh cm_for-bsd.sh --yes` on FreeBSD, OpenBSD and NetBSD |
 | **Update** | `cm update` in a checkout, or `cm update --pip` for a verified release wheel |
@@ -943,7 +1010,7 @@ TLS requires both `--tls-cert` and `--tls-key`; the node refuses partial TLS con
 
 ```
 cloudmesh/
-  main.py              # CLI entry point (286 commands)
+  main.py              # CLI entry point (300 commands)
   requirements.txt     # Python dependencies
   core/
     server.py          # SSH server management

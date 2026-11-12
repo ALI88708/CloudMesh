@@ -30,7 +30,7 @@ class _FakeClient:
         _FakeClient.instances.append(self)
 
     @classmethod
-    def from_config(cls, info):
+    def from_config(cls, info, name=None):
         """Build a fake client from a node config dict, like the real NodeClient."""
         return cls(
             info.get("host"),

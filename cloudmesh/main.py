@@ -41,6 +41,15 @@ from cloudmesh.core.cmdlog import CommandLog
 from cloudmesh.core.sync import DirectorySync
 from cloudmesh.core.service import ServiceMode
 from cloudmesh.core.node_client import NodeClient, save_private_json
+from cloudmesh.core.node_relay import (
+    NodeRelayStore,
+    RelayAdminClient,
+    RelayError,
+    RelayProfileStore,
+    RelayProvisioner,
+    split_relay_url,
+)
+from cloudmesh.node.cloudmesh_relay import DEFAULT_RELAY_PORT, init_relay, serve_relay
 from cloudmesh.core.task_queue import SmartTaskQueue, WorkerAlreadyRunningError
 from cloudmesh.core.gpu import GPUTelemetry
 from cloudmesh.core.jobs import JobManager
@@ -1528,7 +1537,7 @@ def cmd_node_gpu(args):
         if name not in keys:
             continue
         info = keys[name]
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=name)
         gpu = client.get_gpu()
         if gpu and gpu.get("available"):
             for g in gpu.get("gpus", []):
@@ -1574,7 +1583,7 @@ def cmd_node_job(args):
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
         info = keys[args.name]
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=args.name)
         console.print(f"[cyan]Starting job on {args.name}: {args.command}[/]")
         result = client.start_job(args.command, timeout=args.timeout)
         if result and result.get("job_id"):
@@ -1586,7 +1595,7 @@ def cmd_node_job(args):
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
         info = keys[args.name]
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=args.name)
         result = client.check_job(args.job_id)
         if result:
             status_color = "green" if result.get("status") == "completed" else "red" if result.get("status") in ("failed", "error") else "yellow"
@@ -1604,7 +1613,7 @@ def cmd_node_job(args):
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
         info = keys[args.name]
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=args.name)
         jobs = client.list_jobs()
         if not jobs:
             console.print("[dim]No jobs.[/]")
@@ -1624,7 +1633,7 @@ def cmd_node_job(args):
             console.print(f"[red]Node '{args.name}' not found.[/]")
             return
         info = keys[args.name]
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=args.name)
         result = client.kill_job(args.job_id)
         if result and result.get("success"):
             console.print(f"[green]{result.get('message', 'Killed')}[/]")
@@ -1835,10 +1844,67 @@ def _drain_registry():
     return DrainRegistry(resolve_base_dir())
 
 
+def _relay_verify(name):
+    """Ping a node through its freshly written relay sidecar."""
+
+    def verify(_name, _entry):
+        info = _load_node_keys().get(name)
+        if not info:
+            return False
+        return NodeClient.from_config(info, name=name).ping()
+
+    return verify
+
+
+def _add_relay_node(args, keys, relay_url):
+    """Register a relay-backed node and roll the keyring entry back on failure."""
+    ssh_host = getattr(args, "ssh_host", None) or args.host
+    ssh_user = getattr(args, "ssh_user", None)
+    if not ssh_host or not ssh_user:
+        console.print(
+            "[red]Relay mode needs --ssh-host (or --host) and --ssh-user.[/]"
+        )
+        raise SystemExit(2)
+    try:
+        relay_host, relay_port = split_relay_url(relay_url)
+    except RelayError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise SystemExit(2) from exc
+
+    keys[args.name] = {
+        "host": relay_host,
+        "port": relay_port,
+        "key": args.auth_key,
+    }
+    _save_node_keys(keys)
+    provisioner = RelayProvisioner(RelayProfileStore(), NodeRelayStore())
+    try:
+        result = provisioner.enable_ssh(
+            args.name,
+            relay_url,
+            ssh_host=ssh_host,
+            ssh_user=ssh_user,
+            ssh_key=getattr(args, "ssh_key", None),
+            ssh_port=getattr(args, "ssh_port", 22),
+            pool=getattr(args, "pool", 4),
+            verify=_relay_verify(args.name),
+        )
+    except RelayError as exc:
+        keys.pop(args.name, None)
+        _save_node_keys(keys)
+        console.print(f"[red]Relay setup failed for '{args.name}': {exc}[/]")
+        raise SystemExit(1) from exc
+
+    console.print(f"[green]Node '{args.name}' added through relay {relay_url}.[/]")
+    if not result.get("restart_ok", True):
+        console.print(f"[yellow]{result.get('restart_command')}[/]")
+
+
 def cmd_node_add_cloud(args):
     keys = _load_node_keys()
     ca_file = getattr(args, "ca_file", None)
     use_tls = getattr(args, "tls", False)
+    relay_url = getattr(args, "relay", None)
     if ca_file and not use_tls:
         console.print("[red]--ca-file requires --tls.[/]")
         sys.exit(2)
@@ -1847,6 +1913,19 @@ def cmd_node_add_cloud(args):
         if not Path(ca_file).is_file():
             console.print(f"[red]CA certificate file not found: {ca_file}[/]")
             sys.exit(2)
+    if not args.host and not relay_url:
+        console.print(
+            "[red]Pass --host for a direct node or --relay for a relayed node.[/]"
+        )
+        sys.exit(2)
+    if relay_url and use_tls:
+        console.print(
+            "[red]--tls configures a direct node; a relay pins its own TLS.[/]"
+        )
+        sys.exit(2)
+    if relay_url:
+        _add_relay_node(args, keys, relay_url)
+        return
     node = {"host": args.host, "port": args.port, "key": args.auth_key}
     if use_tls:
         node["tls"] = True
@@ -1876,18 +1955,23 @@ def cmd_node_list_cloud(args):
         console.print("[dim]No nodes configured.[/]")
         return
     drained = _drain_registry().names()
+    relay_names = NodeRelayStore().names()
     table = Table(title="Cloud Nodes", box=box.ROUNDED)
     table.add_column("Name", style="bold")
     table.add_column("Host")
     table.add_column("Port")
+    table.add_column("Transport")
     table.add_column("Status")
     table.add_column("State")
     for name, info in keys.items():
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=name)
         online = client.ping()
         status = "[green]ONLINE[/]" if online else "[red]OFFLINE[/]"
         state = "[yellow]DRAINED[/]" if name in drained else "[green]ACTIVE[/]"
-        table.add_row(name, info["host"], str(info["port"]), status, state)
+        transport = "RELAY" if name in relay_names else "DIRECT"
+        table.add_row(
+            name, info["host"], str(info["port"]), transport, status, state
+        )
     console.print(table)
 
 
@@ -1930,7 +2014,7 @@ def cmd_node_test(args):
         console.print(f"[red]Node '{args.name}' not found.[/]")
         return
     info = keys[args.name]
-    client = NodeClient.from_config(info)
+    client = NodeClient.from_config(info, name=args.name)
     console.print(f"[cyan]Testing node '{args.name}'...[/]")
     if client.ping():
         node_info = client.get_info()
@@ -1940,7 +2024,10 @@ def cmd_node_test(args):
             console.print(f"  Hostname: {node_info.get('hostname', '?')}")
             console.print(f"  Platform: {node_info.get('platform', '?')}")
     else:
-        console.print(f"[red]Node OFFLINE or unreachable[/]")
+        if client.last_error:
+            console.print(f"[red]Node OFFLINE: {client.last_error}[/]")
+        else:
+            console.print(f"[red]Node OFFLINE or unreachable[/]")
 
 
 def cmd_node_info_cloud(args):
@@ -1949,12 +2036,14 @@ def cmd_node_info_cloud(args):
         console.print(f"[red]Node '{args.name}' not found.[/]")
         return
     info = keys[args.name]
-    client = NodeClient.from_config(info)
+    client = NodeClient.from_config(info, name=args.name)
     metrics = client.get_metrics()
     node_info = client.get_info()
     lines = []
     lines.append(f"[bold]Name:[/] {args.name}")
     lines.append(f"[bold]Host:[/] {info['host']}:{info['port']}")
+    if client.last_error:
+        lines.append(f"[bold]Relay:[/] [red]{client.last_error}[/]")
     if node_info:
         lines.append(f"[bold]Node ID:[/] {node_info.get('node_id', 'legacy node')}")
         lines.append(f"[bold]Hostname:[/] {node_info.get('hostname', '?')}")
@@ -1985,7 +2074,7 @@ def cmd_node_monitor(args):
         if name not in keys:
             continue
         info = keys[name]
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=name)
         metrics = client.get_metrics()
         if metrics:
             cpu = metrics.get("cpu_percent") or 0
@@ -2007,15 +2096,143 @@ def cmd_node_exec(args):
         console.print(f"[red]Node '{args.name}' not found.[/]")
         return
     info = keys[args.name]
-    client = NodeClient.from_config(info)
+    client = NodeClient.from_config(info, name=args.name)
     console.print(f"[cyan]Running on {args.name}: {args.command}[/]")
     result = client.execute(args.command)
     if result.get("success"):
         console.print(f"[green]Success (exit {result.get('exit_code', 0)}):[/]")
         if result.get("stdout"):
             console.print(result["stdout"])
+    elif client.last_error:
+        console.print(f"[red]Failed: {client.last_error}[/]")
     else:
         console.print(f"[red]Failed: {result.get('stderr', 'Unknown error')}[/]")
+
+
+def cmd_node_relay(args):
+    """Dispatch ``cm node relay`` subcommands."""
+    action = getattr(args, "relay_action", None) or "enable"
+    try:
+        if action == "enable":
+            return cmd_node_relay_enable(args)
+        if action == "import":
+            return cmd_node_relay_import(args)
+        if action == "disable":
+            return cmd_node_relay_disable(args)
+        if action == "status":
+            return cmd_node_relay_status(args)
+    except RelayError as exc:
+        console.print(f"[red]Relay error: {exc}[/]")
+        raise SystemExit(1) from exc
+    console.print(f"[red]Unknown relay action: {action}[/]")
+    raise SystemExit(2)
+
+
+def cmd_node_relay_enable(args):
+    if bool(getattr(args, "local", False)) == bool(args.ssh_user):
+        console.print("[red]Pass exactly one of --local or --ssh-user.[/]")
+        raise SystemExit(2)
+    provisioner = RelayProvisioner(RelayProfileStore(), NodeRelayStore())
+    if args.local:
+        result = provisioner.enable_local(args.name, args.relay, pool=args.pool)
+        console.print(f"[green]Relay config written for '{args.name}'.[/]")
+        console.print("  Run on the controller:")
+        console.print(f"  {result['import_command']}")
+        return result
+
+    ssh_host = args.ssh_host
+    if not ssh_host:
+        info = _load_node_keys().get(args.name)
+        entry = NodeRelayStore().get(args.name)
+        if info and not entry:
+            ssh_host = info.get("host")
+    if not ssh_host:
+        console.print(
+            "[red]--ssh-host is required (or add the node in direct mode first).[/]"
+        )
+        raise SystemExit(2)
+    result = provisioner.enable_ssh(
+        args.name,
+        args.relay,
+        ssh_host=ssh_host,
+        ssh_user=args.ssh_user,
+        ssh_key=args.ssh_key,
+        ssh_port=args.ssh_port,
+        pool=args.pool,
+        cert=args.cert,
+        key=args.key,
+        verify=_relay_verify(args.name),
+    )
+    console.print(
+        f"[green]Relay enabled for '{args.name}' ({result['relay_id']}).[/]"
+    )
+    if not result.get("restart_ok", True):
+        console.print(f"[yellow]{result.get('restart_command')}[/]")
+    return result
+
+
+def cmd_node_relay_import(args):
+    provisioner = RelayProvisioner(RelayProfileStore(), NodeRelayStore())
+    result = provisioner.import_local(
+        args.name,
+        args.relay,
+        args.relay_id,
+        args.token,
+        args.node_fingerprint,
+        args.relay_fingerprint,
+    )
+    console.print(f"[green]Relay sidecar saved for '{args.name}'.[/]")
+    if not result.get("enrolled", False):
+        console.print(
+            "[yellow]No relay profile on this controller, so the token was "
+            "not enrolled yet.[/]"
+        )
+        console.print(
+            "[yellow]Run 'cm relay add' with the relay admin key, then rerun "
+            "this import.[/]"
+        )
+    return result
+
+
+def cmd_node_relay_disable(args):
+    if bool(getattr(args, "local", False)) == bool(args.ssh_user):
+        console.print("[red]Pass exactly one of --local or --ssh-user.[/]")
+        raise SystemExit(2)
+    provisioner = RelayProvisioner(RelayProfileStore(), NodeRelayStore())
+    if args.local:
+        result = provisioner.disable_local(args.name, args.relay)
+        console.print(f"[green]Relay config removed for '{args.name}'.[/]")
+        if result.get("revoke_command"):
+            console.print(f"  Revoke the token at the relay: {result['revoke_command']}")
+        return result
+    if not args.ssh_host:
+        console.print("[red]--ssh-host is required with --ssh-user.[/]")
+        raise SystemExit(2)
+    result = provisioner.disable_ssh(
+        args.name,
+        args.relay,
+        ssh_host=args.ssh_host,
+        ssh_user=args.ssh_user,
+        ssh_key=args.ssh_key,
+        ssh_port=args.ssh_port,
+    )
+    console.print(f"[green]Relay mode disabled for '{args.name}'.[/]")
+    if not result.get("restart_ok", True):
+        console.print(f"[yellow]{result.get('restart_command')}[/]")
+    return result
+
+
+def cmd_node_relay_status(args):
+    entry = NodeRelayStore().get(args.name)
+    if not entry:
+        console.print(f"[yellow]Node '{args.name}' is in DIRECT mode.[/]")
+        return None
+    console.print(f"[bold]Node '{args.name}': RELAY[/]")
+    console.print(f"  Relay: {entry.get('url', '?')}")
+    console.print(f"  Relay ID: {entry.get('relay_id', '?')}")
+    console.print(f"  Node fingerprint: {entry.get('node_fingerprint', '?')}")
+    console.print(f"  Pinned relay fingerprint: {entry.get('relay_fingerprint', '?')}")
+    return entry
 
 
 def _run_node_installer(server_mgr, server_name, content):
@@ -2292,6 +2509,45 @@ def cmd_version(args):
     ))
 
 
+_DOCTOR_WARN = "warn"
+
+
+def _is_hex64(value):
+    """True when ``value`` is exactly 64 lowercase hex characters."""
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def _certificate_row(label, path):
+    """Build a doctor row for a configured certificate path.
+
+    An unreadable or expired certificate fails; one expiring within 30 days
+    warns so a rotation can happen before the relay refuses connections.
+    """
+    from datetime import UTC
+
+    try:
+        from cryptography import x509
+
+        certificate = x509.load_pem_x509_certificate(Path(path).read_bytes())
+        expires = getattr(certificate, "not_valid_after_utc", None)
+        if expires is None:
+            expires = certificate.not_valid_after.replace(tzinfo=UTC)
+    except (OSError, ValueError) as exc:
+        return (label, False, f"{path} is unreadable: {exc}")
+
+    seconds = (expires - datetime.now(UTC)).total_seconds()
+    if seconds < 0:
+        return (label, False, f"{path} expired on {expires.date().isoformat()}")
+    days_left = int((seconds + 86399) // 86400)
+    if days_left <= 30:
+        return (label, _DOCTOR_WARN, f"{path} expires in {days_left} day(s)")
+    return (label, True, f"{path} valid for {days_left} day(s)")
+
+
 def cmd_doctor(args):
     """Print local source, configuration, storage, and Git/update health checks.
 
@@ -2458,6 +2714,127 @@ def cmd_doctor(args):
     else:
         checks.append(("Cloud nodes", False, "No nodes configured"))
 
+    # === Relay transport (direct mode stays the default) ===
+    profile_data = {}
+    try:
+        profiles = RelayProfileStore()
+        profile_data = profiles.load()
+        if profiles.last_error:
+            checks.append(("Relay profile", False, profiles.last_error))
+        elif not profile_data:
+            checks.append((
+                "Relay profile",
+                _DOCTOR_WARN,
+                "No relay profile configured (all nodes direct)",
+            ))
+        else:
+            checks.append((
+                "Relay profile",
+                True,
+                f"{len(profile_data)} relay profile(s)",
+            ))
+    except Exception as e:
+        checks.append(("Relay profile", False, f"check failed: {e}"))
+
+    node_relay_data = {}
+    try:
+        node_relays = NodeRelayStore()
+        node_relay_data = node_relays.load()
+        if node_relays.last_error:
+            checks.append(("Node relay config", False, node_relays.last_error))
+        elif not node_relay_data:
+            checks.append((
+                "Node relay config",
+                _DOCTOR_WARN,
+                "No node uses a relay (all nodes direct)",
+            ))
+        else:
+            checks.append((
+                "Node relay config",
+                True,
+                f"{len(node_relay_data)} node(s) via relay",
+            ))
+    except Exception as e:
+        checks.append(("Node relay config", False, f"check failed: {e}"))
+
+    malformed = [
+        url
+        for url, entry in profile_data.items()
+        if not _is_hex64(entry.get("relay_fingerprint"))
+    ]
+    malformed += [
+        name
+        for name, entry in node_relay_data.items()
+        if not _is_hex64(entry.get("relay_fingerprint"))
+    ]
+    if malformed:
+        checks.append((
+            "Relay fingerprint",
+            False,
+            "malformed: " + ", ".join(sorted(malformed)),
+        ))
+    elif profile_data or node_relay_data:
+        checks.append((
+            "Relay fingerprint",
+            True,
+            "All stored fingerprints are 64 hex characters",
+        ))
+    else:
+        checks.append(("Relay fingerprint", True, "No relay configured (direct mode)"))
+
+    ca_paths = [
+        entry["ca_file"]
+        for entry in profile_data.values()
+        if entry.get("ca_file")
+    ]
+    if not ca_paths:
+        checks.append((
+            "Relay certificate",
+            True,
+            "No relay CA file configured (fingerprint pinning only)",
+        ))
+    else:
+        for path in ca_paths:
+            checks.append(_certificate_row("Relay certificate", path))
+
+    try:
+        local_cert = resolve_base_dir() / ".cloudmesh-node" / "relay-cert.pem"
+        if local_cert.is_file():
+            checks.append(_certificate_row("Node certificate", local_cert))
+        elif node_relay_data:
+            checks.append((
+                "Node certificate",
+                _DOCTOR_WARN,
+                f"No local certificate at {local_cert} (remote node)",
+            ))
+        else:
+            checks.append(("Node certificate", True, "No relay configured (direct mode)"))
+    except Exception as e:
+        checks.append(("Node certificate", False, f"check failed: {e}"))
+
+    if not profile_data:
+        checks.append((
+            "Relay reachable",
+            True,
+            "No relay configured (direct mode)",
+        ))
+    else:
+        for url, entry in profile_data.items():
+            try:
+                RelayAdminClient(
+                    url,
+                    entry.get("admin_key"),
+                    entry.get("relay_fingerprint"),
+                    ca_file=entry.get("ca_file"),
+                    timeout=1.0,
+                ).ping()
+            except RelayError as exc:
+                checks.append(("Relay reachable", _DOCTOR_WARN, f"{url}: {exc}"))
+            except Exception as exc:
+                checks.append(("Relay reachable", False, f"{url}: {exc}"))
+            else:
+                checks.append(("Relay reachable", True, url))
+
     sched = base / ".schedule.json"
     if sched.exists():
         try:
@@ -2539,7 +2916,10 @@ def cmd_doctor(args):
     table.add_column("Details", style="dim")
     all_ok = True
     for label, ok, detail in checks:
-        status = "[green]PASS[/]" if ok else "[red]FAIL[/]"
+        if ok == _DOCTOR_WARN:
+            status = "[yellow]WARN[/]"
+        else:
+            status = "[green]PASS[/]" if ok else "[red]FAIL[/]"
         table.add_row(label, status, detail)
         if not ok:
             all_ok = False
@@ -2779,7 +3159,7 @@ def cmd_exec(args):
         if n not in keys:
             return n, {"success": False, "error": "Node not found"}
         info = keys[n]
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=n)
         result = client.execute(command)
         return n, result
 
@@ -2890,7 +3270,7 @@ def cmd_watch(args):
                 for name in names_node:
                     info = keys[name]
                     try:
-                        client = NodeClient.from_config(info)
+                        client = NodeClient.from_config(info, name=name)
                         metrics = client.get_metrics()
                         if metrics:
                             cpu = metrics.get("cpu_percent", 0)
@@ -3663,7 +4043,7 @@ def cmd_node_dashboard(args):
     table.add_column("RAM", min_width=22)
     table.add_column("Weight")
     for name, info in keys.items():
-        client = NodeClient.from_config(info)
+        client = NodeClient.from_config(info, name=name)
         online = client.ping()
         if online:
             metrics = client.get_metrics()
@@ -3932,7 +4312,7 @@ def cmd_weather(args):
                 pass
         for name, info in keys.items():
             try:
-                client = NodeClient.from_config(info)
+                client = NodeClient.from_config(info, name=name)
                 metrics = client.get_metrics()
                 weather.learn_from_metrics(name, metrics)
                 count += 1
@@ -4035,7 +4415,7 @@ def cmd_job_checkpoint(args):
         console.print(f"[red]Node '{args.name}' not found.[/]")
         return
     info = keys[args.name]
-    client = NodeClient.from_config(info)
+    client = NodeClient.from_config(info, name=args.name)
     result = client.check_job(args.job_id)
     if not result:
         console.print("[red]Job not found.[/]")
@@ -4172,7 +4552,158 @@ def _alias_of(subparsers, canonical, alias, help_text):
     return clone
 
 
-def main():
+def _relay_client(url):
+    """Build an admin client for ``url``, using a stored profile when present.
+
+    A missing profile is not fatal here: the client reports the missing
+    credentials as a named ``RelayError`` that the caller prints.
+    """
+    profile = RelayProfileStore().get(url) or {}
+    return RelayAdminClient(
+        url,
+        profile.get("admin_key"),
+        profile.get("relay_fingerprint"),
+        ca_file=profile.get("ca_file"),
+    )
+
+
+def _relay_url(args):
+    """Resolve ``--relay`` or, when omitted, the single stored profile."""
+    url = getattr(args, "relay", None)
+    if url:
+        return url
+    store = RelayProfileStore()
+    profiles = store.load()
+    if store.last_error:
+        raise RelayError(store.last_error)
+    if not profiles:
+        raise RelayError("no relay profiles configured; run cm relay add first")
+    if len(profiles) > 1:
+        raise RelayError("multiple relay profiles configured; pass --relay")
+    return next(iter(profiles))
+
+
+def cmd_relay_init(args):
+    config_path = Path(args.config or "relay.json")
+    try:
+        result = init_relay(
+            config_path,
+            url=args.url,
+            bind=args.bind,
+            port=args.port,
+            tls_cert=args.tls_cert,
+            tls_key=args.tls_key,
+            force=args.force,
+        )
+    except RelayError as exc:
+        print(f"Relay init failed: {exc}")
+        raise SystemExit(1) from exc
+
+    relay_url = args.url or f"<relay-host>:{args.port}"
+    fingerprint = result["relay_fingerprint"]
+    print("Relay initialized.")
+    print(f"  config: {result['config']}")
+    print(f"  admin key (shown once, store it now): {result['admin_key']}")
+    print(f"  relay fingerprint: {fingerprint}")
+    print()
+    print("Trust this relay on the controller:")
+    print(
+        f"  cm relay add --url {relay_url} --key {result['admin_key']} "
+        f"--fingerprint {fingerprint}"
+    )
+    print()
+    print("Enable it on a node (the node dials out to the relay):")
+    print(
+        f"  cm node relay enable -n <name> --url {relay_url} "
+        f"--fingerprint {fingerprint}"
+    )
+    print()
+    print("Start the relay:")
+    print(f"  cm relay serve --config {result['config']}")
+
+
+def cmd_relay_add(args):
+    try:
+        if not args.fingerprint:
+            raise RelayError("--fingerprint is required")
+        RelayProfileStore().set(
+            args.url,
+            args.key,
+            args.fingerprint,
+            ca_file=args.ca_file,
+        )
+    except RelayError as exc:
+        print(f"Relay add failed: {exc}")
+        raise SystemExit(1) from exc
+    print(f"Relay profile saved for {args.url}")
+
+
+def cmd_relay_serve(args):
+    try:
+        serve_relay(
+            Path(args.config or "relay.json"),
+            bind=args.bind,
+            port=args.port,
+        )
+    except RelayError as exc:
+        print(f"Relay serve failed: {exc}")
+        raise SystemExit(1) from exc
+
+
+def cmd_relay_status(args):
+    try:
+        url = _relay_url(args)
+        reply = _relay_client(url).status()
+    except RelayError as exc:
+        print(f"Relay status failed: {exc}")
+        raise SystemExit(1) from exc
+
+    data = reply.get("data") or {}
+    totals = data.get("totals") or {}
+    print(f"Relay {url}")
+    print(f"  uptime: {data.get('uptime_seconds', 0)}s")
+    print(f"  parked: {totals.get('parked', 0)}")
+    print(f"  paired: {totals.get('paired', 0)}")
+    for relay_id, node in sorted((data.get("nodes") or {}).items()):
+        if not isinstance(node, dict):
+            continue
+        print(
+            f"  node {relay_id}: parked={node.get('parked', 0)} "
+            f"paired={node.get('paired', 0)}"
+        )
+
+
+def cmd_relay_revoke(args):
+    store = NodeRelayStore()
+    entry = store.get(args.name)
+    if store.last_error:
+        print(f"Relay revoke failed: {store.last_error}")
+        raise SystemExit(1)
+    if not entry:
+        print(f"No relay configured for node {args.name}")
+        raise SystemExit(1)
+
+    relay_id = entry.get("relay_id")
+    url = getattr(args, "relay", None) or entry.get("url")
+    try:
+        if not relay_id:
+            raise RelayError(f"the relay sidecar for {args.name} has no relay_id")
+        if not url:
+            raise RelayError("pass --relay because the sidecar has no url")
+        reply = _relay_client(url).revoke(relay_id)
+    except RelayError as exc:
+        print(f"Relay revoke failed: {exc}")
+        raise SystemExit(1) from exc
+
+    data = reply.get("data") or {}
+    if data.get("success"):
+        print(f"Revoked relay token for node {args.name} ({relay_id}).")
+    else:
+        print(f"The relay had no token for node {args.name} ({relay_id}).")
+
+
+def build_parser():
+    """Build the CloudMesh command-line parser."""
     """Parse process arguments and dispatch the selected CloudMesh command.
 
     Print help and return when no command is given. Argument parsing may
@@ -4309,12 +4840,22 @@ def main():
     node_sub = node.add_subparsers(dest="action")
     na_p = node_sub.add_parser("add", help="Add a cloud node")
     na_p.add_argument("--name", "-n", required=True)
-    na_p.add_argument("--host", "-H", required=True)
+    na_p.add_argument("--host", "-H", default=None)
     na_p.add_argument("--port", "-p", type=int, default=9999)
     na_p.add_argument("--auth-key", "-k", required=True)
     na_p.add_argument("--tls", action="store_true",
                       help="Use TLS and verify the node certificate")
     na_p.add_argument("--ca-file", help="CA certificate file for a private node certificate")
+    na_p.add_argument("--relay", default=None,
+                      help="Reach the node through this relay (host:port)")
+    na_p.add_argument("--ssh-host", default=None,
+                      help="SSH address used to install relay mode")
+    na_p.add_argument("--ssh-user", default=None,
+                      help="SSH user used to install relay mode")
+    na_p.add_argument("--ssh-key", default=None, help="SSH key for relay setup")
+    na_p.add_argument("--ssh-port", type=int, default=22)
+    na_p.add_argument("--pool", type=int, default=4,
+                      help="Parked relay connections per node")
     nr_p = node_sub.add_parser("remove", help="Remove node")
     nr_p.add_argument("--name", "-n", required=True)
     node_sub.add_parser("list", help="List all nodes")
@@ -4345,6 +4886,38 @@ def main():
     undrain_p = node_sub.add_parser("undrain", help="Put a drained node back in rotation")
     undrain_p.add_argument("--name", "-n", required=True)
 
+    relay_node_p = node_sub.add_parser("relay", help="Route a node through a relay")
+    node_relay_sub = relay_node_p.add_subparsers(dest="relay_action")
+    nre_p = node_relay_sub.add_parser("enable", help="Install relay mode on a node")
+    nre_p.add_argument("--name", "-n", required=True)
+    nre_p.add_argument("--relay", required=True)
+    nre_p.add_argument("--ssh-host", default=None)
+    nre_p.add_argument("--ssh-user", default=None)
+    nre_p.add_argument("--ssh-key", default=None)
+    nre_p.add_argument("--ssh-port", type=int, default=22)
+    nre_p.add_argument("--local", action="store_true",
+                       help="Write the config on this machine instead of over SSH")
+    nre_p.add_argument("--pool", type=int, default=4)
+    nre_p.add_argument("--cert", default=None)
+    nre_p.add_argument("--key", default=None)
+    nri_p = node_relay_sub.add_parser("import", help="Enroll material generated on the node")
+    nri_p.add_argument("--name", "-n", required=True)
+    nri_p.add_argument("--relay", required=True)
+    nri_p.add_argument("--relay-id", required=True)
+    nri_p.add_argument("--token", required=True)
+    nri_p.add_argument("--node-fingerprint", required=True)
+    nri_p.add_argument("--relay-fingerprint", required=True)
+    nrd_p = node_relay_sub.add_parser("disable", help="Remove relay mode from a node")
+    nrd_p.add_argument("--name", "-n", required=True)
+    nrd_p.add_argument("--relay", required=True)
+    nrd_p.add_argument("--ssh-host", default=None)
+    nrd_p.add_argument("--ssh-user", default=None)
+    nrd_p.add_argument("--ssh-key", default=None)
+    nrd_p.add_argument("--ssh-port", type=int, default=22)
+    nrd_p.add_argument("--local", action="store_true")
+    nrs_p = node_relay_sub.add_parser("status", help="Show a node's relay settings")
+    nrs_p.add_argument("--name", "-n", required=True)
+
     job_p = node_sub.add_parser("job", help="Async jobs on nodes")
     # Dedicated dest: sharing "action" with node_sub made `cm node job start`
     # look up "start" in the node dispatch table (which only knows "job"),
@@ -4362,6 +4935,33 @@ def main():
     jk_p = job_sub.add_parser("kill", help="Kill a job")
     jk_p.add_argument("--name", "-n", required=True)
     jk_p.add_argument("--job-id", "-j", required=True)
+
+    relay = subparsers.add_parser("relay", help="Manage relay servers")
+    relay_sub = relay.add_subparsers(dest="action")
+    relay_init_p = relay_sub.add_parser(
+        "init", help="Create relay config, admin key, and certificate"
+    )
+    relay_init_p.add_argument("--url", default=None)
+    relay_init_p.add_argument("--config", default=None)
+    relay_init_p.add_argument("--bind", default="0.0.0.0")
+    relay_init_p.add_argument("--port", type=int, default=DEFAULT_RELAY_PORT)
+    relay_init_p.add_argument("--tls-cert", default=None)
+    relay_init_p.add_argument("--tls-key", default=None)
+    relay_init_p.add_argument("--force", action="store_true")
+    relay_add_p = relay_sub.add_parser("add", help="Trust a relay on this controller")
+    relay_add_p.add_argument("--url", required=True)
+    relay_add_p.add_argument("--key", required=True)
+    relay_add_p.add_argument("--fingerprint", default=None)
+    relay_add_p.add_argument("--ca-file", default=None)
+    relay_serve_p = relay_sub.add_parser("serve", help="Run a relay server")
+    relay_serve_p.add_argument("--config", default=None)
+    relay_serve_p.add_argument("--bind", default=None)
+    relay_serve_p.add_argument("--port", type=int, default=None)
+    relay_status_p = relay_sub.add_parser("status", help="Show relay status")
+    relay_status_p.add_argument("--relay", default=None)
+    relay_revoke_p = relay_sub.add_parser("revoke", help="Revoke a node's relay token")
+    relay_revoke_p.add_argument("--name", "-n", required=True)
+    relay_revoke_p.add_argument("--relay", default=None)
 
     queue_p = subparsers.add_parser("queue", help="Submit and manage resource-aware node jobs")
     queue_sub = queue_p.add_subparsers(dest="action")
@@ -5125,7 +5725,28 @@ def main():
     aclrm = subparsers.add_parser("aclrm", help="[alias] Remove ACL user")
     aclrm.add_argument("--username", "-u", required=True)
 
+    parser.help_parsers = {
+        "server": srv,
+        "node": node,
+        "queue": queue_p,
+        "relay": relay,
+    }
+    return parser
+
+
+def main():
+    """Parse process arguments and dispatch the selected CloudMesh command.
+
+    Print help and return when no command is given. Argument parsing may
+    raise SystemExit; command handler exceptions propagate.
+    """
+    parser = build_parser()
     args = parser.parse_args()
+    if args.cmd_name is None:
+        parser.print_help()
+        return
+
+    help_parsers = parser.help_parsers
     if args.cmd_name is None:
         parser.print_help()
         return
@@ -5135,7 +5756,7 @@ def main():
             "add": cmd_server_add, "remove": cmd_server_remove,
             "list": cmd_server_list, "test": cmd_server_test,
             "info": cmd_node_info,
-        }.get(args.action, lambda _a: srv.print_help())(args),
+        }.get(args.action, lambda _a: help_parsers["server"].print_help())(args),
         "node": lambda: {
             "add": cmd_node_add_cloud, "remove": cmd_node_remove,
             "list": cmd_node_list_cloud, "test": cmd_node_test,
@@ -5143,11 +5764,12 @@ def main():
             "exec": cmd_node_exec, "install": cmd_node_install,
             "dashboard": cmd_node_dashboard,
             "gpu": cmd_node_gpu, "job": cmd_node_job,
+            "relay": cmd_node_relay,
             "drain": cmd_node_drain, "undrain": cmd_node_undrain,
             "checkpoint": cmd_job_checkpoint,
             "recover": cmd_job_recover,
             "checkpoints": cmd_job_checkpoints,
-        }.get(args.action, lambda _a: node.print_help())(args),
+        }.get(args.action, lambda _a: help_parsers["node"].print_help())(args),
         "monitor": lambda: cmd_monitor(args),
         "wait": lambda: cmd_wait(args),
         "mon": lambda: cmd_monitor(args),
@@ -5170,7 +5792,12 @@ def main():
             "submit": cmd_task_queue, "status": cmd_task_queue,
             "list": cmd_task_queue, "cancel": cmd_task_queue,
             "worker": cmd_task_queue,
-        }.get(args.action, lambda _a: queue_p.print_help())(args),
+        }.get(args.action, lambda _a: help_parsers["queue"].print_help())(args),
+        "relay": lambda: {
+            "init": cmd_relay_init, "add": cmd_relay_add,
+            "serve": cmd_relay_serve, "status": cmd_relay_status,
+            "revoke": cmd_relay_revoke,
+        }.get(args.action, lambda _a: help_parsers["relay"].print_help())(args),
         "autosync": lambda: cmd_autosync(args),
         "interactive": lambda: cmd_interactive(args),
         "backup": lambda: cmd_backup(args),

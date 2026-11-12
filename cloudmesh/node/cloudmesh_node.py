@@ -6,9 +6,12 @@ import hmac as hmac_mod
 import json
 import os
 import platform
+import random
+import re
 import secrets
 import signal
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -26,6 +29,11 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
+try:
+    from . import cloudmesh_relay
+except ImportError:  # standalone deployment: the relay module sits next to this file
+    import cloudmesh_relay
+
 BASE_DIR = Path(__file__).resolve().parent
 KEY_FILE = BASE_DIR / ".node_key"
 JOBS_DIR = BASE_DIR / "jobs"
@@ -33,11 +41,17 @@ PID_FILE = BASE_DIR / "cloudmesh_node.pid"
 LOG_FILE = BASE_DIR / "cloudmesh_node.log"
 TRIPWIRE_KEYS_FILE = BASE_DIR / ".tripwire_keys.json"
 NODE_ID_FILE = BASE_DIR / ".node_id"
+RELAY_CONFIG_FILE = BASE_DIR / ".node_relay.json"
 DEFAULT_PORT = 9999
 DEFAULT_SPA_PORT = 9998
 DEFAULT_SPA_WINDOW = 5
 SPA_TIMESTAMP_MAX_AGE = 30
 METRICS_CACHE_SECONDS = 2.0
+RELAY_PARKED_READ_TIMEOUT = 35.0
+RELAY_BACKOFF_INITIAL = 1.0
+RELAY_BACKOFF_MAX = 60.0
+RELAY_HEX32 = re.compile(r"^[0-9a-f]{32}$")
+RELAY_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _METRICS_CACHE = None
 _METRICS_CACHE_AT = 0.0
 _METRICS_LOCK = threading.Lock()
@@ -135,6 +149,91 @@ def _log(msg):
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
+
+
+def _parse_relay_url(url):
+    """Split ``host:port`` or ``[v6]:port``; raises ValueError with the field name."""
+    text = str(url).strip()
+    if text.startswith("["):
+        end = text.find("]")
+        if end == -1:
+            raise ValueError("relay config is corrupt: url")
+        host = text[1:end]
+        rest = text[end + 1:]
+        if not rest.startswith(":") or len(rest) < 2:
+            raise ValueError("relay config is corrupt: url")
+        port_text = rest[1:]
+    else:
+        host, separator, port_text = text.rpartition(":")
+        if not separator or not host or ":" in host:
+            raise ValueError("relay config is corrupt: url")
+    if not port_text.isdigit():
+        raise ValueError("relay config is corrupt: url")
+    port = int(port_text)
+    if not 1 <= port <= 65535:
+        raise ValueError("relay config is corrupt: url")
+    return host, port
+
+
+def load_relay_config(path):
+    """Load and validate the node's relay sidecar, resolving certificate paths.
+
+    Relative ``tls_cert``/``tls_key`` values are resolved against the config
+    file's directory so a reloaded config works regardless of the process
+    working directory.
+    """
+    path = Path(path)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"relay config is unreadable: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"relay config is corrupt: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(  # noqa: TRY004 - a non-object config file is corrupt, not a caller type error
+            "relay config is corrupt: expected an object"
+        )
+
+    for field in (
+        "relay_id",
+        "url",
+        "node_token",
+        "relay_fingerprint",
+        "tls_cert",
+        "tls_key",
+    ):
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"relay config is incomplete: {field}")
+    if data.get("pool") is None:
+        raise ValueError("relay config is incomplete: pool")
+
+    if not RELAY_HEX32.fullmatch(data["relay_id"]):
+        raise ValueError("relay config is corrupt: relay_id")
+    if not RELAY_HEX64.fullmatch(data["node_token"]):
+        raise ValueError("relay config is corrupt: node_token")
+    if not RELAY_HEX64.fullmatch(data["relay_fingerprint"]):
+        raise ValueError("relay config is corrupt: relay_fingerprint")
+    _parse_relay_url(data["url"])
+
+    try:
+        pool = int(data["pool"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("relay config is corrupt: pool") from exc
+    if not 1 <= pool <= 32:
+        raise ValueError("relay config is corrupt: pool")
+
+    base = path.parent
+    for field in ("tls_cert", "tls_key"):
+        candidate = Path(data[field])
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        data[field] = str(candidate.resolve())
+    data["pool"] = pool
+    data["url"] = data["url"].strip()
+    return data
 
 
 def _load_tripwire_keys():
@@ -591,21 +690,264 @@ class SpacListener:
         self._running = False
 
 
+def _close_socket(sock):
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+    try:
+        sock.close()
+    except OSError:
+        pass
+
+
+class RelayClient:
+    """Keep ``pool`` outbound TLS slots parked at the relay.
+
+    Each slot thread registers, answers keepalives, and hands a paired inner
+    TLS socket to :meth:`NodeAgent._handle`. A supervisor respawns slot threads
+    that exit and the slot loop reconnects with exponential backoff.
+    """
+
+    def __init__(self, agent, config, connect_timeout=10.0):
+        self.agent = agent
+        self.relay_id = config["relay_id"]
+        self.url = config["url"]
+        self.node_token = config["node_token"]
+        self.relay_fingerprint = config["relay_fingerprint"]
+        self.tls_cert = config["tls_cert"]
+        self.tls_key = config["tls_key"]
+        self.pool_size = int(config.get("pool", 4))
+        self.connect_timeout = connect_timeout
+        self._host, self._port = _parse_relay_url(self.url)
+        self._inner_context = None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._threads = []
+        self._sockets = set()
+        self._connected = 0
+        self._last_error = None
+        self._last_connected_at = None
+        self._supervisor = None
+
+    def start(self):
+        with self._lock:
+            if self._supervisor is not None:
+                return
+            self._stop.clear()
+            supervisor = threading.Thread(
+                target=self._supervise, name="relay-supervisor", daemon=True
+            )
+            self._supervisor = supervisor
+        supervisor.start()
+
+    def stop(self):
+        self._stop.set()
+        with self._lock:
+            sockets = list(self._sockets)
+            threads = list(self._threads)
+            supervisor = self._supervisor
+            self._supervisor = None
+        for sock in sockets:
+            _close_socket(sock)
+        deadline = time.monotonic() + 2.0
+        for thread in [*threads, supervisor]:
+            if thread is None or thread is threading.current_thread():
+                continue
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        with self._lock:
+            self._threads = []
+            self._sockets.clear()
+            self._connected = 0
+
+    def status(self):
+        with self._lock:
+            return {
+                "enabled": True,
+                "url": self.url,
+                "connected_slots": self._connected,
+                "pool_size": self.pool_size,
+                "last_error": self._last_error,
+                "last_connected_at": self._last_connected_at,
+            }
+
+    def _supervise(self):
+        while not self._stop.is_set():
+            with self._lock:
+                self._threads = [t for t in self._threads if t.is_alive()]
+                missing = self.pool_size - len(self._threads)
+                for _ in range(max(0, missing)):
+                    slot = threading.Thread(
+                        target=self._run_slot, name="relay-slot", daemon=True
+                    )
+                    self._threads.append(slot)
+                    slot.start()
+            self._stop.wait(0.5)
+
+    def _run_slot(self):
+        backoff = RELAY_BACKOFF_INITIAL
+        while not self._stop.is_set():
+            state = {"registered": False}
+            try:
+                self._serve_once(state)
+            except (cloudmesh_relay.RelayError, ssl.SSLError, OSError) as exc:
+                if self._stop.is_set():
+                    return
+                self._record_error(str(exc))
+            else:
+                # A served session ended cleanly, so re-park at once. Sleeping
+                # here empties the pool between back-to-back controller calls.
+                if self._stop.is_set():
+                    return
+                backoff = RELAY_BACKOFF_INITIAL
+                continue
+            if self._stop.is_set():
+                return
+            delay = min(
+                backoff * random.uniform(0.8, 1.2), RELAY_BACKOFF_MAX
+            )
+            self._stop.wait(delay)
+            backoff = min(backoff * 2, RELAY_BACKOFF_MAX)
+
+    def _serve_once(self, state):
+        sock = cloudmesh_relay.open_outer_tls(
+            self._host,
+            self._port,
+            self.relay_fingerprint,
+            timeout=self.connect_timeout,
+        )
+        self._track(sock)
+        registered = False
+        try:
+            ts = int(time.time())
+            nonce = secrets.token_hex(8)
+            cloudmesh_relay.send_frame(
+                sock,
+                {
+                    "type": "register",
+                    "relay_id": self.relay_id,
+                    "ts": ts,
+                    "nonce": nonce,
+                    "mac": cloudmesh_relay.register_mac(
+                        self.node_token, self.relay_id, ts, nonce
+                    ),
+                },
+            )
+            reply = cloudmesh_relay.recv_frame(sock)
+            if not reply or reply.get("type") != "parked":
+                message = (reply or {}).get("message", "the relay closed the connection")
+                raise cloudmesh_relay.RelayError(
+                    f"relay registration failed: {message}"
+                )
+            state["registered"] = True
+            registered = True
+            self._on_registered()
+
+            paired = self._wait_for_pair(sock)
+            client_id = str(paired.get("client_id") or "")
+            if not RELAY_HEX32.fullmatch(client_id):
+                raise cloudmesh_relay.RelayError(
+                    "relay pairing failed: invalid client id"
+                )
+            self._on_paired()
+            registered = False
+
+            inner = cloudmesh_relay.wrap_inner_tls(
+                sock,
+                self._inner_tls_context(),
+                server_side=True,
+                timeout=RELAY_PARKED_READ_TIMEOUT,
+            )
+            self.agent._handle(inner, ("relay", 0), client_id=client_id)
+        finally:
+            if registered:
+                self._on_unregistered()
+            self._untrack(sock)
+            _close_socket(sock)
+
+    def _wait_for_pair(self, sock):
+        sock.settimeout(RELAY_PARKED_READ_TIMEOUT)
+        while True:
+            message = cloudmesh_relay.recv_frame(sock)
+            if message is None:
+                raise cloudmesh_relay.RelayError(
+                    "relay closed the parked connection"
+                )
+            kind = message.get("type")
+            if kind == "ping":
+                cloudmesh_relay.send_frame(sock, {"type": "pong"})
+                continue
+            if kind == "paired":
+                return message
+            if kind == "error":
+                raise cloudmesh_relay.RelayError(
+                    "relay rejected the connection: "
+                    + str(message.get("message", "unknown error"))
+                )
+            raise cloudmesh_relay.RelayError(
+                f"relay sent an unexpected frame: {kind}"
+            )
+
+    def _inner_tls_context(self):
+        if self._inner_context is not None:
+            return self._inner_context
+        for label, path in (("tls_cert", self.tls_cert), ("tls_key", self.tls_key)):
+            if not Path(path).is_file():
+                raise cloudmesh_relay.RelayError(
+                    f"relay inner TLS is not configured: {label} not found"
+                )
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self.tls_cert, self.tls_key)
+        self._inner_context = context
+        return context
+
+    def _track(self, sock):
+        with self._lock:
+            self._sockets.add(sock)
+
+    def _untrack(self, sock):
+        with self._lock:
+            self._sockets.discard(sock)
+
+    def _record_error(self, message):
+        with self._lock:
+            self._last_error = message
+
+    def _on_registered(self):
+        with self._lock:
+            self._connected += 1
+            self._last_error = None
+            self._last_connected_at = datetime.now().isoformat(timespec="seconds")
+
+    def _on_paired(self):
+        self._on_unregistered()
+
+    def _on_unregistered(self):
+        with self._lock:
+            self._connected = max(0, self._connected - 1)
+
+
 class NodeAgent:
     def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",  # nosec B104 -- node agent must be reachable by design; every request is auth-gated
                  tls_cert=None, tls_key=None,
-                 spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
+                 spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW,
+                 relay_config=None, relay_only=False):
         """Initialize the node agent's listener, job store, and DDoS protection.
 
         Use `auth_key` when nonempty, otherwise read or create the persistent
         node key. Create the job directory and reload jobs, marking previously
         running jobs unknown. Listener settings take effect when serve is called;
         `spa_window` is the TCP access window in seconds after a valid knock.
-        Raise ValueError if only one TLS path is supplied. Auth-key and job
-        directory I/O errors propagate; errors reading individual jobs are skipped.
+        `relay_config` enables the outbound relay pool; `relay_only` keeps the
+        inbound TCP listener closed. Raise ValueError if only one TLS path is
+        supplied, or if relay_only is set without a relay config. Auth-key and
+        job directory I/O errors propagate; errors reading individual jobs are
+        skipped.
         """
         if bool(tls_cert) != bool(tls_key):
             raise ValueError("--tls-cert and --tls-key must be supplied together")
+        if relay_only and relay_config is None:
+            raise ValueError("--relay-only requires --relay-config")
         self.port = port
         self.auth_key = auth_key or get_or_create_key()
         self.bind_host = bind_host
@@ -639,6 +981,15 @@ class NodeAgent:
             # package, so a missing DDoS module must never prevent startup.
             self._ddos = _StandaloneDDoSProtection()
         self._spac = None
+
+        self.relay_config = relay_config
+        self.relay_only = relay_only
+        self._relay_client = RelayClient(self, relay_config) if relay_config else None
+        self._relay_ddos = _StandaloneDDoSProtection(
+            rate_max=120, rate_window=60, conn_per_ip=8
+        )
+        self._received_bytes = 0
+        self._stop_event = threading.Event()
 
     def _on_spa_knock(self, window, source_ip):
         now = time.time()
@@ -723,6 +1074,59 @@ class NodeAgent:
             except FileNotFoundError:
                 pass
 
+    def _count_received(self, size):
+        with self._lock:
+            self._received_bytes += size
+
+    def received_application_bytes(self):
+        with self._lock:
+            return self._received_bytes
+
+    def _rate_key(self, client_id, ip):
+        """Scope relay limits by controller process; direct limits stay per IP."""
+        if not client_id:
+            return ip
+        if not isinstance(client_id, str) or not RELAY_HEX32.fullmatch(client_id):
+            raise ValueError("relay client id must be 32 hex characters")
+        return f"relay:{client_id}"
+
+    def relay_status(self):
+        if self._relay_client is None:
+            return {"enabled": False}
+        return self._relay_client.status()
+
+    @property
+    def info(self):
+        relay_state = (
+            self._relay_client.status() if self._relay_client else {"enabled": False}
+        )
+        return {
+            "node_id": get_node_id(),
+            "hostname": socket.gethostname(),
+            "platform": sys.platform,
+            "arch": platform.machine(),
+            "python": platform.python_version(),
+            "spa_mode": self.spa_mode,
+            "relay": relay_state,
+        }
+
+    def start_relay_only_for_test(self):
+        if self._relay_client is None:
+            raise ValueError("relay client is not configured")
+        self._relay_client.start()
+
+    def stop_relay_for_test(self):
+        if self._relay_client is not None:
+            self._relay_client.stop()
+
+    def stop(self):
+        self._running = False
+        self._stop_event.set()
+        if self._relay_client is not None:
+            self._relay_client.stop()
+        if self._spac is not None:
+            self._spac.stop()
+
     def _recv_msg(self, sock, max_size=50 * 1024 * 1024):
         header_timeout = 10
         read_timeout = 60
@@ -738,6 +1142,7 @@ class NodeAgent:
                 return None
             if not chunk:
                 return None
+            self._count_received(len(chunk))
             header += chunk
         length = int.from_bytes(header, "big")
         if length > max_size or length <= 0:
@@ -754,6 +1159,7 @@ class NodeAgent:
                 return None
             if not chunk:
                 break
+            self._count_received(len(chunk))
             data += chunk
         try:
             return json.loads(data.decode())
@@ -913,12 +1319,27 @@ class NodeAgent:
             except (OSError, subprocess.SubprocessError):
                 proc.kill()
 
-    def _handle(self, client, addr):
+    def _handle(self, client, addr, client_id=None):
         ip = addr[0]
+        if client_id:
+            try:
+                key = self._rate_key(client_id, ip)
+            except ValueError:
+                _log(f"Relay: rejected malformed client id from {ip}")
+                try:
+                    client.close()
+                except OSError:
+                    pass
+                return
+            ddos = self._relay_ddos
+            _log(f"Relay: paired client {client_id[:8]}")
+        else:
+            key = ip
+            ddos = self._ddos
         try:
-            allowed, reason = self._ddos.check_connection(ip)
+            allowed, reason = ddos.check_connection(key)
             if not allowed:
-                _log(f"DDoS: Rejected {ip}: {reason}")
+                _log(f"DDoS: Rejected {key}: {reason}")
                 self._send_msg(client, {"type": "error", "message": "Rejected"})
                 return
 
@@ -928,31 +1349,24 @@ class NodeAgent:
 
             auth_key = req.get("auth", "") or ""
             if not hmac_mod.compare_digest(auth_key, self.auth_key):
-                _log(f"AUTH_FAIL: {ip}")
-                is_banned = self._ddos.on_auth_failure(ip)
+                _log(f"AUTH_FAIL: {key}")
+                is_banned = ddos.on_auth_failure(key)
                 is_tripwire, tripwire_name = _check_tripwire(auth_key)
                 if is_tripwire:
-                    _log(f"TRIPWIRE TRIGGERED! Key '{tripwire_name}' used from {ip}")
+                    _log(f"TRIPWIRE TRIGGERED! Key '{tripwire_name}' used from {key}")
                     _log_tripwire_breach(auth_key, ip)
                 if is_banned:
-                    _log(f"DDoS: IP {ip} banned after repeated auth failures")
+                    _log(f"DDoS: {key} banned after repeated auth failures")
                 self._send_msg(client, {"type": "error", "message": "Auth failed"})
                 return
 
-            self._ddos.on_auth_success(ip)
+            ddos.on_auth_success(key)
 
             action = req.get("action", "")
             if action == "ping":
                 resp = {"type": "pong", "time": datetime.now().isoformat()}
             elif action == "info":
-                resp = {"type": "info", "data": {
-                    "node_id": get_node_id(),
-                    "hostname": socket.gethostname(),
-                    "platform": sys.platform,
-                    "arch": platform.machine(),
-                    "python": platform.python_version(),
-                    "spa_mode": self.spa_mode,
-                }}
+                resp = {"type": "info", "data": self.info}
             elif action == "metrics":
                 resp = {"type": "metrics", "data": get_metrics()}
             elif action == "gpu":
@@ -1027,7 +1441,7 @@ class NodeAgent:
             except Exception:
                 pass
         finally:
-            self._ddos.release_connection(ip)
+            ddos.release_connection(key)
             try:
                 client.close()
             except Exception:
@@ -1041,7 +1455,22 @@ class NodeAgent:
                 return
 
         self._running = True
+        self._stop_event.clear()
         PID_FILE.write_text(str(os.getpid()))
+
+        if self._relay_client is not None:
+            self._relay_client.start()
+            _log(
+                f"Relay: {self._relay_client.url} "
+                f"(pool {self._relay_client.pool_size})"
+            )
+
+        if self.relay_only:
+            _log("Relay-only mode: inbound TCP listener disabled")
+            while self._running:
+                self._stop_event.wait(0.2)
+            self._shutdown()
+            return
 
         if self.spa_mode:
             self._spac = SpacListener(
@@ -1060,7 +1489,6 @@ class NodeAgent:
         srv.settimeout(1)
 
         if self.tls_cert and self.tls_key:
-            import ssl
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.load_cert_chain(self.tls_cert, self.tls_key)
             srv = ctx.wrap_socket(srv, server_side=True)
@@ -1106,9 +1534,16 @@ class NodeAgent:
         if self._spac:
             self._spac.stop()
         srv.close()
+        self._shutdown()
+
+    def _shutdown(self):
+        if self._relay_client is not None:
+            self._relay_client.stop()
+        if self._spac is not None:
+            self._spac.stop()
         try:
             PID_FILE.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             pass
 
 
@@ -1144,13 +1579,14 @@ def _is_running(pid):
 
 
 def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0",  # nosec B104 -- default bind only; --bind overrides it, and requests are auth-gated
-              tls_cert=None, tls_key=None, spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW):
+              tls_cert=None, tls_key=None, spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW,
+              relay_config=None, relay_only=False):
     """Run the node agent in the foreground unless its recorded PID is alive.
 
-    Pass listener, TLS, and SPA settings to NodeAgent; `spa_window` is the TCP
-    access window in seconds after a valid knock. Suppress KeyboardInterrupt
-    during serving. Construction and startup errors, including invalid TLS
-    pairs, propagate.
+    Pass listener, TLS, SPA, and relay settings to NodeAgent; `spa_window` is
+    the TCP access window in seconds after a valid knock. Suppress
+    KeyboardInterrupt during serving. Construction and startup errors,
+    including invalid TLS pairs, propagate.
     """
     existing = _read_pid()
     if existing and _is_running(existing):
@@ -1161,8 +1597,13 @@ def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0",  # nosec B104 -- default b
     except Exception:
         pass
     agent = NodeAgent(port=port, bind_host=bind_host, tls_cert=tls_cert, tls_key=tls_key,
-                      spa=spa, spa_port=spa_port, spa_window=spa_window)
+                      spa=spa, spa_port=spa_port, spa_window=spa_window,
+                      relay_config=relay_config, relay_only=relay_only)
     mode_str = f"SPA(UDP:{spa_port}, window:{spa_window}s)" if spa else "TCP"
+    if relay_config:
+        mode_str += f" + relay {relay_config['url']} (pool {relay_config['pool']})"
+    if relay_only:
+        mode_str += " (relay only)"
     print(f"Starting node agent on {bind_host}:{port} [{mode_str}]...")
     try:
         agent.serve()
@@ -1227,18 +1668,34 @@ def main():
                          help="UDP port for SPA knocks (default: 9998)")
     start_p.add_argument("--spa-window", type=int, default=DEFAULT_SPA_WINDOW,
                          help="Seconds TCP port stays open after knock (default: 5)")
+    start_p.add_argument("--relay-config", default=None,
+                         help="Node relay sidecar written by `cm node relay enable`")
+    start_p.add_argument("--relay-only", action="store_true",
+                         help="Keep the inbound TCP listener closed and serve only through the relay")
     sub.add_parser("stop")
     sub.add_parser("status")
-    args = p.parse_args()
+    sub.add_parser("relay", add_help=False)
+    args, unknown = p.parse_known_args()
     if args.command == "start":
         if bool(args.tls_cert) != bool(args.tls_key):
             p.error("both --tls-cert and --tls-key must be supplied together")
+        if args.relay_only and not args.relay_config:
+            p.error("--relay-only requires --relay-config")
+        relay_config = None
+        if args.relay_config:
+            try:
+                relay_config = load_relay_config(Path(args.relay_config))
+            except ValueError as exc:
+                p.error(str(exc))
         cmd_start(port=args.port, bind_host=args.bind, tls_cert=args.tls_cert, tls_key=args.tls_key,
-                  spa=args.spa, spa_port=args.spa_port, spa_window=args.spa_window)
+                  spa=args.spa, spa_port=args.spa_port, spa_window=args.spa_window,
+                  relay_config=relay_config, relay_only=args.relay_only)
     elif args.command == "stop":
         cmd_stop()
     elif args.command == "status":
         cmd_status()
+    elif args.command == "relay":
+        return cloudmesh_relay.main(unknown)
     else:
         p.print_help()
 

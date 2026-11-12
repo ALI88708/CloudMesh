@@ -22,7 +22,7 @@ def ping_all(server_mgr, node_keys=None):
         from cloudmesh.core.node_client import NodeClient
         for name, info in node_keys.items():
             try:
-                c = NodeClient.from_config(info)
+                c = NodeClient.from_config(info, name=name)
                 online = c.ping()
                 results[name] = {"type": "node", "online": online, "msg": "OK" if online else "OFFLINE"}
             except Exception as e:
@@ -207,7 +207,7 @@ def generate_report(server_mgr, monitor, node_keys=None):
         from cloudmesh.core.node_client import NodeClient
         for name, info in node_keys.items():
             try:
-                c = NodeClient.from_config(info)
+                c = NodeClient.from_config(info, name=name)
                 m = c.get_metrics()
                 report["nodes"][name] = m
             except Exception:
@@ -354,7 +354,7 @@ def get_version():
     to be kept in step with `pyproject.toml` by hand -- which is exactly why
     `test_release_metadata.py` pins the two against each other.
 
-    Metadata import or lookup errors fall back to 4.2.6. The returned dictionary
+    Metadata import or lookup errors fall back to 4.3.0. The returned dictionary
     has `version`, `python` (major.minor.micro), and `platform` (sys.platform).
     """
     try:
@@ -362,9 +362,9 @@ def get_version():
         try:
             ver = _pkg_version("cloudmesh")
         except Exception:
-            ver = "4.2.6"
+            ver = "4.3.0"
     except Exception:
-        ver = "4.2.6"
+        ver = "4.3.0"
     return {
         "version": ver,
         "python": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}",
