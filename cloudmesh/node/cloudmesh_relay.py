@@ -559,6 +559,7 @@ class RelayServer:
         self.admin_key = config.admin_key
         self._stop = threading.Event()
         self._listener = None
+        self._serve_thread = None
         self._parking = ParkingRegistry()
         self._nonces = NonceCache()
         self._limiter = _HandshakeLimiter()
@@ -603,17 +604,23 @@ class RelayServer:
         return self.address
 
     def serve_forever(self):
-        listener = self._listener
-        while not self._stop.is_set():
-            try:
-                client, addr = listener.accept()
-            except TimeoutError:
-                continue
-            except OSError:
-                break
-            threading.Thread(
-                target=self._serve_client, args=(client, addr), daemon=True
-            ).start()
+        self._serve_thread = threading.current_thread()
+        try:
+            listener = self._listener
+            if listener is None or self._stop.is_set():
+                return
+            while not self._stop.is_set():
+                try:
+                    client, addr = listener.accept()
+                except TimeoutError:
+                    continue
+                except OSError:
+                    break
+                threading.Thread(
+                    target=self._serve_client, args=(client, addr), daemon=True
+                ).start()
+        finally:
+            self._serve_thread = None
 
     def stop(self):
         self._stop.set()
@@ -623,6 +630,11 @@ class RelayServer:
                 listener.close()
             except OSError:
                 pass
+        serve_thread = self._serve_thread
+        if serve_thread is not None and serve_thread is not threading.current_thread():
+            # On Linux a thread blocked in accept() keeps the listening socket
+            # referenced after close(), so the port stays bound until it returns.
+            serve_thread.join(2.0)
         self._parking.close_everything()
         with self._lock:
             sockets = list(self._active_sockets)

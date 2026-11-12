@@ -29,9 +29,10 @@ the relay cannot read.
 
 ### Fixed
 
-- Stopping a relay now rejects registrations that were still in flight, so the
-  listener port is released at once and the relay can restart on the same port
-  instead of failing with `Address already in use`.
+- Stopping a relay now waits for the accept loop to leave the listener and
+  rejects registrations that were still in flight, so the port is released at
+  once and the relay can restart on the same port instead of failing with
+  `Address already in use`.
 
 ### Security
 

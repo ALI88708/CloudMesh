@@ -109,6 +109,44 @@ def make_agent(server, cert, key, pool=2, **kwargs):
     )
 
 
+def test_stop_waits_for_the_serve_loop_to_leave_the_listener():
+    server = relay.RelayServer.__new__(relay.RelayServer)
+    server._stop = threading.Event()
+    server._listener = None
+    server._parking = relay.ParkingRegistry()
+    server._lock = threading.Lock()
+    server._active_sockets = set()
+    server._serve_thread = None
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def serve_loop():
+        entered.set()
+        server._stop.wait()
+        release.wait(2.0)
+
+    loop_thread = threading.Thread(target=serve_loop)
+    server._serve_thread = loop_thread
+    loop_thread.start()
+    assert entered.wait(1.0)
+
+    alive_at_return = []
+    stopped = threading.Event()
+
+    def run_stop():
+        server.stop()
+        alive_at_return.append(loop_thread.is_alive())
+        stopped.set()
+
+    threading.Thread(target=run_stop).start()
+    assert server._stop.wait(1.0)
+    time.sleep(0.1)
+    release.set()
+    assert stopped.wait(2.0)
+    assert alive_at_return == [False]
+
+
 def test_parking_registry_rejects_connections_after_shutdown():
     class FakeParked:
         relay_id = RELAY_ID
