@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -602,7 +603,7 @@ class SpacListener:
         self.window = window
         self.on_open = on_open_callback
         self._running = False
-        self._used_nonces = set()
+        self._used_nonces = OrderedDict()
         self._nonce_lock = threading.Lock()
         self._sock = None
 
@@ -624,14 +625,6 @@ class SpacListener:
             _log(f"SPA: Rejected stale packet from {source_ip} (age={abs(now - timestamp):.1f}s)")
             return False
 
-        with self._nonce_lock:
-            if nonce in self._used_nonces:
-                _log(f"SPA: Rejected replay nonce from {source_ip}")
-                return False
-            self._used_nonces.add(nonce)
-            if len(self._used_nonces) > 10000:
-                self._used_nonces = set(list(self._used_nonces)[-5000:])
-
         msg = f"{timestamp}:{nonce}"
         expected_hmac = hmac_mod.new(
             self.auth_key.encode(), msg.encode(), hashlib.sha256
@@ -640,6 +633,17 @@ class SpacListener:
         if not hmac_mod.compare_digest(expected_hmac, signature):
             _log(f"SPA: Invalid HMAC from {source_ip}")
             return False
+
+        # Only authenticated nonces enter the cache: an unauthenticated flood
+        # must not be able to evict a recent nonce and reopen its replay window.
+        # Eviction is oldest-first, so the nonces that matter are kept.
+        with self._nonce_lock:
+            if nonce in self._used_nonces:
+                _log(f"SPA: Rejected replay nonce from {source_ip}")
+                return False
+            self._used_nonces[nonce] = None
+            while len(self._used_nonces) > 10000:
+                self._used_nonces.popitem(last=False)
 
         return True
 

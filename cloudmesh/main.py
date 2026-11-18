@@ -1447,7 +1447,7 @@ def cmd_cmdlog(args):
 
 
 def cmd_slice(args):
-    _, _, _, scheduler, *_ = init_components()
+    _, server_mgr, _, scheduler, *_ = init_components()
     files = [f.strip() for f in args.files.split(",") if f.strip()]
     if not files:
         console.print("[red]No files specified. Use --files file1,file2,file3[/]")
@@ -1456,6 +1456,12 @@ def cmd_slice(args):
     plan = scheduler.slice_files(files, server_names)
     if not plan:
         console.print("[dim]No distribution plan generated.[/]")
+        return
+    if "unassigned" in plan and isinstance(plan["unassigned"], list):
+        console.print(
+            "[yellow]No servers available; the files were not distributed.[/]"
+        )
+        console.print("  " + ", ".join(plan["unassigned"]))
         return
     table = Table(title="File Distribution Plan", box=box.ROUNDED)
     table.add_column("Server", style="bold")
@@ -1467,11 +1473,28 @@ def cmd_slice(args):
         table.add_row(name, ", ".join(data["files"][:3]) + ("..." if len(data["files"]) > 3 else ""), str(data["count"]), f"{data['proportion']}%", str(data["weight"]))
     console.print(table)
     if args.execute:
-        console.print(f"\n[cyan]Executing command on each server...[/]")
+        console.print("\n[cyan]Executing command on each server...[/]")
+        failures = 0
         for name, data in plan.items():
             for f in data["files"]:
-                cmd = args.execute.replace("{file}", f)
-                console.print(f"  [dim]{name}: {cmd}[/]")
+                command = args.execute.replace("{file}", f)
+                try:
+                    result = server_mgr.execute(name, command)
+                except Exception as exc:
+                    failures += 1
+                    console.print(f"  [red]FAIL[/] {name}: {command} ({exc})")
+                    continue
+                if result.get("exit_code") == 0:
+                    console.print(f"  [green]OK[/] {name}: {command}")
+                else:
+                    failures += 1
+                    detail = (
+                        result.get("stderr") or result.get("stdout") or ""
+                    ).strip()
+                    console.print(f"  [red]FAIL[/] {name}: {command} ({detail})")
+        if failures:
+            console.print(f"[red]{failures} command(s) failed[/]")
+            sys.exit(1)
 
 
 def cmd_autosync(args):
@@ -3773,28 +3796,32 @@ def cmd_bench(args):
     if args.server:
         _, server_mgr, *_ = init_components()
         console.print(f"[cyan]Benchmarking {args.server}...[/]")
-        result = run_full_benchmark(server_mgr, args.server)
+        try:
+            result = run_full_benchmark(server_mgr, args.server)
+        except Exception as exc:
+            console.print(f"[red]Benchmark failed: {exc}[/]")
+            sys.exit(1)
     else:
         console.print("[cyan]Running local benchmark...[/]")
         result = run_full_benchmark()
     table = Table(title="Benchmark Results", box=box.ROUNDED)
     table.add_column("Test", style="bold")
     table.add_column("Result")
-    if isinstance(result.get("cpu"), dict):
-        table.add_row("CPU Score", str(result["cpu"].get("score", "?")))
-    elif "cpu_score" in result:
-        table.add_row("CPU Score", str(result["cpu_score"]))
-    if isinstance(result.get("disk"), dict):
-        table.add_row("Disk Write", f"{result['disk'].get('write_mb_s', '?')} MB/s")
-        table.add_row("Disk Read", f"{result['disk'].get('read_mb_s', '?')} MB/s")
-    elif "w" in result:
+    cpu = result.get("cpu")
+    cpu_score = cpu.get("score") if isinstance(cpu, dict) else result.get("cpu_score")
+    if cpu_score is not None:
+        table.add_row("CPU Score", str(cpu_score))
+    disk = result.get("disk")
+    if isinstance(disk, dict):
+        table.add_row("Disk Write", f"{disk.get('write_mb_s', '?')} MB/s")
+        table.add_row("Disk Read", f"{disk.get('read_mb_s', '?')} MB/s")
+    elif "w" in result and "r" in result:
         table.add_row("Disk Write", f"{result['w']} MB/s")
         table.add_row("Disk Read", f"{result['r']} MB/s")
-    if isinstance(result.get("ram"), dict):
-        table.add_row("RAM Alloc", f"{result['ram'].get('alloc_time', '?')}s")
-        console.print(table)
-    else:
-        console.print(table)
+    ram = result.get("ram")
+    if isinstance(ram, dict):
+        table.add_row("RAM Alloc", f"{ram.get('alloc_time', '?')}s")
+    console.print(table)
 
 
 def cmd_schedule(args):

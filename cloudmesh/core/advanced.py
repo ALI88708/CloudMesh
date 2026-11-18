@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import stat
 import tempfile
 import time
@@ -80,22 +81,27 @@ def benchmark_cpu(duration=3):
     return {"score": round(ops), "duration": duration}
 
 def benchmark_disk(path=None, size_mb=10):
-    import os, tempfile
-    path = path or tempfile.gettempdir()
-    test_file = os.path.join(path, "_cm_bench_test.tmp")
+    directory = path or tempfile.gettempdir()
     data = os.urandom(size_mb * 1024 * 1024)
-    start = time.time()
-    with open(test_file, "wb") as f:
-        f.write(data)
-    write_time = time.time() - start
-    start = time.time()
-    with open(test_file, "rb") as f:
-        f.read()
-    read_time = time.time() - start
+    # mkstemp opens with O_EXCL, so a pre-created symlink cannot redirect the
+    # write at another user's file.
+    fd, test_file = tempfile.mkstemp(
+        prefix="_cm_bench_", suffix=".tmp", dir=directory
+    )
     try:
-        os.remove(test_file)
-    except Exception:
-        pass
+        start = time.time()
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        write_time = time.time() - start
+        start = time.time()
+        with open(test_file, "rb") as f:
+            f.read()
+        read_time = time.time() - start
+    finally:
+        try:
+            os.remove(test_file)
+        except OSError:
+            pass
     return {
         "write_mb_s": round(size_mb / write_time, 1),
         "read_mb_s": round(size_mb / read_time, 1),
@@ -119,32 +125,66 @@ def benchmark_ram(size_mb=64):
         "size_mb": size_mb,
     }
 
+REMOTE_BENCHMARK_SCRIPT = r"""
+import hashlib, json, os, tempfile, time
+
+start = time.time()
+count = 0
+while time.time() - start < 2:
+    hashlib.md5(str(count).encode()).hexdigest()
+    count += 1
+cpu_score = round(count / (time.time() - start))
+
+data = os.urandom(10 * 1024 * 1024)
+fd, path = tempfile.mkstemp(prefix="_cm_bench_", suffix=".tmp")
+try:
+    start = time.time()
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+    write_s = time.time() - start
+    start = time.time()
+    with open(path, "rb") as handle:
+        handle.read()
+    read_s = time.time() - start
+finally:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+print(json.dumps({
+    "cpu_score": cpu_score,
+    "w": round(10 / write_s, 1),
+    "r": round(10 / read_s, 1),
+}))
+"""
+
+
 def run_full_benchmark(server_mgr=None, name=None):
+    """Benchmark the named server, or this machine when no server is given.
+
+    A remote failure raises instead of silently returning local numbers: the
+    caller asked for that server's results and must not be handed this
+    machine's. Local results are the only fallback, and only when no server was
+    requested.
+    """
     if server_mgr and name:
-        cmd = """python3 -c "
-import time, hashlib, os, tempfile
-start=time.time(); c=0
-while time.time()-start<2: c+=hashlib.md5(str(c).encode()).hexdigest().encode()
-cpu_score=round(1000000/(time.time()-start))
-f=os.path.join(tempfile.gettempdir(),'_b'); d=os.urandom(10*1024*1024)
-s=time.time(); open(f,'wb').write(d); wt=time.time()-s
-s=time.time(); open(f,'rb').read(); rt=time.time()-s
-try: os.remove(f)
-except: pass
-print(json.dumps({'cpu_score':cpu_score,'write_mb_s':round(10/wt,1),'read_mb_s':round(10/rt,1)}))
-" 2>/dev/null"""
+        command = "python3 -c " + shlex.quote(REMOTE_BENCHMARK_SCRIPT)
+        result = server_mgr.execute(name, command)
+        exit_code = result.get("exit_code")
+        if exit_code != 0:
+            detail = (result.get("stderr") or result.get("stdout") or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(
+                f"benchmark failed on {name} (exit {exit_code}){suffix}"
+            )
+        output = (result.get("stdout") or "").strip()
         try:
-            r = server_mgr.execute(name, "python3 -c \"import time,hashlib,os,tempfile,json;s=time.time();c=0;" \
-                "exec('while time.time()-s<2:\\n c+=hashlib.md5(str(c).encode()).hexdigest().encode()');" \
-                "cs=round(1000000/(time.time()-s));f=os.path.join(tempfile.gettempdir(),'_b');" \
-                "d=os.urandom(10*1048576);t=time.time();open(f,'wb').write(d);wt=time.time()-t;" \
-                "t=time.time();open(f,'rb').read();rt=time.time()-t;" \
-                "exec('try:\\n os.remove(f)\\nexcept:\\n pass');" \
-                "print(json.dumps({\"cpu\":cs,\"w\":round(10/wt,1),\"r\":round(10/rt,1)}))\"")
-            if r["exit_code"] == 0:
-                return json.loads(r["stdout"])
-        except Exception:
-            pass
+            return json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"benchmark on {name} returned invalid JSON: {output!r}"
+            ) from exc
     return {"cpu": benchmark_cpu(2), "disk": benchmark_disk(), "ram": benchmark_ram(32)}
 
 

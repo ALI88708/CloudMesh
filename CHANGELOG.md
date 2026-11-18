@@ -4,6 +4,19 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.3.1] - 2026-11-18 — Bug-hunt pass 01
+
+### Fixed
+
+- `cm slice --execute` now runs its command on every assigned server and exits
+  non-zero when one fails; `cm slice` no longer crashes when no servers are
+  registered.
+- SPA rejects replayed knocks reliably: the nonce cache evicts oldest-first and
+  only authenticated packets can add a nonce.
+- `cm bench --server` runs a working payload, reports real CPU throughput, uses
+  a private temp file, and fails loudly instead of presenting the controller's
+  numbers as the server's.
+
 ## [4.3.0] - 2026-11-12 — Node relay
 
 Relay mode connects a node that has no inbound port. Both the node and the
