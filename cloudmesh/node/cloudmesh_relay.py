@@ -659,7 +659,7 @@ class RelayServer:
             started_at = self._started_at
         uptime = int(time.monotonic() - started_at) if started_at else 0
         return {
-            "version": "4.3.1",
+            "version": "4.4.0",
             "uptime_seconds": uptime,
             "nodes": counts,
             "totals": totals,

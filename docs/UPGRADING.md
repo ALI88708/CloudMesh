@@ -267,6 +267,26 @@ so no new install step is needed. The node installer copies
 `cloudmesh_relay.py` beside the agent when it is present; a direct-only node
 still works without it.
 
+## Upgrading to 4.4.0 (fleet execution)
+
+No state files change: `4.4.0` reads the same `config.json`, `cloudmesh.db`,
+`.node_keys.json`, and relay sidecars as `4.3.1`, so there is no migration step.
+
+Two command behaviors change deliberately, and both matter to scripts:
+
+| Before (4.3.1) | After (4.4.0) | Keep the old behavior |
+| --- | --- | --- |
+| `cm run` / `cm group run` exited 0 even when a server failed | Non-zero exit when any target fails; no servers or an empty group is also an error | `--allow-failures` |
+| Targets ran one after another | Up to 10 targets run concurrently; results stream in as they finish | `--max-workers 1` |
+
+Two additions are opt-in: `--timeout SEC` fails a target whose remote command
+does not finish, and `--json` emits per-target results (`success`, `exit_code`,
+`output`, `error`, and `timed_out` when it applies). `cm monitor` now fetches
+metrics concurrently, which only changes how long it takes.
+
+Automation that parsed the human report should move to `--json`; the report is
+printed in completion order rather than a fixed server order.
+
 ## Getting help
 
 - Security issues: follow `SECURITY.md`; do not open a public issue for a

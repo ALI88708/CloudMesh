@@ -1,3 +1,7 @@
+import socket
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
 class TaskScheduler:
     def __init__(self, server_manager, resource_monitor):
         self.server_mgr = server_manager
@@ -70,22 +74,87 @@ class TaskScheduler:
         except Exception as e:
             return {"success": False, "server": best_name, "error": str(e)}
 
-    def distribute_command(self, command, server_names=None):
+    def distribute_command(
+        self,
+        command,
+        server_names=None,
+        max_workers=10,
+        timeout=None,
+        on_result=None,
+    ):
+        """Run one command on every target, concurrently but bounded.
+
+        Returns one result per distinct target, in the order the targets were
+        given. Each result carries `success`, `exit_code`, `output`, and
+        `error`; a target that raised or timed out is a failure rather than an
+        omitted entry. `on_result(name, result)` fires as each target finishes
+        so a caller can stream progress, and a reporting error never fails the
+        run. `max_workers=1` keeps the old sequential behavior.
+        """
         if server_names is None:
             server_names = self.server_mgr.list_servers()
 
-        results = {}
-        for name in server_names:
-            try:
-                result = self.server_mgr.execute(name, command)
-                results[name] = {
-                    "success": result["exit_code"] == 0,
-                    "output": result["stdout"],
-                    "error": result["stderr"] if result["exit_code"] != 0 else None,
-                }
-            except Exception as e:
-                results[name] = {"success": False, "error": str(e)}
+        names = list(dict.fromkeys(server_names))
+        if not names:
+            return {}
+
+        results = {name: None for name in names}
+
+        def run_one(name):
+            return name, self._execute_on(name, command, timeout)
+
+        workers = max(1, min(int(max_workers or 1), len(names)))
+        if workers == 1:
+            for name in names:
+                _, result = run_one(name)
+                results[name] = result
+                self._notify(on_result, name, result)
+            return results
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(run_one, name) for name in names]
+            for future in as_completed(futures):
+                name, result = future.result()
+                results[name] = result
+                self._notify(on_result, name, result)
         return results
+
+    def _execute_on(self, name, command, timeout):
+        """Run one target and normalize both success and failure."""
+        try:
+            if timeout is None:
+                result = self.server_mgr.execute(name, command)
+            else:
+                result = self.server_mgr.execute(name, command, timeout=timeout)
+            success = result["exit_code"] == 0
+            return {
+                "success": success,
+                "exit_code": result["exit_code"],
+                "output": result.get("stdout", ""),
+                "error": result.get("stderr") if not success else None,
+            }
+        except Exception as exc:
+            timed_out = isinstance(exc, (TimeoutError, socket.timeout))
+            detail = str(exc).strip()
+            if timed_out and timeout is not None:
+                detail = f"timed out after {timeout:g}s"
+            return {
+                "success": False,
+                "exit_code": None,
+                "output": "",
+                "error": detail or exc.__class__.__name__,
+                "timed_out": timed_out,
+            }
+
+    @staticmethod
+    def _notify(callback, name, result):
+        """Report one finished target without letting the report fail the run."""
+        if callback is None:
+            return
+        try:
+            callback(name, result)
+        except Exception:
+            pass
 
     def get_status_summary(self):
         servers_metrics = self.monitor.get_all_servers_metrics()

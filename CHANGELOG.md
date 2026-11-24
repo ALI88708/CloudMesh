@@ -4,6 +4,28 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.4.0] - 2026-11-24 — Fleet execution
+
+### Added
+
+- `cm run` and `cm group run` accept `--max-workers`, `--timeout SEC`,
+  `--json`, and `--allow-failures`. Targets run concurrently (10 workers by
+  default), results stream in as each target finishes, and `--timeout` fails a
+  target whose remote command never exits.
+- `TaskScheduler.distribute_command` reports `exit_code` and `timed_out` per
+  target, deduplicates targets, and preserves target order.
+
+### Changed
+
+- `cm run` and `cm group run` exit non-zero when any target fails. Pass
+  `--allow-failures` to keep the old exit-0 behavior. Running with no servers,
+  or against an empty group, is an error instead of a silent success.
+- `cm monitor` fetches metrics concurrently, so a fleet view costs the slowest
+  server instead of the sum of every round trip.
+- `ServerManager.execute` accepts `timeout` and bounds the exit-status wait;
+  status and config persistence are serialized so parallel targets cannot race
+  each other.
+
 ## [4.3.1] - 2026-11-18 — Bug-hunt pass 01
 
 ### Fixed

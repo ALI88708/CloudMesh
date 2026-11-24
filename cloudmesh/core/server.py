@@ -1,6 +1,7 @@
 import paramiko
 import os
 import logging
+import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -31,6 +32,9 @@ class ServerManager:
             storage = StorageManager(self.security.base_dir)
         self.storage = storage
         self._connections = {}
+        # Fleet commands update status and persist config from several worker
+        # threads at once; serialize the shared mutation and the JSON dump.
+        self._state_lock = threading.RLock()
         self._import_legacy_servers()
 
     def _import_legacy_servers(self):
@@ -92,7 +96,8 @@ class ServerManager:
                 pass
 
     def _save(self):
-        self.security.save_config(self.config)
+        with self._state_lock:
+            self.security.save_config(self.config)
 
     def _mirror_to_config(self, name, info):
         self.config.setdefault("servers", {})[name] = {
@@ -151,13 +156,14 @@ class ServerManager:
         return self.config["servers"][name]
 
     def _set_status(self, name, status):
-        try:
-            self.storage.update_server_status(name, status)
-        except Exception:
-            pass
-        self._ensure_mirror(name)
-        if name in self.config["servers"]:
-            self.config["servers"][name]["status"] = status
+        with self._state_lock:
+            try:
+                self.storage.update_server_status(name, status)
+            except Exception:
+                pass
+            self._ensure_mirror(name)
+            if name in self.config["servers"]:
+                self.config["servers"][name]["status"] = status
 
     def _ensure_mirror(self, name):
         """Create the JSON mirror entry from SQLite if missing."""
@@ -224,11 +230,13 @@ class ServerManager:
         for name in list(self._connections.keys()):
             self.disconnect(name)
 
-    def execute(self, name, command):
+    def execute(self, name, command, timeout=None):
         """Run a command over SSH on the named server and wait for completion.
 
         Return `exit_code`, `stdout`, and `stderr`; decode both streams as UTF-8
         and strip surrounding whitespace. Nonzero exit codes are returned.
+        `timeout` bounds the remote read (not the connect), and a timeout raises
+        `socket.timeout` so the caller can report it as a failed target.
         An unknown server raises ValueError when connecting; connection,
         configuration persistence, command execution, and decoding errors propagate.
         """
@@ -237,13 +245,32 @@ class ServerManager:
         # command comes from the operator, who already holds the key that
         # authenticated the session. Reaching this line requires an existing
         # authenticated session, not attacker-supplied input.
-        stdin, stdout, stderr = client.exec_command(command)  # nosec B601
+        if timeout is None:
+            stdin, stdout, stderr = client.exec_command(command)  # nosec B601
+        else:
+            stdin, stdout, stderr = client.exec_command(  # nosec B601
+                command, timeout=timeout
+            )
         with ThreadPoolExecutor(max_workers=2) as executor:
             stdout_future = executor.submit(stdout.read)
             stderr_future = executor.submit(stderr.read)
             out = stdout_future.result().decode().strip()
             err = stderr_future.result().decode().strip()
-        exit_code = stdout.channel.recv_exit_status()
+        if timeout is None:
+            exit_code = stdout.channel.recv_exit_status()
+        else:
+            # recv_exit_status() itself waits forever, so bound the event it
+            # waits on. A command that closes its streams but never exits would
+            # otherwise defeat --timeout.
+            if not stdout.channel.status_event.wait(timeout):
+                try:
+                    stdout.channel.close()
+                except Exception:
+                    pass
+                raise TimeoutError(
+                    f"command did not finish within {timeout:g}s"
+                )
+            exit_code = stdout.channel.recv_exit_status()
         return {"exit_code": exit_code, "stdout": out, "stderr": err}
 
     def test_connection(self, name):

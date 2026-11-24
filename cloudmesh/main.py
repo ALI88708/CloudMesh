@@ -8,6 +8,7 @@ import tempfile
 import shlex
 import inspect
 import time
+import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 
@@ -133,7 +134,10 @@ COMPLETION_OPTIONS = {
              "--disk-below", "--timeout", "--interval"),
     "dashboard": ("--live", "-l", "--interval", "-i"),
     "watch": ("--interval", "-i"),
-    "run": ("--best", "-b", "--servers", "-s"),
+    "run": ("--best", "-b", "--servers", "-s", "--max-workers",
+            "--timeout", "--json", "-j", "--allow-failures"),
+    "group run": ("--group", "-g", "--max-workers", "--timeout", "--json",
+                  "-j", "--allow-failures"),
     "exec": ("--name", "-n", "--nodes", "--all", "--json", "-j"),
     "backup": ("--restore",),
     "server add": ("--name", "-n", "--host", "-H", "--user", "-u",
@@ -966,21 +970,43 @@ def cmd_monitor(args):
         else:
             console.print("[dim]No servers configured.[/]")
         return
+    payload = _collect_metrics(monitor, names)
     if as_json:
-        payload = {}
-        for name in names:
-            try:
-                payload[name] = monitor.get_all_metrics(name)
-            except Exception as e:
-                payload[name] = {"error": str(e)}
         _print_json(payload)
         return
     for name in names:
+        result = payload[name]
+        if isinstance(result, dict) and "error" in result:
+            console.print(f"[red]Error on {name}: {result['error']}[/]")
+        else:
+            _print_metrics(name, result)
+
+
+def _collect_metrics(monitor, names, max_workers=10):
+    """Fetch every target's metrics concurrently, preserving target order.
+
+    A fleet monitor that waits for each server in turn costs the sum of every
+    round trip. The same private helper keeps both the JSON and the human
+    report in input order while the network work overlaps.
+    """
+    results = {name: None for name in names}
+    workers = max(1, min(max_workers, len(names)))
+
+    def fetch(name):
         try:
-            metrics = monitor.get_all_metrics(name)
-            _print_metrics(name, metrics)
-        except Exception as e:
-            console.print(f"[red]Error on {name}: {e}[/]")
+            return name, monitor.get_all_metrics(name)
+        except Exception as exc:
+            return name, {"error": str(exc)}
+
+    if workers == 1:
+        for name in names:
+            _, results[name] = fetch(name)
+        return results
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        for name, value in pool.map(fetch, names):
+            results[name] = value
+    return results
 
 
 def _print_metrics(name, metrics):
@@ -1069,32 +1095,80 @@ def cmd_dashboard(args):
         dashboard.render_full()
 
 
+def _fleet_result_line(name, result):
+    """Format one target's result for the human-readable report."""
+    if result.get("success"):
+        return f"  [green]OK[/] {name}: {(result.get('output') or '')[:100]}"
+    detail = (result.get("error") or result.get("output") or "failed")[:200]
+    return f"  [red]FAIL[/] {name}: {detail}"
+
+
+def _run_fleet_command(scheduler, args, server_names, title):
+    """Run one command across targets with honest exit codes and output.
+
+    JSON mode collects the full report; otherwise each result is printed as
+    soon as it arrives. Any failed target makes the command exit non-zero
+    unless `--allow-failures` was passed. No targets is an error, not a
+    successful no-op.
+    """
+    as_json = getattr(args, "as_json", False)
+    if not as_json:
+        console.print(f"[cyan]{title}[/]")
+    if not server_names:
+        message = "No servers configured."
+        if as_json:
+            _print_json({"error": message})
+        else:
+            console.print(f"[red]{message}[/]")
+        sys.exit(1)
+
+    def report(name, result):
+        if not as_json:
+            console.print(_fleet_result_line(name, result))
+
+    results = scheduler.distribute_command(
+        args.command,
+        server_names,
+        max_workers=getattr(args, "max_workers", 10),
+        timeout=getattr(args, "timeout", None),
+        on_result=report,
+    )
+    failures = [name for name, result in results.items() if not result.get("success")]
+    if as_json:
+        _print_json(results)
+    elif failures:
+        console.print(f"[red]{len(failures)} of {len(results)} server(s) failed[/]")
+    else:
+        console.print(f"[green]All {len(results)} server(s) succeeded[/]")
+    if failures and not getattr(args, "allow_failures", False):
+        sys.exit(1)
+
+
 def cmd_run(args):
-    _, _, _, scheduler, _, _, _, _, _, _, cmd_log = init_components()
+    _, server_mgr, _, scheduler, _, _, _, _, _, _, cmd_log = init_components()
     cmd_log.log("run", args.command)
     if args.best:
-        console.print("[cyan]Running on best server...[/]")
+        if not getattr(args, "as_json", False):
+            console.print("[cyan]Running on best server...[/]")
         result = scheduler.run_on_best(args.command)
-        if result["success"]:
+        if getattr(args, "as_json", False):
+            _print_json(result)
+        elif result["success"]:
             console.print(f"[green]Success on {result['server']} (weight: {result['weight']}):[/]")
             if result.get("output"):
                 console.print(result["output"])
         else:
             console.print(f"[red]Failed on {result.get('server', '?')}: {result.get('error', 'Unknown')}[/]")
+        if not result["success"] and not getattr(args, "allow_failures", False):
             sys.exit(1)
-    elif args.servers:
-        server_names = [s.strip() for s in args.servers.split(",")]
-        console.print(f"[cyan]Distributing to: {', '.join(server_names)}[/]")
-        results = scheduler.distribute_command(args.command, server_names)
-        for name, res in results.items():
-            icon = "[green]OK[/]" if res["success"] else "[red]FAIL[/]"
-            console.print(f"  {icon} {name}: {res.get('output', '')[:100]}")
+        return
+    if args.servers:
+        server_names = [s.strip() for s in args.servers.split(",") if s.strip()]
+        title = f"Distributing to: {', '.join(server_names)}"
     else:
-        console.print("[cyan]Running on all servers...[/]")
-        results = scheduler.distribute_command(args.command)
-        for name, res in results.items():
-            icon = "[green]OK[/]" if res["success"] else "[red]FAIL[/]"
-            console.print(f"  {icon} {name}: {res.get('output', '')[:100]}")
+        server_names = server_mgr.list_servers()
+        title = "Running on all servers..."
+    _run_fleet_command(scheduler, args, server_names, title)
 
 
 def cmd_plan(args):
@@ -1338,13 +1412,18 @@ def cmd_groups(args):
         _, _, _, scheduler, *_ = init_components()
         devs = groups_mgr.get_group_devices(args.group)
         if not devs:
-            console.print(f"[red]Group '{args.group}' is empty or not found.[/]")
-            return
-        console.print(f"[cyan]Running on group '{args.group}': {', '.join(devs)}[/]")
-        results = scheduler.distribute_command(args.command, devs)
-        for name, res in results.items():
-            icon = "[green]OK[/]" if res["success"] else "[red]FAIL[/]"
-            console.print(f"  {icon} {name}")
+            message = f"Group '{args.group}' is empty or not found."
+            if getattr(args, "as_json", False):
+                _print_json({"error": message})
+            else:
+                console.print(f"[red]{message}[/]")
+            sys.exit(1)
+        _run_fleet_command(
+            scheduler,
+            args,
+            devs,
+            f"Running on group '{args.group}': {', '.join(devs)}",
+        )
 
 
 def cmd_service(args):
@@ -4729,6 +4808,36 @@ def cmd_relay_revoke(args):
         print(f"The relay had no token for node {args.name} ({relay_id}).")
 
 
+def _add_fleet_arguments(parser):
+    """Add the controls shared by `cm run` and `cm group run`."""
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Run on at most N targets at once (default: 10)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        metavar="SEC",
+        help="Fail a target that does not finish within SEC seconds",
+    )
+    parser.add_argument(
+        "--json",
+        "-j",
+        action="store_true",
+        dest="as_json",
+        help="Emit per-target results as JSON",
+    )
+    parser.add_argument(
+        "--allow-failures",
+        action="store_true",
+        help="Exit 0 even when a target fails",
+    )
+
+
 def build_parser():
     """Build the CloudMesh command-line parser."""
     """Parse process arguments and dispatch the selected CloudMesh command.
@@ -4787,6 +4896,7 @@ def build_parser():
     run_p.add_argument("command")
     run_p.add_argument("--best", "-b", action="store_true")
     run_p.add_argument("--servers", "-s")
+    _add_fleet_arguments(run_p)
 
     plan_p = subparsers.add_parser("plan", help="Distribution plan")
     plan_p.add_argument("--tasks", "-t", type=int, default=5)
@@ -4842,6 +4952,7 @@ def build_parser():
     rn_p = grp_sub.add_parser("run", help="Run command on group")
     rn_p.add_argument("--group", "-g", required=True)
     rn_p.add_argument("command")
+    _add_fleet_arguments(rn_p)
 
     svc = subparsers.add_parser("service", help="Background service")
     svc_sub = svc.add_subparsers(dest="action")
