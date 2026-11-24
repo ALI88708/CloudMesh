@@ -280,7 +280,7 @@ if not "%NONINTERACTIVE%"=="0" goto :run_scripted
 cls
 echo.
 echo   +==========================================+
-echo   ^|        CloudMesh Installer v4.4.0        ^|
+echo   ^|        CloudMesh Installer v4.4.1        ^|
 echo   +==========================================+
 echo.
 
@@ -438,7 +438,14 @@ echo $ProgressPreference = 'SilentlyContinue' > "%TEMP%\cm_ex.ps1"
 echo $zip = Join-Path $env:TEMP 'cloudmesh.zip' >> "%TEMP%\cm_ex.ps1"
 echo $out = Join-Path $env:TEMP 'cloudmesh_extract' >> "%TEMP%\cm_ex.ps1"
 echo if (Test-Path $out) { Remove-Item -Recurse -Force $out } >> "%TEMP%\cm_ex.ps1"
-echo Expand-Archive -Path $zip -DestinationPath $out -Force >> "%TEMP%\cm_ex.ps1"
+REM Expand-Archive is version-fragile: the archive module shipped on some
+REM Windows runners calls ZipFile.ExtractToDirectory with a third (overwrite)
+REM argument that .NET Framework does not have, so the extraction produced an
+REM empty directory and every later step failed on a null path. Call the
+REM two-argument overload directly; it exists on .NET Framework and .NET Core,
+REM and the directory above is already removed, so overwrite is not needed.
+echo Add-Type -AssemblyName System.IO.Compression.FileSystem >> "%TEMP%\cm_ex.ps1"
+echo [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $out) >> "%TEMP%\cm_ex.ps1"
 echo $d = Get-ChildItem -Path $out -Directory ^| Select-Object -First 1 >> "%TEMP%\cm_ex.ps1"
 echo $destPath = '%PROJECT_DIR%' >> "%TEMP%\cm_ex.ps1"
 echo if (Test-Path $destPath) { Remove-Item -Recurse -Force $destPath } >> "%TEMP%\cm_ex.ps1"

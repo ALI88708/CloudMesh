@@ -287,6 +287,11 @@ metrics concurrently, which only changes how long it takes.
 Automation that parsed the human report should move to `--json`; the report is
 printed in completion order rather than a fixed server order.
 
+`4.4.1` carries one installer fix and no behavior change: on Windows builds
+where `Expand-Archive` fails, `cm_for-windows.bat` now extracts the payload with
+the two-argument `ZipFile.ExtractToDirectory` overload instead. Re-run the
+`4.4.1` installer if a `4.4.0` install stopped at `Extract failed!`.
+
 ## Getting help
 
 - Security issues: follow `SECURITY.md`; do not open a public issue for a

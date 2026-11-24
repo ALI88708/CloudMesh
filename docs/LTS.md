@@ -4,7 +4,7 @@ CloudMesh `4.1.2` is the first published 4.x release and the supported
 Long-Term Support (LTS) artifact. This policy defines what the LTS promise
 covers, how patches are released, and what is deliberately out of scope.
 
-> **`4.4.0` is the current release on the feature line, not an LTS line.** The
+> **`4.4.1` is the current release on the feature line, not an LTS line.** The
 > `4.4.x` series adds parallel fleet execution and honest exit codes on top of
 > the `4.3.x` relay transport; this policy continues to cover `4.1.x` only.
 > Feature work lands in `4.4.x`, and security fixes still go to both lines.

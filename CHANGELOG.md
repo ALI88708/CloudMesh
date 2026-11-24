@@ -4,6 +4,17 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.4.1] - 2026-11-24 — Windows installer extraction
+
+### Fixed
+
+- The Windows installer no longer calls `Expand-Archive`. On runners whose
+  archive module uses the three-argument `ZipFile.ExtractToDirectory` overload,
+  which .NET Framework does not provide, extraction produced an empty directory
+  and the install failed with `Extract failed!`. The installer now loads
+  `System.IO.Compression.FileSystem` and calls the two-argument overload
+  directly, which works on Windows PowerShell 5.1 and PowerShell 7.
+
 ## [4.4.0] - 2026-11-24 — Fleet execution
 
 ### Added

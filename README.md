@@ -18,8 +18,8 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20BSD-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-300-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-4.4.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-1322-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Version](https://img.shields.io/badge/Version-4.4.1-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-1323-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
@@ -88,7 +88,7 @@ The Releases section reads published releases from the GitHub Releases API, so r
 ### GitHub release (Recommended)
 Download [Python](https://www.python.org/) 3.11+ for Linux or Windows, then install the verified release wheel:
 ```bash
-pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.4.0/cloudmesh-4.4.0-py3-none-any.whl
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.4.1/cloudmesh-4.4.1-py3-none-any.whl
 cm --help
 ```
 
@@ -276,7 +276,11 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v4.4.0 (Latest)
+### v4.4.1 (Latest)
+
+- **Windows installer extraction:** the installer no longer depends on `Expand-Archive`, whose three-argument `ZipFile.ExtractToDirectory` overload is missing on some Windows builds; it calls the two-argument overload directly, so extraction works on Windows PowerShell 5.1 and PowerShell 7 alike.
+
+### v4.4.0
 
 - **Honest exit codes:** `cm run` and `cm group run` now exit non-zero when any target fails, including an empty fleet or an empty group. `--allow-failures` opts out.
 - **Parallel fleet execution:** targets run concurrently with a bounded worker pool (default 10, configurable with `--max-workers`), results stream in as they finish, and `cm monitor` fetches metrics concurrently instead of server by server.
@@ -972,7 +976,7 @@ curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 
 | Option | What it does |
 |--------|-------------|
-| **GitHub release wheel** | Install the verified `cloudmesh-4.4.0-py3-none-any.whl` from GitHub Releases |
+| **GitHub release wheel** | Install the verified `cloudmesh-4.4.1-py3-none-any.whl` from GitHub Releases |
 | **Fresh Install** | Download installer, double-click, done |
 | **BSD installer** | `sh cm_for-bsd.sh --yes` on FreeBSD, OpenBSD and NetBSD |
 | **Update** | `cm update` in a checkout, or `cm update --pip` for a verified release wheel |

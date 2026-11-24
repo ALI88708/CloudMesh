@@ -185,6 +185,24 @@ def test_windows_installer_payload_lands_in_the_cloudmesh_subdirectory(tmp_path)
     assert (project_dir / "pyproject.toml").is_file(), "pyproject.toml not restored"
 
 
+def test_windows_installer_extracts_without_expand_archive():
+    """The archive module's overload choice differs between PowerShell builds.
+
+    On the GitHub Windows runner it called the three-argument
+    `ZipFile.ExtractToDirectory` overload, which .NET Framework does not have,
+    so extraction produced an empty directory and every later step failed on a
+    null path. The installer calls the two-argument overload itself; it exists
+    on .NET Framework and .NET Core alike.
+    """
+    text = WINDOWS_INSTALLER.read_text(encoding="utf-8", errors="replace")
+
+    assert not any(
+        line.strip().startswith("echo Expand-Archive") for line in text.splitlines()
+    ), "the installer must not depend on Expand-Archive's overload resolution"
+    assert "Add-Type -AssemblyName System.IO.Compression.FileSystem" in text
+    assert "[System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $out)" in text
+
+
 def test_windows_installer_copy_does_not_infer_the_destination_name():
     """Structural guard: name the destination, never let Copy-Item infer it.
 
