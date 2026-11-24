@@ -196,6 +196,49 @@ class PanicManager:
 
         return actions
 
+    def rotate_single_node(self, name):
+        """Rotate one node's auth key, leaving every other key untouched.
+
+        Unlike a full panic, the Fernet key is not rotated, so stored server
+        passwords stay decryptable. The node must confirm the new key before
+        the keyring is updated; an unreachable or refusing node is queued in
+        the pending file instead of being dropped, exactly like a fleet-wide
+        rotation. Raises KeyError for an unknown node name.
+        """
+        from cloudmesh.core.node_client import NodeClient
+
+        nodes = self._load_nodes()
+        if name not in nodes:
+            raise KeyError(f"Node '{name}' not found")
+
+        info = nodes[name]
+        new_auth = secrets.token_hex(32)
+        client = NodeClient.from_config(info, name=name)
+        try:
+            result = client.rotate_key(new_auth)
+            if result.get("success"):
+                nodes[name]["key"] = new_auth
+                self._save_nodes(nodes)
+                return [f"Rotated '{name}' — confirmed remotely"]
+            reason = result.get("message", "remote refused rotation")
+        except Exception as e:
+            reason = str(e)
+
+        pending = self._load_pending()
+        pending[name] = {
+            "host": info["host"],
+            "port": info["port"],
+            "old_key": info["key"],
+            "new_key": new_auth,
+            "tls": info.get("tls", False),
+            "ca_file": info.get("ca_file"),
+        }
+        self._save_pending(pending)
+        return [
+            f"Node '{name}' rotation PENDING ({reason}) — "
+            "retry with 'cm panic retry-pending'"
+        ]
+
     def rotate_node_keys(self):
         """Rotate remote node auth keys without touching the encryption key.
 

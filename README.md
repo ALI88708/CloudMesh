@@ -17,9 +17,9 @@ Monitor, manage, and distribute workloads from a single terminal.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20BSD-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Commands](https://img.shields.io/badge/Commands-300-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-4.4.1-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-1323-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Commands](https://img.shields.io/badge/Commands-301-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
+[![Version](https://img.shields.io/badge/Version-4.5.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-1347-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
@@ -47,7 +47,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 <br>
 
-**300 commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **DDoS protection** | **Ghost Ports** | **Tripwire Keys** | **Shamir Panic** | **Remote Panic** | **Shell Completions**
+**301 commands** | **Auto-discovery** | **Real-time monitoring** | **GPU telemetry** | **DDoS protection** | **Ghost Ports** | **Tripwire Keys** | **Shamir Panic** | **Remote Panic** | **Shell Completions**
 
 </div>
 
@@ -88,7 +88,7 @@ The Releases section reads published releases from the GitHub Releases API, so r
 ### GitHub release (Recommended)
 Download [Python](https://www.python.org/) 3.11+ for Linux or Windows, then install the verified release wheel:
 ```bash
-pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.4.1/cloudmesh-4.4.1-py3-none-any.whl
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.5.0/cloudmesh-4.5.0-py3-none-any.whl
 cm --help
 ```
 
@@ -162,7 +162,7 @@ wheel. It never installs the unrelated PyPI `cloudmesh` package.
 
 ### First Steps
 ```bash
-cm --help              # Show all 300 commands
+cm --help              # Show all 301 commands
 cm status              # Quick overview of all servers/nodes
 cm interactive         # Interactive TUI menu
 cm mon --local         # Monitor this machine
@@ -276,7 +276,13 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v4.4.1 (Latest)
+### v4.5.0 (Latest)
+
+- **Node replay protection:** every controller request carries a nonce and a timestamp, and the node rejects stale requests and reused nonces. Legacy clients keep working until you start the agent with `--require-nonce`.
+- **Single-node key rotation:** `cm node rotate-key -n NAME` rotates one node without a full panic, so stored server passwords stay decryptable.
+- **Doctor repairs:** `cm doctor --fix` creates a missing data directory, backs up and resets corrupt state files, and tightens key permissions.
+
+### v4.4.1
 
 - **Windows installer extraction:** the installer no longer depends on `Expand-Archive`, whose three-argument `ZipFile.ExtractToDirectory` overload is missing on some Windows builds; it calls the two-argument overload directly, so extraction works on Windows PowerShell 5.1 and PowerShell 7 alike.
 
@@ -782,6 +788,7 @@ target.
 ```bash
 cm status       # Overview of servers, nodes, alerts
 cm doctor       # 15-point health check
+cm doctor --fix # Safe repairs: missing data dir, corrupt state backup, key perms
 ```
 
 ### Docker Management
@@ -976,7 +983,7 @@ curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 
 | Option | What it does |
 |--------|-------------|
-| **GitHub release wheel** | Install the verified `cloudmesh-4.4.1-py3-none-any.whl` from GitHub Releases |
+| **GitHub release wheel** | Install the verified `cloudmesh-4.5.0-py3-none-any.whl` from GitHub Releases |
 | **Fresh Install** | Download installer, double-click, done |
 | **BSD installer** | `sh cm_for-bsd.sh --yes` on FreeBSD, OpenBSD and NetBSD |
 | **Update** | `cm update` in a checkout, or `cm update --pip` for a verified release wheel |
@@ -1036,7 +1043,7 @@ TLS requires both `--tls-cert` and `--tls-key`; the node refuses partial TLS con
 
 ```
 cloudmesh/
-  main.py              # CLI entry point (300 commands)
+  main.py              # CLI entry point (301 commands)
   requirements.txt     # Python dependencies
   core/
     server.py          # SSH server management

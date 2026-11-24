@@ -4,6 +4,23 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [4.5.0] - 2026-11-24 — Node protocol replay protection
+
+### Added
+
+- Node protocol replay protection: every controller request now carries a
+  nonce and a timestamp. The node rejects requests older than 60 seconds and
+  any nonce it has already seen, using an authenticated-only, oldest-first
+  cache. Legacy clients keep working by default;
+  `cloudmesh_node.py start --require-nonce` rejects them.
+- `cm node rotate-key -n NAME` rotates one node's auth key without touching
+  the Fernet key, so stored server passwords stay decryptable. Unconfirmed
+  rotations are queued in `.panic_pending.json` and exit non-zero.
+- `cm doctor --fix` applies safe, backup-first repairs: it creates a missing
+  data directory, resets a corrupt `.node_keys.json` or `.schedule.json`
+  after copying it to `.bak`, and tightens `.secret.key` permissions to 0600
+  on POSIX.
+
 ## [4.4.1] - 2026-11-24 — Windows installer extraction
 
 ### Fixed

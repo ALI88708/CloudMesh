@@ -178,7 +178,21 @@ class NodeClient:
         finally:
             sock.close()
 
+    @staticmethod
+    def _stamp_request(request):
+        """Return a copy of the request with replay protection fields.
+
+        Every request gets a fresh nonce and the send time so the node can
+        reject a captured request that is replayed later. The caller's dict is
+        never mutated, and an explicitly stamped request keeps its values.
+        """
+        stamped = dict(request)
+        stamped.setdefault("nonce", uuid.uuid4().hex[:16])
+        stamped.setdefault("timestamp", time.time())
+        return stamped
+
     def _send(self, request, timeout=10, spa=False, spa_port=9998, spa_delay=0.5):
+        request = self._stamp_request(request)
         if self.transport == "relay":
             return self._send_relay(request, timeout)
 

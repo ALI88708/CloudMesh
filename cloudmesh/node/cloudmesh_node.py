@@ -47,6 +47,10 @@ DEFAULT_PORT = 9999
 DEFAULT_SPA_PORT = 9998
 DEFAULT_SPA_WINDOW = 5
 SPA_TIMESTAMP_MAX_AGE = 30
+# Authenticated requests older than this are replays by definition. Slightly
+# wider than the SPA window because a request may legitimately be retried
+# after a slow connect, but still short enough to bound the replay window.
+REQUEST_TIMESTAMP_MAX_AGE = 60
 METRICS_CACHE_SECONDS = 2.0
 RELAY_PARKED_READ_TIMEOUT = 35.0
 RELAY_BACKOFF_INITIAL = 1.0
@@ -935,7 +939,7 @@ class NodeAgent:
     def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",  # nosec B104 -- node agent must be reachable by design; every request is auth-gated
                  tls_cert=None, tls_key=None,
                  spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW,
-                 relay_config=None, relay_only=False):
+                 relay_config=None, relay_only=False, require_nonce=False):
         """Initialize the node agent's listener, job store, and DDoS protection.
 
         Use `auth_key` when nonempty, otherwise read or create the persistent
@@ -961,6 +965,12 @@ class NodeAgent:
         self._jobs = {}
         self._job_processes = {}
         self._lock = threading.Lock()
+        # Protocol replay cache, separate from the SPA one: it covers every
+        # authenticated request, not just the UDP knock. Only authenticated
+        # nonces enter it, so a bad-auth flood cannot evict a recent nonce.
+        self.require_nonce = require_nonce
+        self._request_nonces = OrderedDict()
+        self._request_nonce_lock = threading.Lock()
         self._load_jobs()
 
         self.spa_mode = spa
@@ -1323,6 +1333,35 @@ class NodeAgent:
             except (OSError, subprocess.SubprocessError):
                 proc.kill()
 
+    def _check_request_replay(self, req):
+        """Return an error string when an authenticated request is a replay.
+
+        Runs after authentication, so only authenticated nonces enter the
+        cache. Requests without replay fields are legacy clients and pass
+        unless `require_nonce` is set; a stale or malformed request never
+        stores its nonce, so it cannot block the client's next try.
+        """
+        nonce = req.get("nonce")
+        timestamp = req.get("timestamp")
+        if not nonce and timestamp is None:
+            if self.require_nonce:
+                return "Replay protection required: client sent no nonce"
+            return None
+        if not nonce or not isinstance(timestamp, (int, float)):
+            return "Malformed replay protection fields"
+
+        age = abs(time.time() - timestamp)
+        if age > REQUEST_TIMESTAMP_MAX_AGE:
+            return f"Stale request (age={age:.1f}s)"
+
+        with self._request_nonce_lock:
+            if nonce in self._request_nonces:
+                return "Replayed nonce"
+            self._request_nonces[nonce] = None
+            while len(self._request_nonces) > 10000:
+                self._request_nonces.popitem(last=False)
+        return None
+
     def _handle(self, client, addr, client_id=None):
         ip = addr[0]
         if client_id:
@@ -1365,6 +1404,12 @@ class NodeAgent:
                 return
 
             ddos.on_auth_success(key)
+
+            replay_error = self._check_request_replay(req)
+            if replay_error:
+                _log(f"Replay: rejected {key}: {replay_error}")
+                self._send_msg(client, {"type": "error", "message": replay_error})
+                return
 
             action = req.get("action", "")
             if action == "ping":
@@ -1584,7 +1629,7 @@ def _is_running(pid):
 
 def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0",  # nosec B104 -- default bind only; --bind overrides it, and requests are auth-gated
               tls_cert=None, tls_key=None, spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW,
-              relay_config=None, relay_only=False):
+              relay_config=None, relay_only=False, require_nonce=False):
     """Run the node agent in the foreground unless its recorded PID is alive.
 
     Pass listener, TLS, SPA, and relay settings to NodeAgent; `spa_window` is
@@ -1602,7 +1647,8 @@ def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0",  # nosec B104 -- default b
         pass
     agent = NodeAgent(port=port, bind_host=bind_host, tls_cert=tls_cert, tls_key=tls_key,
                       spa=spa, spa_port=spa_port, spa_window=spa_window,
-                      relay_config=relay_config, relay_only=relay_only)
+                      relay_config=relay_config, relay_only=relay_only,
+                      require_nonce=require_nonce)
     mode_str = f"SPA(UDP:{spa_port}, window:{spa_window}s)" if spa else "TCP"
     if relay_config:
         mode_str += f" + relay {relay_config['url']} (pool {relay_config['pool']})"
@@ -1676,6 +1722,8 @@ def main():
                          help="Node relay sidecar written by `cm node relay enable`")
     start_p.add_argument("--relay-only", action="store_true",
                          help="Keep the inbound TCP listener closed and serve only through the relay")
+    start_p.add_argument("--require-nonce", action="store_true",
+                         help="Reject requests without replay protection (legacy clients stop working)")
     sub.add_parser("stop")
     sub.add_parser("status")
     sub.add_parser("relay", add_help=False)
@@ -1693,7 +1741,8 @@ def main():
                 p.error(str(exc))
         cmd_start(port=args.port, bind_host=args.bind, tls_cert=args.tls_cert, tls_key=args.tls_key,
                   spa=args.spa, spa_port=args.spa_port, spa_window=args.spa_window,
-                  relay_config=relay_config, relay_only=args.relay_only)
+                  relay_config=relay_config, relay_only=args.relay_only,
+                  require_nonce=args.require_nonce)
     elif args.command == "stop":
         cmd_stop()
     elif args.command == "status":

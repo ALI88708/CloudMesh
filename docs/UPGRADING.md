@@ -292,6 +292,32 @@ where `Expand-Archive` fails, `cm_for-windows.bat` now extracts the payload with
 the two-argument `ZipFile.ExtractToDirectory` overload instead. Re-run the
 `4.4.1` installer if a `4.4.0` install stopped at `Extract failed!`.
 
+## Upgrading to 4.5.0 (node replay protection)
+
+No state files change and no migration step is required.
+
+The node protocol gains replay protection, but it is **backward compatible by
+default**: a 4.5.0 controller stamps every request with a nonce and a
+timestamp, and an older node simply ignores the new fields. An upgraded node
+accepts legacy requests from older controllers until you opt into strict mode.
+
+To close the legacy hole after every controller and node is on 4.5.0, restart
+each agent with:
+
+```bash
+python3 cloudmesh_node.py start --require-nonce
+```
+
+Strict mode rejects requests that carry no replay fields, so older controllers
+stop working against that node. Enable it only when the whole fleet is
+upgraded. Requests older than 60 seconds and reused nonces are rejected in both
+modes, and a request rejected as stale does not consume its nonce.
+
+`cm node rotate-key -n NAME` is new and needs no upgrade on the node side: it
+uses the existing authenticated `rotate_key` action, but only for the named
+node and without rotating the Fernet key. `cm doctor --fix` is opt-in and
+always writes a `.bak` copy before resetting a corrupt state file.
+
 ## Getting help
 
 - Security issues: follow `SECURITY.md`; do not open a public issue for a

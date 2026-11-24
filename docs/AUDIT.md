@@ -58,7 +58,30 @@ python -m pytest cloudmesh/tests -q
   not an injection. The container and deployment are the trust boundary.
 - **The node protocol is unchanged.** Shared auth keys, optional TLS, optional
   SPA, and no replay cache remain. Use TLS; a protocol change is deferred to a
-  feature line.
+  feature line. *(Superseded — see "Post-audit changes" below.)*
 - **`cm api` prints a generated key to the terminal.** That is intentional
   bootstrap behaviour; treat the terminal output as sensitive. Automation uses
   `--api-key-file` instead.
+
+## Post-audit changes
+
+The risks above describe `4.1.2` as audited on 2026-10-20. Later releases
+changed two of them, so the original text is kept for history and the current
+state is recorded here:
+
+- **SPA replay cache (`4.3.1`).** SPA knocks now carry a nonce that is cached
+  after authentication and evicted oldest-first, so a captured knock cannot be
+  replayed inside its 30-second window.
+- **Node protocol replay protection (`4.5.0`).** Every controller request now
+  carries a nonce and a timestamp. The node rejects requests older than 60
+  seconds and any nonce it has already seen, using the same
+  authenticated-only, oldest-first cache rule as SPA. Legacy clients without
+  these fields still work by default; `cloudmesh_node.py start
+  --require-nonce` rejects them once every controller is upgraded.
+- **Single-node key rotation (`4.5.0`).** `cm node rotate-key -n NAME` rotates
+  one node's auth key without touching the Fernet key, so stored server
+  passwords stay decryptable. Unconfirmed rotations are queued in
+  `.panic_pending.json` exactly like a fleet-wide rotation.
+
+Shared auth keys per node remain; TLS is still recommended on any untrusted
+network.

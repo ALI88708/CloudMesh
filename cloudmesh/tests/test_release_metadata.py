@@ -33,7 +33,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
-RELEASE = "4.4.1"
+RELEASE = "4.5.0"
 
 _H2 = re.compile(r"^##\s+\[([^\]]+)\]", re.M)
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\b")

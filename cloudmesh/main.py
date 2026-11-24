@@ -91,7 +91,8 @@ COMPLETION_SUBCOMMANDS = {
     "group": ("list", "create", "delete", "add", "remove", "run"),
     "service": ("start", "stop", "status", "logs"),
     "node": ("add", "remove", "list", "test", "info", "monitor", "exec",
-             "install", "dashboard", "gpu", "job", "drain", "undrain"),
+             "install", "dashboard", "gpu", "job", "drain", "undrain",
+             "rotate-key"),
     "node job": ("start", "status", "list", "kill", "checkpoint", "recover", "checkpoints"),
     "queue": ("submit", "status", "list", "cancel", "worker"),
     "keys": ("generate", "list", "show", "deploy", "remove-managed"),
@@ -157,6 +158,8 @@ COMPLETION_OPTIONS = {
                  "--tls", "--ca-file"),
     "node drain": ("--name", "-n", "--reason"),
     "node undrain": ("--name", "-n"),
+    "node rotate-key": ("--name", "-n"),
+    "doctor": ("--fix",),
     "node job start": ("--name", "-n", "--timeout", "-t"),
     "node job status": ("--name", "-n", "--job-id", "-j"),
     "node job list": ("--name", "-n"),
@@ -2110,6 +2113,24 @@ def cmd_node_undrain(args):
 
 
 
+def cmd_node_rotate_key(args):
+    """Rotate one node's auth key without touching the Fernet key.
+
+    Exits non-zero when the node does not confirm the rotation, because an
+    unconfirmed rotation is not a completed one.
+    """
+    panic = PanicManager()
+    try:
+        actions = panic.rotate_single_node(args.name)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/]")
+        sys.exit(1)
+    for action in actions:
+        console.print(action)
+    if any("PENDING" in action for action in actions):
+        sys.exit(1)
+
+
 def cmd_node_test(args):
     keys = _load_node_keys()
     if args.name not in keys:
@@ -2650,6 +2671,45 @@ def _certificate_row(label, path):
     return (label, True, f"{path} valid for {days_left} day(s)")
 
 
+def _doctor_repairs(base, data_dir):
+    """Apply the repairs `cm doctor --fix` is allowed to make.
+
+    Only problems with an obviously safe remedy are touched: a missing data
+    directory, a corrupt JSON state file, and loose key permissions on POSIX.
+    A corrupt state file is always copied to `<name>.bak` before it is reset,
+    and a healthy file is never rewritten. Returns human-readable actions.
+    """
+    import shutil
+    import stat as stat_module
+
+    actions = []
+    if not data_dir.is_dir():
+        data_dir.mkdir(parents=True, exist_ok=True)
+        actions.append(f"Created data directory {data_dir}")
+
+    for name in (".node_keys.json", ".schedule.json"):
+        path = base / name
+        if not path.exists():
+            continue
+        try:
+            json.loads(path.read_text())
+        except Exception:
+            backup = path.with_name(path.name + ".bak")
+            shutil.copy2(path, backup)
+            path.write_text("{}")
+            actions.append(
+                f"Backed up corrupt {name} to {backup.name} and reset it"
+            )
+
+    key = base / ".secret.key"
+    if key.exists() and os.name != "nt":
+        if stat_module.S_IMODE(key.stat().st_mode) & 0o077:
+            key.chmod(0o600)
+            actions.append("Tightened .secret.key permissions to 0600")
+
+    return actions
+
+
 def cmd_doctor(args):
     """Print local source, configuration, storage, and Git/update health checks.
 
@@ -2666,6 +2726,11 @@ def cmd_doctor(args):
     console.print(Panel("[bold bright_blue]CloudMesh Doctor — Security & Health Check[/]", border_style="bright_blue"))
     checks = []
     base = Path(getattr(args, "base_dir", None) or Path(__file__).parent)
+    if getattr(args, "fix", False):
+        # resolve_base_dir is already imported at module scope; a second,
+        # function-local import would shadow it and break the later checks.
+        for action in _doctor_repairs(base, resolve_base_dir()):
+            console.print(f"[green]FIX[/] {action}")
 
     api_src = base / "core" / "advanced.py"
     if api_src.exists():
@@ -5024,6 +5089,11 @@ def build_parser():
     undrain_p = node_sub.add_parser("undrain", help="Put a drained node back in rotation")
     undrain_p.add_argument("--name", "-n", required=True)
 
+    rotate_key_p = node_sub.add_parser(
+        "rotate-key", help="Rotate one node's auth key (no full panic)"
+    )
+    rotate_key_p.add_argument("--name", "-n", required=True)
+
     relay_node_p = node_sub.add_parser("relay", help="Route a node through a relay")
     node_relay_sub = relay_node_p.add_subparsers(dest="relay_action")
     nre_p = node_relay_sub.add_parser("enable", help="Install relay mode on a node")
@@ -5226,6 +5296,11 @@ def build_parser():
     ver = subparsers.add_parser("version", help="Show version info")
 
     doc = subparsers.add_parser("doctor", help="Security & health check")
+    doc.add_argument(
+        "--fix",
+        action="store_true",
+        help="Apply safe, backup-first repairs before running the checks",
+    )
 
     upd = subparsers.add_parser("update", help="Update CloudMesh from GitHub")
     upd.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
@@ -5904,6 +5979,7 @@ def main():
             "gpu": cmd_node_gpu, "job": cmd_node_job,
             "relay": cmd_node_relay,
             "drain": cmd_node_drain, "undrain": cmd_node_undrain,
+            "rotate-key": cmd_node_rotate_key,
             "checkpoint": cmd_job_checkpoint,
             "recover": cmd_job_recover,
             "checkpoints": cmd_job_checkpoints,
