@@ -18,10 +18,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  # Upload and deploy stay in separate jobs on purpose. In one job a rerun
+  # uploads a second artifact with the same name, which deploy-pages rejects
+  # ("Multiple artifacts named github-pages"), and the metadata lookup right
+  # after the upload can still see zero artifacts. Rerunning only the deploy
+  # job reuses the artifact the build already published.
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -35,6 +37,13 @@ jobs:
         with:
           path: site
 
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy website
         id: deployment
         uses: actions/deploy-pages@v4
