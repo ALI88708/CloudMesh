@@ -6,7 +6,12 @@ from cloudmesh.core.server_config import get_server as _store_server
 from cloudmesh.core.server_config import load_server_config
 from cloudmesh.core.paths import data_dir
 
-DATA_DIR = str(data_dir())
+_INITIAL_DATA_DIR = str(data_dir())
+DATA_DIR = _INITIAL_DATA_DIR
+
+
+def _data_dir():
+    return DATA_DIR if DATA_DIR != _INITIAL_DATA_DIR else str(data_dir())
 
 def _load_config():
     return load_server_config()
@@ -115,7 +120,7 @@ def available_logs(server_name):
 
 def _sources_file():
     """Return the path to the log sources JSON file."""
-    return os.path.join(DATA_DIR, "logagg_sources.json")
+    return os.path.join(_data_dir(), "logagg_sources.json")
 
 
 def _load_sources():
@@ -123,7 +128,8 @@ def _load_sources():
     p = _sources_file()
     if os.path.exists(p):
         try:
-            data = json.load(open(p))
+            with open(p) as f:
+                data = json.load(f)
             return data if isinstance(data, list) else []
         except (OSError, ValueError):
             pass
@@ -132,7 +138,7 @@ def _load_sources():
 
 def _save_sources(sources):
     """Persist the list of configured log sources to disk."""
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(_data_dir(), exist_ok=True)
     with open(_sources_file(), "w") as f:
         json.dump(sources, f, indent=2)
 

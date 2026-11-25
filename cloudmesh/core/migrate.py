@@ -76,20 +76,23 @@ class MigrationManager:
 
         for name, info in servers.items():
             try:
-                ok = self.storage.add_server(
-                    name=name,
-                    host=info.get("host"),
-                    user=info.get("user"),
-                    port=info.get("port", 22),
-                    key_path=info.get("key_path"),
-                    password=info.get("password")
-                )
-                if not ok:
-                    raise RuntimeError("storage rejected server (duplicate or constraint)")
+                if self.storage.get_server(name) is None:
+                    ok = self.storage.add_server(
+                        name=name,
+                        host=info.get("host"),
+                        user=info.get("user", "root"),
+                        port=info.get("port", 22),
+                        key_path=info.get("key_path"),
+                        password=info.get("password")
+                    )
+                    if not ok:
+                        raise RuntimeError("storage rejected server (duplicate or constraint)")
 
-                # Update status if available
+                # Update status / os_type if available
                 if info.get("status"):
                     self.storage.update_server_status(name, info["status"])
+                if info.get("os_type"):
+                    self.storage.update_server_os_type(name, info["os_type"])
 
                 count += 1
                 logger.info("Migrated server: %s", name)
@@ -527,7 +530,9 @@ class MigrationManager:
             except Exception:
                 return set()
 
-        # servers / nodes / groups: compare name sets (strong check).
+        # In CloudMesh 5, SQLite is the sole server registry and legacy JSON
+        # `servers` entries are removed once imported. Verification passes when
+        # no unmigrated/stale JSON server entries remain.
         try:
             db_servers = _names(self.storage.list_servers())
         except Exception as e:
@@ -536,7 +541,7 @@ class MigrationManager:
         json_servers = set((config.get("servers", {}) or {}).keys())
         checks.append({"type": "servers", "json": sorted(json_servers),
                        "sqlite": sorted(db_servers),
-                       "match": json_servers == db_servers})
+                       "match": len(json_servers) == 0})
 
         try:
             node_file = self.base_dir / ".node_keys.json"
@@ -665,6 +670,15 @@ class MigrationManager:
                     self.storage.mark_legacy_imported(kind)
                 except Exception as e:
                     self.errors.append(f"Failed to record migration marker for {kind}: {e}")
+
+        if "servers" in clean_kinds and "servers" in config and self.config_path.exists():
+            try:
+                from .security import SecurityManager
+                updated = dict(config)
+                updated.pop("servers", None)
+                SecurityManager(base_dir=str(self.base_dir)).save_config(updated)
+            except Exception as e:
+                self.errors.append(f"Failed to remove legacy JSON server registry: {e}")
 
         if self.errors:
             logger.warning("Migration completed with %d errors", len(self.errors))

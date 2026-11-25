@@ -8,6 +8,7 @@ inside the function.
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -25,6 +26,7 @@ DEFAULT_RELAY_PORT = 9997
 PAIR_TIMEOUT_SECONDS = 5.0
 KEEPALIVE_SECONDS = 30.0
 PONG_TIMEOUT_SECONDS = 5.0
+SESSION_IDLE_SECONDS = 600.0
 CAPTURE_LIMIT_BYTES = 8 * 1024 * 1024
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
@@ -132,11 +134,14 @@ class NonceCache:
     def accept(self, scope, nonce, ts, now=None):
         if not _is_hex(nonce, _HEX_NONCE):
             return False, "malformed nonce"
+        if (
+            isinstance(ts, bool)
+            or not isinstance(ts, (int, float))
+            or not math.isfinite(ts)
+        ):
+            return False, "stale timestamp"
         now = time.time() if now is None else now
-        try:
-            if abs(now - ts) > MAX_CLOCK_SKEW:
-                return False, "stale timestamp"
-        except TypeError:
+        if abs(now - ts) > MAX_CLOCK_SKEW:
             return False, "stale timestamp"
         key = (scope, nonce)
         with self._lock:
@@ -860,22 +865,34 @@ class RelayServer:
 
     def _pump_pair(self, node_sock, controller_sock):
         for sock in (node_sock, controller_sock):
-            sock.settimeout(None)
+            sock.settimeout(SESSION_IDLE_SECONDS)
         with self._lock:
             self._active_sockets.add(node_sock)
             self._active_sockets.add(controller_sock)
+        first_done = threading.Event()
+
+        def run_pump(source, destination):
+            try:
+                self._pump(source, destination)
+            finally:
+                first_done.set()
+
         threads = [
             threading.Thread(
-                target=self._pump, args=(node_sock, controller_sock), daemon=True
+                target=run_pump, args=(node_sock, controller_sock), daemon=True
             ),
             threading.Thread(
-                target=self._pump, args=(controller_sock, node_sock), daemon=True
+                target=run_pump, args=(controller_sock, node_sock), daemon=True
             ),
         ]
         for thread in threads:
             thread.start()
-        for thread in threads:
-            thread.join(2.0)
+        while not first_done.wait(0.1):
+            if self._stop.is_set():
+                break
+        if not self._stop.is_set():
+            for thread in threads:
+                thread.join(2.0)
         for sock in (node_sock, controller_sock):
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -887,6 +904,8 @@ class RelayServer:
                 pass
             with self._lock:
                 self._active_sockets.discard(sock)
+        for thread in threads:
+            thread.join(1.0)
 
     def _pump(self, source, destination):
         while not self._stop.is_set():

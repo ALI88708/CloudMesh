@@ -6,7 +6,12 @@ from collections import defaultdict
 
 from cloudmesh.core.paths import data_dir
 
-DATA_DIR = str(data_dir())
+_INITIAL_DATA_DIR = str(data_dir())
+DATA_DIR = _INITIAL_DATA_DIR
+
+
+def _data_dir():
+    return DATA_DIR if DATA_DIR != _INITIAL_DATA_DIR else str(data_dir())
 
 
 class RateLimiter:
@@ -74,7 +79,7 @@ class IPBlacklister:
         self._load_bans()
 
     def _bans_file(self):
-        return os.path.join(DATA_DIR, "banned_ips.json")
+        return os.path.join(_data_dir(), "banned_ips.json")
 
     def _load_bans(self):
         p = self._bans_file()
@@ -90,7 +95,7 @@ class IPBlacklister:
                 pass
 
     def _save_bans(self):
-        os.makedirs(DATA_DIR, exist_ok=True)
+        os.makedirs(_data_dir(), exist_ok=True)
         with open(self._bans_file(), "w") as f:
             json.dump(self._bans, f, indent=2)
 

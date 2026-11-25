@@ -4,6 +4,7 @@
 import hashlib
 import hmac as hmac_mod
 import json
+import math
 import os
 import platform
 import random
@@ -33,7 +34,10 @@ except ImportError:
 try:
     from . import cloudmesh_relay
 except ImportError:  # standalone deployment: the relay module sits next to this file
-    import cloudmesh_relay
+    try:
+        import cloudmesh_relay
+    except ImportError:
+        cloudmesh_relay = None
 
 BASE_DIR = Path(__file__).resolve().parent
 KEY_FILE = BASE_DIR / ".node_key"
@@ -621,7 +625,17 @@ class SpacListener:
         nonce = packet.get("nonce", "")
         signature = packet.get("hmac", "")
 
-        if not timestamp or not nonce or not signature:
+        if (
+            isinstance(timestamp, bool)
+            or not isinstance(timestamp, (int, float))
+            or not math.isfinite(timestamp)
+            or not timestamp
+            or not isinstance(nonce, str)
+            or not nonce
+            or len(nonce) > 256
+            or not isinstance(signature, str)
+            or not signature
+        ):
             return False
 
         now = time.time()
@@ -718,6 +732,10 @@ class RelayClient:
     """
 
     def __init__(self, agent, config, connect_timeout=10.0):
+        if cloudmesh_relay is None:
+            raise RuntimeError(
+                "cloudmesh_relay.py is required for relay mode; deploy it next to cloudmesh_node.py"
+            )
         self.agent = agent
         self.relay_id = config["relay_id"]
         self.url = config["url"]
@@ -1347,7 +1365,14 @@ class NodeAgent:
             if self.require_nonce:
                 return "Replay protection required: client sent no nonce"
             return None
-        if not nonce or not isinstance(timestamp, (int, float)):
+        if (
+            not isinstance(nonce, str)
+            or not nonce
+            or len(nonce) > 256
+            or isinstance(timestamp, bool)
+            or not isinstance(timestamp, (int, float))
+            or not math.isfinite(timestamp)
+        ):
             return "Malformed replay protection fields"
 
         age = abs(time.time() - timestamp)
@@ -1507,6 +1532,18 @@ class NodeAgent:
         self._stop_event.clear()
         PID_FILE.write_text(str(os.getpid()))
 
+        if (
+            platform.system() != "Windows"
+            and threading.current_thread() is threading.main_thread()
+        ):
+            signal.signal(
+                signal.SIGTERM,
+                lambda s, f: (
+                    setattr(self, "_running", False),
+                    self._stop_event.set(),
+                ),
+            )
+
         if self._relay_client is not None:
             self._relay_client.start()
             _log(
@@ -1533,15 +1570,20 @@ class NodeAgent:
 
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind((self.bind_host, self.port))
-        srv.listen(16)
-        srv.settimeout(1)
+        try:
+            srv.bind((self.bind_host, self.port))
+            srv.listen(16)
+            srv.settimeout(1)
 
-        if self.tls_cert and self.tls_key:
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(self.tls_cert, self.tls_key)
-            srv = ctx.wrap_socket(srv, server_side=True)
-            _log("TLS enabled")
+            if self.tls_cert and self.tls_key:
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(self.tls_cert, self.tls_key)
+                srv = ctx.wrap_socket(srv, server_side=True)
+                _log("TLS enabled")
+        except Exception:
+            srv.close()
+            self._shutdown()
+            raise
 
         mode_str = f"SPA(UDP:{self.spa_port})" if self.spa_mode else "TCP"
         _log(f"Node started on {self.bind_host}:{self.port} [{mode_str}]")
@@ -1558,11 +1600,10 @@ class NodeAgent:
             )
             if result.returncode != 0:
                 _log("FATAL: SPA mode requested but iptables DROP rule failed — refusing to start exposed")
+                srv.close()
+                self._shutdown()
                 return
             _log(f"SPA: iptables DROP rule added for TCP {self.port}")
-
-        if platform.system() != "Windows":
-            signal.signal(signal.SIGTERM, lambda s, f: setattr(self, "_running", False))
 
         while self._running:
             try:
@@ -1722,12 +1763,17 @@ def main():
                          help="Node relay sidecar written by `cm node relay enable`")
     start_p.add_argument("--relay-only", action="store_true",
                          help="Keep the inbound TCP listener closed and serve only through the relay")
-    start_p.add_argument("--allow-legacy", action="store_true",
-                         help="Accept 4.x requests without replay protection (insecure; migration only)")
+    nonce_group = start_p.add_mutually_exclusive_group()
+    nonce_group.add_argument("--allow-legacy", action="store_true",
+                             help="Accept 4.x requests without replay protection (insecure; migration only)")
+    nonce_group.add_argument("--require-nonce", action="store_true",
+                             help=argparse.SUPPRESS)
     sub.add_parser("stop")
     sub.add_parser("status")
     sub.add_parser("relay", add_help=False)
     args, unknown = p.parse_known_args()
+    if unknown and args.command != "relay":
+        p.error(f"unrecognized arguments: {' '.join(unknown)}")
     if args.command == "start":
         if bool(args.tls_cert) != bool(args.tls_key):
             p.error("both --tls-cert and --tls-key must be supplied together")
@@ -1748,6 +1794,8 @@ def main():
     elif args.command == "status":
         cmd_status()
     elif args.command == "relay":
+        if cloudmesh_relay is None:
+            p.error("cloudmesh_relay.py is required for relay commands")
         return cloudmesh_relay.main(unknown)
     else:
         p.print_help()

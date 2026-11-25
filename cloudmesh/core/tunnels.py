@@ -2,10 +2,16 @@ import json, os, subprocess, signal, time
 from cloudmesh.core.ssh_util import build_ssh_cmd
 from cloudmesh.core.paths import data_dir
 
-DATA_DIR = str(data_dir())
+_INITIAL_DATA_DIR = str(data_dir())
+DATA_DIR = _INITIAL_DATA_DIR
+
+
+def _data_dir():
+    return DATA_DIR if DATA_DIR != _INITIAL_DATA_DIR else str(data_dir())
+
 
 def _tunnels_file():
-    return os.path.join(DATA_DIR, "tunnels.json")
+    return os.path.join(_data_dir(), "tunnels.json")
 
 def _load_tunnels():
     p = _tunnels_file()
@@ -15,7 +21,7 @@ def _load_tunnels():
     return {"tunnels": [], "active": []}
 
 def _save_tunnels(data):
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(_data_dir(), exist_ok=True)
     with open(_tunnels_file(), "w") as f:
         json.dump(data, f, indent=2)
 
@@ -71,6 +77,9 @@ def start_tunnel(name):
 
     try:
         result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=10)
+        if getattr(result, "returncode", 0) != 0:
+            detail = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or f"exit {result.returncode}").strip()
+            return f"Failed to start tunnel: {detail}"
         active = data.get("active", [])
         active.append({
             "name": name,

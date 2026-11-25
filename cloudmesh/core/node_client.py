@@ -76,18 +76,21 @@ class NodeClient:
         self._keys = self._load_keys()
 
     @classmethod
-    def from_config(cls, node, name=None):
+    def from_config(cls, node, name=None, base_dir=None):
+        auth_key = node.get("key")
+        if auth_key is None:
+            auth_key = node.get("auth_key")
         direct = {
             "host": node["host"],
             "port": node.get("port", 9999),
-            "auth_key": node.get("key"),
+            "auth_key": auth_key,
             "tls": node.get("tls", False),
             "ca_file": node.get("ca_file"),
         }
         if name is None:
             return cls(**direct)
 
-        store = node_relay.NodeRelayStore()
+        store = node_relay.NodeRelayStore(base_dir)
         entries = store.load()
         if store.last_error:
             return cls(
@@ -114,7 +117,7 @@ class NodeClient:
                 ),
             )
 
-        profiles = node_relay.RelayProfileStore()
+        profiles = node_relay.RelayProfileStore(base_dir)
         profile = profiles.get(entry["url"])
         if profiles.last_error:
             return cls(

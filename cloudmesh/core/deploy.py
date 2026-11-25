@@ -1,5 +1,6 @@
-import tempfile
 import os
+import shlex
+import tempfile
 
 from cloudmesh.core.osprofile import get_profile
 
@@ -125,28 +126,41 @@ class PackageDeployer:
         return results
 
     def run_script(self, server_name, script_content, script_name="cloudmesh_script.sh"):
+        safe_name = os.path.basename(str(script_name or "").replace("\\", "/"))
+        if not safe_name or safe_name in (".", "..") or any(
+            ch in safe_name for ch in ("\n", "\r", "\x00")
+        ):
+            raise ValueError(f"Invalid script name: {script_name!r}")
+
         info = self.server_mgr.get_server_info(server_name)
         os_type = info.get("os_type", "linux")
 
-        local_tmp = os.path.join(tempfile.gettempdir(), script_name)
-        with open(local_tmp, "w") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix="cloudmesh-script-",
+            suffix=f"-{safe_name}",
+            delete=False,
+        ) as f:
             f.write(script_content)
+            local_tmp = f.name
 
         try:
             from .transfer import FileTransfer
             transfer = FileTransfer(self.server_mgr)
 
             if os_type == "windows":
-                remote_path = f"C:\\temp\\{script_name}"
+                remote_path = f"C:\\temp\\{safe_name}"
                 self.server_mgr.execute(server_name, "mkdir C:\\temp 2>nul")
                 transfer.upload(server_name, local_tmp, remote_path)
                 result = self.server_mgr.execute(server_name, remote_path)
             else:
                 shell = get_profile(os_type).script_shell()
-                remote_path = f"/tmp/{script_name}"
+                remote_path = f"/tmp/{safe_name}"  # nosec B108 -- remote path on target server
+                quoted_remote = shlex.quote(remote_path)
                 transfer.upload(server_name, local_tmp, remote_path)
-                self.server_mgr.execute(server_name, f"chmod +x {remote_path}")
-                result = self.server_mgr.execute(server_name, f"{shell} {remote_path}")
+                self.server_mgr.execute(server_name, f"chmod +x {quoted_remote}")
+                result = self.server_mgr.execute(server_name, f"{shell} {quoted_remote}")
 
             return {
                 "success": result["exit_code"] == 0,

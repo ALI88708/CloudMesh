@@ -133,9 +133,22 @@ class PanicManager:
         actions.append(("log_panic", "Will record panic event in .panic_log.json"))
         return actions
 
+    def _make_node_client(self, client_cls, info, name):
+        try:
+            return client_cls.from_config(info, name=name, base_dir=self.base_dir)
+        except TypeError:
+            return client_cls.from_config(info, name=name)
+
     def execute_panic(self):
         """Rotate the secret key and all node auth keys, logging each action taken."""
         actions = []
+
+        # Load and back up node keys BEFORE rotating .secret.key so SQLite-stored
+        # auth keys can still be decrypted with the current Fernet key and then
+        # re-encrypted under the newly generated key.
+        nodes = self._load_nodes()
+        if nodes and self.node_keys_file.exists():
+            shutil.copy2(self.node_keys_file, self.node_keys_file.with_suffix(".json.bak"))
 
         if self.secret_key_file.exists():
             shutil.copy2(self.secret_key_file, self.secret_key_file.with_suffix(".key.bak"))
@@ -147,6 +160,10 @@ class PanicManager:
             self._write_secret_key(new_key)
             actions.append("Created new .secret.key (none existed before)")
 
+        # Drop any cached keyring bound to the previous Fernet key so subsequent
+        # saves encrypt node auth keys with the freshly rotated .secret.key.
+        self._keyring = None
+
         # The new Fernet key cannot decrypt anything the old one encrypted, so
         # every stored server password and node auth key becomes unreadable.
         actions.append(
@@ -154,20 +171,18 @@ class PanicManager:
             "— re-add servers and nodes with fresh credentials"
         )
 
-        nodes = self._load_nodes()
         if nodes:
             from cloudmesh.core.node_client import NodeClient
 
-            if self.node_keys_file.exists():
-                shutil.copy2(self.node_keys_file, self.node_keys_file.with_suffix(".json.bak"))
             pending = self._load_pending()
             for name, info in list(nodes.items()):
                 new_auth = secrets.token_hex(32)
-                client = NodeClient.from_config(info, name=name)
+                client = self._make_node_client(NodeClient, info, name)
                 try:
                     result = client.rotate_key(new_auth)
                     if result.get("success"):
                         nodes[name]["key"] = new_auth
+                        pending.pop(name, None)
                         actions.append(f"Rotated '{name}' — confirmed remotely")
                         continue
                     reason = result.get("message", "remote refused rotation")
@@ -213,7 +228,7 @@ class PanicManager:
 
         info = nodes[name]
         new_auth = secrets.token_hex(32)
-        client = NodeClient.from_config(info, name=name)
+        client = self._make_node_client(NodeClient, info, name)
         try:
             result = client.rotate_key(new_auth)
             if result.get("success"):
@@ -256,11 +271,12 @@ class PanicManager:
         pending = self._load_pending()
         for name, info in list(nodes.items()):
             new_auth = secrets.token_hex(32)
-            client = NodeClient.from_config(info, name=name)
+            client = self._make_node_client(NodeClient, info, name)
             try:
                 result = client.rotate_key(new_auth)
                 if result.get("success"):
                     nodes[name]["key"] = new_auth
+                    pending.pop(name, None)
                     actions.append(f"Rotated '{name}' — confirmed remotely")
                     continue
                 reason = result.get("message", "remote refused rotation")
@@ -298,8 +314,8 @@ class PanicManager:
         nodes = self._load_nodes()
 
         for name, info in pending.items():
-            client = NodeClient.from_config(
-                {**info, "key": info["old_key"]}, name=name
+            client = self._make_node_client(
+                NodeClient, {**info, "key": info["old_key"]}, name
             )
             try:
                 result = client.rotate_key(info["new_key"])

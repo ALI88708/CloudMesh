@@ -50,7 +50,7 @@ class ServerManager:
             if not isinstance(info, dict):
                 continue
             try:
-                if not self.storage.add_server(
+                if self.storage.get_server(name) is None and not self.storage.add_server(
                     name=name,
                     host=info.get("host"),
                     user=info.get("user"),
@@ -59,6 +59,10 @@ class ServerManager:
                     password=info.get("password"),
                 ):
                     raise RuntimeError("storage rejected server")
+                if info.get("status"):
+                    self.storage.update_server_status(name, info["status"])
+                if info.get("os_type"):
+                    self.storage.update_server_os_type(name, info["os_type"])
             except Exception:
                 logger.warning("Servers import incomplete; legacy JSON retained")
                 return False

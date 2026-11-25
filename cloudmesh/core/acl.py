@@ -9,21 +9,27 @@ except ImportError:
 
 from cloudmesh.core.paths import data_dir
 
-DATA_DIR = str(data_dir())
+_INITIAL_DATA_DIR = str(data_dir())
+DATA_DIR = _INITIAL_DATA_DIR
+
+
+def _data_dir():
+    return DATA_DIR if DATA_DIR != _INITIAL_DATA_DIR else str(data_dir())
+
 
 def _log_file():
-    return os.path.join(DATA_DIR, "acl_audit.log")
+    return os.path.join(_data_dir(), "acl_audit.log")
 
 
 def _log_auth_event(event):
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(_data_dir(), exist_ok=True)
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     with open(_log_file(), "a") as f:
         f.write(f"[{ts}] {event}\n")
 
 
 def _acl_file():
-    return os.path.join(DATA_DIR, "acl.json")
+    return os.path.join(_data_dir(), "acl.json")
 
 
 def _load_acl():
@@ -35,7 +41,7 @@ def _load_acl():
 
 
 def _save_acl(data):
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(_data_dir(), exist_ok=True)
     with open(_acl_file(), "w") as f:
         json.dump(data, f, indent=2)
 

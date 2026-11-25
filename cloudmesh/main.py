@@ -74,11 +74,19 @@ from cloudmesh.core.advanced import (
 
 console = Console()
 
-NODE_KEYS_FILE = resolve_base_dir() / ".node_keys.json"
+_INITIAL_NODE_KEYS_FILE = resolve_base_dir() / ".node_keys.json"
+NODE_KEYS_FILE = _INITIAL_NODE_KEYS_FILE
+
+
+def _node_keys_file():
+    if NODE_KEYS_FILE != _INITIAL_NODE_KEYS_FILE:
+        return Path(NODE_KEYS_FILE)
+    return resolve_base_dir() / ".node_keys.json"
+
 
 COMPLETION_COMMANDS = (
     "server monitor dashboard run plan transfer sync history deploy alerts group "
-    "service compare cmdlog slice queue autosync interactive backup ping uptime top "
+    "service compare cmdlog slice queue relay autosync interactive backup ping uptime top "
     "disk network who find logs export import encrypt decrypt speed scan cleanup report "
     "alias version doctor update status discover bench schedule notify api panic tripwire "
     "weather trust profile audit ssh template map docker firewall ssl logagg reshistory "
@@ -91,9 +99,11 @@ COMPLETION_SUBCOMMANDS = {
     "group": ("list", "create", "delete", "add", "remove", "run"),
     "service": ("start", "stop", "status", "logs"),
     "node": ("add", "remove", "list", "test", "info", "monitor", "exec",
-             "install", "dashboard", "gpu", "job", "drain", "undrain",
+             "install", "dashboard", "gpu", "job", "relay", "drain", "undrain",
              "rotate-key"),
     "node job": ("start", "status", "list", "kill", "checkpoint", "recover", "checkpoints"),
+    "node relay": ("enable", "import", "disable", "status"),
+    "relay": ("init", "add", "serve", "status", "revoke"),
     "queue": ("submit", "status", "list", "cancel", "worker"),
     "keys": ("generate", "list", "show", "deploy", "remove-managed"),
     "config": ("list", "export", "import", "show"),
@@ -104,6 +114,8 @@ COMPLETION_SUBCOMMANDS = {
     "tripwire": ("plant", "list", "remove", "check"),
     "tw": ("plant", "list", "remove", "check"),
     "triw": ("plant", "list", "remove", "check"),
+    "profile": ("list", "save", "load", "delete"),
+    "template": ("add", "list", "run", "remove"),
     "docker": ("list-servers", "containers", "compose", "stats", "images",
                "pull", "exec", "logs", "cleanup", "prune"),
     "firewall": ("list-rules", "add-rule", "remove-rule", "status",
@@ -189,7 +201,9 @@ def cmd_docker(args):
     elif args.action == "containers":
         result = dm.list_containers(args.server)
     elif args.action == "compose":
-        result = dm.docker_compose(args.path, args.server, args.action)
+        result = dm.docker_compose(
+            args.path, args.server, getattr(args, "compose_action", "up")
+        )
     elif args.action == "stats":
         result = dm.container_stats(args.server)
     elif args.action == "images":
@@ -228,7 +242,12 @@ def cmd_firewall(args):
             table.add_row(str(i), str(r.get("port")), r.get("protocol", "tcp"), r.get("action", "allow"), r.get("source", "*"))
         console.print(table)
     elif args.action == "add-rule":
-        result = fm.add_rule(args.port, args.proto, args.action, getattr(args, "server", None))
+        result = fm.add_rule(
+            args.port,
+            args.proto,
+            getattr(args, "rule_action", "allow"),
+            getattr(args, "server", None),
+        )
         console.print(f"[green]{result}[/]")
     elif args.action == "remove-rule":
         result = fm.remove_rule(args.port, args.proto, getattr(args, "server", None))
@@ -1914,7 +1933,8 @@ def _get_node_keyring():
         from core.nodekeyring import NodeKeyring
     # Derive the storage base from the JSON location so tests that redirect
     # NODE_KEYS_FILE stay isolated from the real package database.
-    return NodeKeyring(json_path=NODE_KEYS_FILE, base_dir=NODE_KEYS_FILE.parent)
+    key_file = _node_keys_file()
+    return NodeKeyring(json_path=key_file, base_dir=key_file.parent)
 
 
 def _load_node_keys():
@@ -1922,12 +1942,13 @@ def _load_node_keys():
 
     Return {} if the fallback file is missing or cannot be decoded.
     """
+    key_file = _node_keys_file()
     try:
         return _get_node_keyring().load()
     except Exception:
-        if NODE_KEYS_FILE.exists():
+        if key_file.exists():
             try:
-                return json.loads(NODE_KEYS_FILE.read_text())
+                return json.loads(key_file.read_text())
             except Exception:
                 return {}
         return {}
@@ -1939,10 +1960,11 @@ def _save_node_keys(keys):
     Errors from the fallback JSON serialization or file write propagate.
     Storage failures suppressed by the keyring do not trigger the fallback.
     """
+    key_file = _node_keys_file()
     try:
         _get_node_keyring().save(keys)
     except Exception:
-        save_private_json(NODE_KEYS_FILE, keys)
+        save_private_json(key_file, keys)
 
 
 def _drain_registry():
@@ -2358,7 +2380,7 @@ def cmd_node_relay_status(args):
     return entry
 
 
-def _run_node_installer(server_mgr, server_name, content):
+def _run_node_installer(server_mgr, server_name, content, extra_files=None):
     """Upload and run the POSIX installer without a predictable remote path.
 
     ``node-install.sh`` is ``#!/bin/sh`` because the BSD family has no bash.
@@ -2368,6 +2390,7 @@ def _run_node_installer(server_mgr, server_name, content):
     """
     local_tmp = None
     remote_tmp = None
+    remote_stage_dir = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -2389,14 +2412,47 @@ def _run_node_installer(server_mgr, server_name, content):
                 "mktemp failed on the remote host; refusing a predictable temporary path"
             )
 
-        FileTransfer(server_mgr).upload(server_name, local_tmp, remote_tmp)
+        transfer = FileTransfer(server_mgr)
+        transfer.upload(server_name, local_tmp, remote_tmp)
+
+        cmd = f"sh {shlex.quote(remote_tmp)}"
+        if extra_files:
+            stage_probe = server_mgr.execute(
+                server_name, "mktemp -d /tmp/cloudmesh-stage.XXXXXX"
+            )
+            if stage_probe.get("exit_code") == 0:
+                lines = stage_probe.get("stdout", "").strip().splitlines()
+                if lines:
+                    remote_stage_dir = lines[-1]
+            if not remote_stage_dir:
+                raise RuntimeError(
+                    "mktemp -d failed on the remote host; refusing a predictable staging directory"
+                )
+            server_mgr.execute(
+                server_name, f"chmod 700 {shlex.quote(remote_stage_dir)}"
+            )
+            for remote_name, local_path in extra_files.items():
+                transfer.upload(
+                    server_name,
+                    str(local_path),
+                    f"{remote_stage_dir}/{remote_name}",
+                )
+            cmd = f"{cmd} --source-dir {shlex.quote(remote_stage_dir)}"
+
         server_mgr.execute(server_name, f"chmod +x {shlex.quote(remote_tmp)}")
-        return server_mgr.execute(server_name, f"sh {shlex.quote(remote_tmp)}")
+        return server_mgr.execute(server_name, cmd)
     finally:
         if local_tmp:
             try:
                 os.unlink(local_tmp)
             except OSError:
+                pass
+        if remote_stage_dir:
+            try:
+                server_mgr.execute(
+                    server_name, f"rm -rf {shlex.quote(remote_stage_dir)}"
+                )
+            except Exception:
                 pass
         if remote_tmp:
             try:
@@ -2413,14 +2469,25 @@ def cmd_node_install(args):
     server_mgr.add_server(temp_name, args.host, args.user, key_path=args.key)
     try:
         console.print("  [dim]Uploading installer...[/]")
-        node_script = Path(__file__).parent / "node" / "node-install.sh"
+        node_dir = Path(__file__).parent / "node"
+        node_script = node_dir / "node-install.sh"
+        node_agent = node_dir / "cloudmesh_node.py"
+        node_relay = node_dir / "cloudmesh_relay.py"
         if not node_script.exists():
             console.print("[red]node-install.sh not found in cloudmesh/node/[/]")
             return
+        if not node_agent.exists():
+            console.print("[red]cloudmesh_node.py not found in cloudmesh/node/[/]")
+            return
+        extra_files = {"cloudmesh_node.py": node_agent}
+        if node_relay.exists():
+            extra_files["cloudmesh_relay.py"] = node_relay
         content = node_script.read_text(encoding="utf-8")
         console.print("  [dim]Running installer...[/]")
         try:
-            result = _run_node_installer(server_mgr, temp_name, content)
+            result = _run_node_installer(
+                server_mgr, temp_name, content, extra_files=extra_files
+            )
         except Exception as exc:
             console.print(f"[red]Installation failed: {exc}[/]")
             return
@@ -2698,25 +2765,30 @@ def _doctor_repairs(base, data_dir):
         data_dir.mkdir(parents=True, exist_ok=True)
         actions.append(f"Created data directory {data_dir}")
 
-    for name in (".node_keys.json", ".schedule.json"):
-        path = base / name
-        if not path.exists():
-            continue
-        try:
-            json.loads(path.read_text())
-        except Exception:
-            backup = path.with_name(path.name + ".bak")
-            shutil.copy2(path, backup)
-            path.write_text("{}")
-            actions.append(
-                f"Backed up corrupt {name} to {backup.name} and reset it"
-            )
+    repair_roots = list(dict.fromkeys((base, data_dir)))
+    for root in repair_roots:
+        for name in (".node_keys.json", ".schedule.json"):
+            path = root / name
+            if not path.exists():
+                continue
+            try:
+                json.loads(path.read_text())
+            except Exception:
+                backup = path.with_name(path.name + ".bak")
+                shutil.copy2(path, backup)
+                if name == ".node_keys.json":
+                    save_private_json(path, {})
+                else:
+                    path.write_text("{}")
+                actions.append(
+                    f"Backed up corrupt {name} to {backup.name} and reset it"
+                )
 
-    key = base / ".secret.key"
-    if key.exists() and os.name != "nt":
-        if stat_module.S_IMODE(key.stat().st_mode) & 0o077:
-            key.chmod(0o600)
-            actions.append("Tightened .secret.key permissions to 0600")
+        key = root / ".secret.key"
+        if key.exists() and os.name != "nt":
+            if stat_module.S_IMODE(key.stat().st_mode) & 0o077:
+                key.chmod(0o600)
+                actions.append("Tightened .secret.key permissions to 0600")
 
     return actions
 
@@ -3043,7 +3115,7 @@ def cmd_doctor(args):
         try:
             from cloudmesh.core.security import SecurityManager as _SecurityManager
             _registry_ok, _registry_detail = _server_registry_check(
-                _SecurityManager(), _sm
+                _SecurityManager(base_dir=str(_storage_dir)), _sm
             )
             checks.append((
                 "Storage: server registry", _registry_ok, _registry_detail
@@ -3276,25 +3348,30 @@ def cmd_status(args):
         host = info.get("host", "?")
         entry = {"host": host, "status": "offline", "cpu": None, "ram": None, "disk": None}
         try:
-            client = NodeClient(
-                host,
-                info.get("port", 9999),
-                info.get("auth_key", ""),
-                tls=info.get("tls", False),
-                ca_file=info.get("ca_file"),
-            )
-            pong = client.send({"action": "ping"})
-            if pong and pong.get("type") == "pong":
-                metrics = client.send({"action": "metrics"})
-                if metrics and metrics.get("type") == "metrics":
-                    m = metrics["data"]
-                    cpu = f"{m.get('cpu_percent', 0):.0f}%"
-                    ram = f"{m.get('ram_percent', 0):.0f}%"
-                    disk = f"{m.get('disk_percent', 0):.0f}%"
+            client = NodeClient.from_config(info, name=name)
+            if client.ping():
+                m = client.get_metrics()
+                if isinstance(m, dict):
+                    cpu_val = m.get("cpu_percent", 0) or 0
+                    ram_info = m.get("ram")
+                    ram_val = (
+                        ram_info.get("percent", 0)
+                        if isinstance(ram_info, dict)
+                        else m.get("ram_percent", 0)
+                    ) or 0
+                    disk_info = m.get("disk")
+                    disk_val = (
+                        disk_info.get("percent", 0)
+                        if isinstance(disk_info, dict)
+                        else m.get("disk_percent", 0)
+                    ) or 0
+                    cpu = f"{float(cpu_val):.0f}%"
+                    ram = f"{float(ram_val):.0f}%"
+                    disk = f"{float(disk_val):.0f}%"
                     entry["status"] = "online"
-                    entry["cpu"] = m.get("cpu_percent", 0)
-                    entry["ram"] = m.get("ram_percent", 0)
-                    entry["disk"] = m.get("disk_percent", 0)
+                    entry["cpu"] = cpu_val
+                    entry["ram"] = ram_val
+                    entry["disk"] = disk_val
                     table.add_row(name, host, "[green]ONLINE[/]", cpu, ram, disk)
                 else:
                     entry["status"] = "online"
@@ -3593,9 +3670,13 @@ def cmd_config(args):
     """List, export, import, or show CloudMesh configuration files."""
     config_dir = resolve_base_dir()
     config_files = {
+        "database": config_dir / "cloudmesh.db",
+        "config": config_dir / "config.json",
         "servers": config_dir / "data" / "servers.json",
         "node_keys": config_dir / ".node_keys.json",
         "secret_key": config_dir / ".secret.key",
+        "relays": config_dir / ".relays.json",
+        "node_relays": config_dir / ".node_relays.json",
         "groups": config_dir / "data" / "groups.json",
         "aliases": config_dir / ".aliases.json",
         "templates": config_dir / ".templates.json",
@@ -3609,6 +3690,10 @@ def cmd_config(args):
         "plugins": config_dir / "data" / "plugins.json",
         "acl": config_dir / "data" / "acl.json",
         "alerts": config_dir / "alerts.json",
+    }
+    private_names = {
+        "database", "config", "node_keys", "secret_key",
+        "relays", "node_relays", "acl",
     }
 
     if args.action == "list":
@@ -3630,14 +3715,25 @@ def cmd_config(args):
         import shutil as _sh
         out_dir = Path(args.output) if args.output else Path(f"cloudmesh_backup_{time.strftime('%Y%m%d_%H%M%S')}")
         out_dir.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            try:
+                out_dir.chmod(0o700)
+            except OSError:
+                pass
         exported = 0
         for name, path in config_files.items():
             if path.exists():
+                dst = out_dir / path.name
                 if path.is_file():
-                    _sh.copy2(str(path), str(out_dir / path.name))
+                    _sh.copy2(str(path), str(dst))
+                    if name in private_names and os.name != "nt":
+                        try:
+                            dst.chmod(0o600)
+                        except OSError:
+                            pass
                     exported += 1
                 elif path.is_dir():
-                    _sh.copytree(str(path), str(out_dir / path.name), dirs_exist_ok=True)
+                    _sh.copytree(str(path), str(dst), dirs_exist_ok=True)
                     exported += 1
         console.print(f"[green]Exported {exported} config file(s) to {out_dir}[/]")
 
@@ -3650,9 +3746,19 @@ def cmd_config(args):
         imported = 0
         for f in src_dir.iterdir():
             for name, path in config_files.items():
-                if f.name == path.name or f.name == path.name.replace(".json", ""):
-                    if path.is_file():
+                if f.name == path.name or (path.suffix == ".json" and f.name == path.stem):
+                    if f.is_file():
+                        path.parent.mkdir(parents=True, exist_ok=True)
                         _sh.copy2(str(f), str(path))
+                        if name in private_names and os.name != "nt":
+                            try:
+                                path.chmod(0o600)
+                            except OSError:
+                                pass
+                        imported += 1
+                        console.print(f"  [green]Restored {name}[/]")
+                    elif f.is_dir():
+                        _sh.copytree(str(f), str(path), dirs_exist_ok=True)
                         imported += 1
                         console.print(f"  [green]Restored {name}[/]")
                     break
@@ -3667,12 +3773,18 @@ def cmd_config(args):
         if not path.exists():
             console.print(f"[dim]{name}: not found[/]")
             return
+        if name == "secret_key":
+            console.print(Panel(f"[dim]Encrypted key material ({path.stat().st_size} B, redacted)[/]", title=f"Config: {name}", border_style="cyan"))
+            return
+        if name in {"database", "config"}:
+            console.print(Panel(f"[dim]Binary/encrypted state file ({path.stat().st_size} B)[/]", title=f"Config: {name}", border_style="cyan"))
+            return
         if path.is_file():
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 console.print(Panel(json.dumps(data, indent=2)[:2000], title=f"Config: {name}", border_style="cyan"))
             except Exception:
-                content = path.read_text()[:2000]
+                content = path.read_text(encoding="utf-8", errors="replace")[:2000]
                 console.print(Panel(content, title=f"Config: {name}", border_style="cyan"))
         else:
             console.print(f"[dim]{name}: directory with {len(list(path.iterdir()))} items[/]")
@@ -4278,6 +4390,11 @@ def _alias_firewall(args, action):
     cmd_firewall(args)
 
 def _alias_firewall_add(args):
+    if not hasattr(args, "rule_action") and getattr(args, "action", None) not in (
+        None,
+        "add-rule",
+    ):
+        args.rule_action = args.action
     args.action = "add-rule"
     cmd_firewall(args)
 
@@ -5521,7 +5638,7 @@ def build_parser():
     dco = docker_sub.add_parser("compose", help="Run docker-compose")
     dco.add_argument("path")
     dco.add_argument("--server", "-s")
-    dco.add_argument("--action", "-a", default="up")
+    dco.add_argument("--action", "-a", dest="compose_action", default="up")
     dds = docker_sub.add_parser("stats", help="Container stats")
     dds.add_argument("--server", "-s")
     ddi = docker_sub.add_parser("images", help="List images")
@@ -5548,7 +5665,7 @@ def build_parser():
     fw_add = fw_sub.add_parser("add-rule", help="Add rule")
     fw_add.add_argument("--port", "-p", required=True, type=int)
     fw_add.add_argument("--proto", default="tcp")
-    fw_add.add_argument("--action", "-a", default="allow")
+    fw_add.add_argument("--action", "-a", dest="rule_action", default="allow")
     fw_add.add_argument("--server", "-s")
     fwr = fw_sub.add_parser("remove-rule", help="Remove rule")
     fwr.add_argument("--port", "-p", required=True, type=int)
@@ -5886,7 +6003,7 @@ def build_parser():
     fwadd = subparsers.add_parser("fwadd", help="[alias] Add firewall rule")
     fwadd.add_argument("--port", "-p", required=True, type=int)
     fwadd.add_argument("--proto", default="tcp")
-    fwadd.add_argument("--action", "-a", default="allow")
+    fwadd.add_argument("--action", "-a", dest="rule_action", default="allow")
     fwadd.add_argument("--server", "-s")
 
     sslchk = subparsers.add_parser("sslchk", help="[alias] Check SSL")

@@ -56,4 +56,4 @@ Issues = "https://github.com/ALI88708/CloudMesh/issues"
 packages = ["cloudmesh", "cloudmesh.core", "cloudmesh.node", "cloudmesh.tests"]
 
 [tool.setuptools.package-data]
-cloudmesh = ["data/*.json"]
+cloudmesh = ["data/*.json", "node/*.sh", "node/*.bat"]
