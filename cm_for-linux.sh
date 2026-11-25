@@ -703,7 +703,7 @@ while true; do
                 # $INSTALL_DIR/cloudmesh, and an update that only checked the
                 # new path would silently drop the user's keys.
                 saved=0
-                for f in .node_keys.json .secret.key cloudmesh.db .relays.json .node_relays.json; do
+                for f in .node_keys.json .secret.key cloudmesh.db config.json .relays.json .node_relay.json; do
                     for d in "$CLOUDMESH_DIR" "$LEGACY_CLOUDMESH_DIR"; do
                         if [ -f "$d/$f" ]; then
                             cp -p "$d/$f" "$BACKUP_DIR/"
@@ -720,7 +720,7 @@ while true; do
                 # fetch_payload replaces the whole project dir, so put the
                 # state back. Restoring .secret.key matters most: without it
                 # every Fernet-encrypted password and node key is unreadable.
-                for f in .node_keys.json .secret.key cloudmesh.db .relays.json .node_relays.json; do
+                for f in .node_keys.json .secret.key cloudmesh.db config.json .relays.json .node_relay.json; do
                     [ -f "$BACKUP_DIR/$f" ] && cp -p "$BACKUP_DIR/$f" "$CLOUDMESH_DIR/" 2>/dev/null
                 done
                 [ -f "$BACKUP_DIR/cloudmesh.json" ] && cp -p "$BACKUP_DIR/cloudmesh.json" "$INSTALL_DIR/" 2>/dev/null

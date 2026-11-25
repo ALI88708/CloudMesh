@@ -225,9 +225,18 @@ class InteractiveTUI:
                 metrics_map[name] = m
             except Exception:
                 metrics_map[name] = None
-        cpu_vals = [((m or {}).get("cpu_percent") or "N/A") for m in metrics_map.values()]
-        ram_vals = [(((m or {}).get("ram") or {}).get("percent") or "N/A") for m in metrics_map.values()]
-        disk_vals = [(((m or {}).get("disk") or {}).get("percent") or "N/A") for m in metrics_map.values()]
+        cpu_vals = [
+            (m.get("cpu_percent") if m and m.get("cpu_percent") is not None else "N/A")
+            for m in metrics_map.values()
+        ]
+        ram_vals = [
+            ((m.get("ram") or {}).get("percent") if m and (m.get("ram") or {}).get("percent") is not None else "N/A")
+            for m in metrics_map.values()
+        ]
+        disk_vals = [
+            ((m.get("disk") or {}).get("percent") if m and (m.get("disk") or {}).get("percent") is not None else "N/A")
+            for m in metrics_map.values()
+        ]
         table.add_row("CPU %", *[str(v) for v in cpu_vals])
         table.add_row("RAM %", *[str(v) for v in ram_vals])
         table.add_row("Disk %", *[str(v) for v in disk_vals])

@@ -88,17 +88,26 @@ def get_logged_users(server_mgr, name):
 
 
 def search_files(server_mgr, name, path, pattern):
-    cmd = f"find {path} -name '{pattern}' -type f 2>/dev/null | head -n 20"
+    path_str = str(path or ".").strip() or "."
+    if path_str.startswith("-"):
+        path_str = f"./{path_str}"
+    cmd = (
+        f"find {shlex.quote(path_str)} -name {shlex.quote(str(pattern))} "
+        "-type f 2>/dev/null | head -n 20"
+    )
     try:
         r = server_mgr.execute(name, cmd)
-        return r["stdout"].strip().split("\n") if r["exit_code"] == 0 else []
+        if r["exit_code"] != 0:
+            return []
+        return [line for line in r["stdout"].splitlines() if line.strip()]
     except Exception:
         return []
 
 
 def get_recent_logs(server_mgr, name, log_file=None, lines=20):
+    safe_lines = max(1, int(lines))
     paths = (log_file,) if log_file else _profile_for(server_mgr, name).log_paths()
-    cmd = " || ".join(f"tail -n {lines} {shlex.quote(path)} 2>/dev/null" for path in paths)
+    cmd = " || ".join(f"tail -n {safe_lines} {shlex.quote(path)} 2>/dev/null" for path in paths)
     try:
         r = server_mgr.execute(name, cmd)
         return r["stdout"] if r["exit_code"] == 0 else "N/A"
@@ -108,12 +117,18 @@ def get_recent_logs(server_mgr, name, log_file=None, lines=20):
 
 def export_config(security, filepath):
     config = security.load_config()
-    Path(filepath).write_text(json.dumps(config, indent=2))
+    out = Path(filepath)
+    out.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    if os.name != "nt":
+        try:
+            out.chmod(0o600)
+        except OSError:
+            pass
     return True
 
 
 def import_config(security, filepath):
-    data = json.loads(Path(filepath).read_text())
+    data = json.loads(Path(filepath).read_text(encoding="utf-8"))
     security.save_config(data)
     return True
 
@@ -125,7 +140,7 @@ def encrypt_file(filepath, key=None):
     f = Fernet(key)
     data = Path(filepath).read_bytes()
     encrypted = f.encrypt(data)
-    out = Path(filepath + ".encrypted")
+    out = Path(f"{filepath}.encrypted")
     out.write_bytes(encrypted)
     return key, str(out)
 
@@ -133,15 +148,26 @@ def encrypt_file(filepath, key=None):
 def decrypt_file(filepath, key):
     from cryptography.fernet import Fernet
     f = Fernet(key)
-    data = Path(filepath).read_bytes()
+    src = str(filepath)
+    data = Path(src).read_bytes()
     decrypted = f.decrypt(data)
-    out = Path(filepath.replace(".encrypted", ""))
+    if src.endswith(".encrypted") and len(src) > len(".encrypted"):
+        out = Path(src[: -len(".encrypted")])
+    else:
+        out = Path(f"{src}.decrypted")
     out.write_bytes(decrypted)
     return str(out)
 
 
 def network_speed_test(server_mgr, name, target="8.8.8.8", count=3):
-    cmd = f"ping -c {count} {target} 2>/dev/null"
+    target_str = str(target or "").strip()
+    if not target_str or target_str.startswith("-") or any(ch.isspace() for ch in target_str):
+        return "N/A"
+    try:
+        safe_count = max(1, int(count))
+    except (TypeError, ValueError):
+        return "N/A"
+    cmd = f"ping -c {safe_count} {shlex.quote(target_str)} 2>/dev/null"
     try:
         r = server_mgr.execute(name, cmd)
         if r["exit_code"] == 0:

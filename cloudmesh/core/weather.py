@@ -17,29 +17,40 @@ class WeatherForecast:
     def _load(self):
         if self.data_file.exists():
             try:
-                return json.loads(self.data_file.read_text())
+                raw = json.loads(self.data_file.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    normalized = {}
+                    for server_name, slots in raw.items():
+                        if isinstance(slots, dict):
+                            normalized[server_name] = {
+                                str(int(h)): slot
+                                for h, slot in slots.items()
+                                if isinstance(slot, dict) and str(h).isdigit()
+                            }
+                    return normalized
             except Exception:
                 pass
         return {}
 
     def _save(self):
-        self.data_file.write_text(json.dumps(self._data, indent=2))
+        self.data_file.parent.mkdir(parents=True, exist_ok=True)
+        self.data_file.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
 
     def learn(self, server_name, cpu_percent, ram_percent):
         now = datetime.now()
-        hour = now.hour
+        hour_key = str(now.hour)
 
         if server_name not in self._data:
             self._data[server_name] = {}
 
-        if hour not in self._data[server_name]:
-            self._data[server_name][hour] = {
+        if hour_key not in self._data[server_name]:
+            self._data[server_name][hour_key] = {
                 "cpu_ema": cpu_percent,
                 "ram_ema": ram_percent,
                 "samples": 1,
             }
         else:
-            slot = self._data[server_name][hour]
+            slot = self._data[server_name][hour_key]
             slot["cpu_ema"] = round(ALPHA * cpu_percent + (1 - ALPHA) * slot["cpu_ema"], 2)
             slot["ram_ema"] = round(ALPHA * ram_percent + (1 - ALPHA) * slot["ram_ema"], 2)
             slot["samples"] += 1
@@ -49,16 +60,21 @@ class WeatherForecast:
     def learn_from_metrics(self, server_name, metrics):
         if not metrics:
             return
-        cpu = metrics.get("cpu_percent", 0) or 0
-        ram = (metrics.get("ram") or {}).get("percent", 0) or 0
+        cpu = metrics.get("cpu_percent")
+        cpu = 0 if cpu is None else cpu
+        ram = (metrics.get("ram") or {}).get("percent")
+        ram = 0 if ram is None else ram
         self.learn(server_name, cpu, ram)
 
     def predict(self, server_name, target_hour=None):
         if target_hour is None:
             target_hour = (datetime.now().hour + 1) % 24
+        target_hour = int(target_hour) % 24
 
         server_data = self._data.get(server_name, {})
-        slot = server_data.get(target_hour)
+        slot = server_data.get(str(target_hour))
+        if slot is None:
+            slot = server_data.get(target_hour)
 
         if not slot:
             return {
@@ -87,7 +103,9 @@ class WeatherForecast:
         server_data = self._data.get(server_name, {})
         profile = []
         for hour in range(24):
-            slot = server_data.get(hour)
+            slot = server_data.get(str(hour))
+            if slot is None:
+                slot = server_data.get(hour)
             if slot:
                 profile.append({
                     "hour": hour,

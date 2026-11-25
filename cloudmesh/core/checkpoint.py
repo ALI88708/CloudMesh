@@ -1,8 +1,11 @@
 import json
+import re
 from pathlib import Path
 from datetime import datetime
 
 from .paths import state_file
+
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 class CheckpointManager:
@@ -13,6 +16,8 @@ class CheckpointManager:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def _cp_file(self, job_id):
+        if not isinstance(job_id, str) or not _SAFE_ID.fullmatch(job_id):
+            raise ValueError(f"Invalid checkpoint job ID: {job_id!r}")
         return self.checkpoint_dir / f"{job_id}.json"
 
     def save_checkpoint(self, job_id, command, server, progress, stdout="", stderr="", exit_code=None):
@@ -39,14 +44,13 @@ class CheckpointManager:
         return None
 
     def needs_recovery(self, alive_nodes=None):
-        alive_nodes = alive_nodes or set()
+        alive = set() if alive_nodes is None else set(alive_nodes)
         recoverable = []
-        for f in self.checkpoint_dir.glob("*.json"):
+        for f in sorted(self.checkpoint_dir.glob("*.json")):
             try:
-                cp = json.loads(f.read_text())
-                job_id = cp.get("job_id")
+                cp = json.loads(f.read_text(encoding="utf-8"))
                 server = cp.get("server")
-                if server and alive_nodes and server not in alive_nodes:
+                if server and server not in alive:
                     recoverable.append(cp)
             except Exception:
                 continue

@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import uuid
 import subprocess
@@ -9,16 +10,30 @@ from datetime import datetime
 
 from .paths import state_file
 
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
 
 class JobManager:
     """Manage async background jobs on the controller side."""
 
-    def __init__(self, jobs_dir=None):
+    def __init__(self, jobs_dir=None, checkpoint_dir=None):
         self.jobs_dir = Path(jobs_dir) if jobs_dir else state_file(".jobs")
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        if checkpoint_dir is not None:
+            self._checkpoint_dir = Path(checkpoint_dir)
+        elif jobs_dir is not None:
+            self._checkpoint_dir = self.jobs_dir.parent / ".checkpoints"
+        else:
+            self._checkpoint_dir = None
 
     def _job_file(self, job_id):
+        if not isinstance(job_id, str) or not _SAFE_ID.fullmatch(job_id):
+            raise ValueError(f"Invalid job ID: {job_id!r}")
         return self.jobs_dir / f"{job_id}.json"
+
+    def _checkpoint_manager(self):
+        from cloudmesh.core.checkpoint import CheckpointManager
+        return CheckpointManager(self._checkpoint_dir)
 
     def create_job(self, command, server_name, timeout=300):
         job_id = str(uuid.uuid4())[:8]
@@ -63,8 +78,7 @@ class JobManager:
             last_checkpoint=datetime.now().isoformat(),
         )
 
-        from cloudmesh.core.checkpoint import CheckpointManager
-        cp = CheckpointManager()
+        cp = self._checkpoint_manager()
         cp.save_checkpoint(
             job_id=job_id,
             command=job.get("command", ""),
@@ -77,10 +91,8 @@ class JobManager:
         return True
 
     def recover_job(self, job_id, new_server=None):
-        cp_import = None
         try:
-            from cloudmesh.core.checkpoint import CheckpointManager
-            cp_import = CheckpointManager()
+            cp_import = self._checkpoint_manager()
         except ImportError:
             return None
 
@@ -103,10 +115,8 @@ class JobManager:
         return {"old_job_id": job_id, "new_job_id": new_id, "server": new_server}
 
     def get_recoverable_jobs(self, alive_nodes=None):
-        from cloudmesh.core.checkpoint import CheckpointManager
-        cp = CheckpointManager()
-        alive = alive_nodes or set()
-        return cp.needs_recovery(alive)
+        cp = self._checkpoint_manager()
+        return cp.needs_recovery(alive_nodes)
 
     def get_job(self, job_id):
         f = self._job_file(job_id)

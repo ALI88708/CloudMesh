@@ -89,14 +89,14 @@ def benchmark_disk(path=None, size_mb=10):
         prefix="_cm_bench_", suffix=".tmp", dir=directory
     )
     try:
-        start = time.time()
+        start = time.perf_counter()
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        write_time = time.time() - start
-        start = time.time()
+        write_time = max(time.perf_counter() - start, 1e-9)
+        start = time.perf_counter()
         with open(test_file, "rb") as f:
             f.read()
-        read_time = time.time() - start
+        read_time = max(time.perf_counter() - start, 1e-9)
     finally:
         try:
             os.remove(test_file)
@@ -128,24 +128,24 @@ def benchmark_ram(size_mb=64):
 REMOTE_BENCHMARK_SCRIPT = r"""
 import hashlib, json, os, tempfile, time
 
-start = time.time()
+start = time.perf_counter()
 count = 0
-while time.time() - start < 2:
+while time.perf_counter() - start < 2:
     hashlib.md5(str(count).encode()).hexdigest()
     count += 1
-cpu_score = round(count / (time.time() - start))
+cpu_score = round(count / max(time.perf_counter() - start, 1e-9))
 
 data = os.urandom(10 * 1024 * 1024)
 fd, path = tempfile.mkstemp(prefix="_cm_bench_", suffix=".tmp")
 try:
-    start = time.time()
+    start = time.perf_counter()
     with os.fdopen(fd, "wb") as handle:
         handle.write(data)
-    write_s = time.time() - start
-    start = time.time()
+    write_s = max(time.perf_counter() - start, 1e-9)
+    start = time.perf_counter()
     with open(path, "rb") as handle:
         handle.read()
-    read_s = time.time() - start
+    read_s = max(time.perf_counter() - start, 1e-9)
 finally:
     try:
         os.remove(path)
@@ -422,14 +422,36 @@ class NotifyManager:
         return {"telegram": {}, "discord": {}}
 
     def _save(self):
-        self.file.write_text(json.dumps(self._config, indent=2))
+        self.file.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{self.file.name}.", suffix=".tmp", dir=str(self.file.parent)
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(self._config, handle, indent=2)
+            if os.name != "nt":
+                try:
+                    os.chmod(tmp_name, 0o600)
+                except OSError:
+                    pass
+            os.replace(tmp_name, self.file)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     def setup_telegram(self, bot_token, chat_id):
         self._config["telegram"] = {"bot_token": bot_token, "chat_id": chat_id}
         self._save()
 
     def setup_discord(self, webhook_url):
-        self._config["discord"] = {"webhook_url": webhook_url}
+        import urllib.parse
+        parsed = urllib.parse.urlparse(str(webhook_url or "").strip())
+        if parsed.scheme not in ("https", "http") or not parsed.netloc:
+            raise ValueError("Discord webhook URL must start with https:// or http://")
+        self._config["discord"] = {"webhook_url": str(webhook_url).strip()}
         self._save()
 
     def send_telegram(self, message):
@@ -463,12 +485,15 @@ class NotifyManager:
         if not d.get("webhook_url"):
             return False
         try:
+            import urllib.parse
             import urllib.request
+            parsed = urllib.parse.urlparse(str(d["webhook_url"]).strip())
+            if parsed.scheme not in ("https", "http") or not parsed.netloc:
+                return False
             data = json.dumps({"content": message}).encode()
             req = urllib.request.Request(d["webhook_url"], data=data, headers={"Content-Type": "application/json"})
-            # nosec B310 -- webhook_url comes from the operator's own local config,
-            # the same trust level as the config file itself, and the response body
-            # is discarded rather than returned to a caller.
+            # nosec B310 -- scheme is restricted to http/https above, and
+            # webhook_url comes from the operator's own local config.
             urllib.request.urlopen(req, timeout=10)  # nosec B310
             return True
         except Exception:
@@ -604,7 +629,7 @@ class CloudMeshAPI:
         elif path.startswith("/api/exec/"):
             if not self.enable_exec:
                 return {"error": "API exec is disabled; start with --enable-exec"}, 403
-            server = path.split("/")[-1]
+            server = urllib.parse.unquote(path.split("/")[-1])
             cmd = params.get("cmd", [""])[0]
             if not cmd:
                 return {"error": "Missing cmd parameter"}
@@ -635,6 +660,8 @@ class CloudMeshAPI:
         _api_key = self.api_key
 
         class Handler(http.server.BaseHTTPRequestHandler):
+            timeout = 10
+
             def do_GET(self):
                 ip = self.client_address[0]
                 allowed, reason = api._ddos.check_connection(ip)
@@ -664,7 +691,8 @@ class CloudMeshAPI:
                 pass
 
         self._running = True
-        server = http.server.HTTPServer(("127.0.0.1", self.port), Handler)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        server.daemon_threads = True
         self._server = server
         self.port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -788,12 +816,21 @@ def audit_server(server_mgr, name):
 # === 8. QUICK SSH ===
 
 def quick_ssh(host, user="root", port=22, key=None):
+    host_str = str(host or "").strip()
+    user_str = str(user or "root").strip()
+    if not host_str or host_str.startswith("-"):
+        raise ValueError("Invalid SSH host")
+    if not user_str or user_str.startswith("-"):
+        raise ValueError("Invalid SSH user")
+    port_num = int(port)
+    if not 1 <= port_num <= 65535:
+        raise ValueError("Invalid SSH port")
     cmd_parts = ["ssh"]
-    if port != 22:
-        cmd_parts.extend(["-p", str(port)])
+    if port_num != 22:
+        cmd_parts.extend(["-p", str(port_num)])
     if key:
-        cmd_parts.extend(["-i", key])
-    cmd_parts.append(f"{user}@{host}")
+        cmd_parts.extend(["-i", shlex.quote(str(key))])
+    cmd_parts.append(shlex.quote(f"{user_str}@{host_str}"))
     return " ".join(cmd_parts)
 
 

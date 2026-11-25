@@ -20,10 +20,10 @@ class GPUTelemetry:
             )
             if r.returncode != 0:
                 return None
-            line = r.stdout.strip()
-            if not line:
+            lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+            if not lines:
                 return None
-            parts = [p.strip() for p in line.split(",")]
+            parts = [p.strip() for p in lines[0].split(",")]
             if len(parts) < 5:
                 return None
             return {
@@ -43,10 +43,10 @@ class GPUTelemetry:
             result = server_mgr.execute(server_name, cmd)
             if result["exit_code"] != 0:
                 return None
-            line = result["stdout"].strip()
-            if not line:
+            lines = [ln.strip() for ln in result["stdout"].splitlines() if ln.strip()]
+            if not lines:
                 return None
-            parts = [p.strip() for p in line.split(",")]
+            parts = [p.strip() for p in lines[0].split(",")]
             if len(parts) < 5:
                 return None
             return {
