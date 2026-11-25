@@ -86,7 +86,8 @@ class ResourceMonitor:
     def calculate_weight(self, metrics):
         if metrics is None:
             return 0
-        cpu_free = 100 - (metrics.get("cpu_percent") or 100)
+        cpu_pct = metrics.get("cpu_percent")
+        cpu_free = 100 - (100 if cpu_pct is None else cpu_pct)
         ram = metrics.get("ram") or {}
         ram_free = ram.get("free_gb", 0)
         disk = metrics.get("disk") or {}

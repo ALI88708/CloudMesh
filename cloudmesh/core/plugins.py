@@ -31,8 +31,14 @@ def _plugins_index():
 def _save_index(idx):
     base = _data_dir()
     os.makedirs(base, exist_ok=True)
-    with open(os.path.join(base, "plugins.json"), "w") as f:
+    path = os.path.join(base, "plugins.json")
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(idx, f, indent=2)
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
 
 def list_plugins():
     idx = _plugins_index()
@@ -84,18 +90,24 @@ def run_plugin(name, server_name=None):
 
     from cloudmesh.core.security import SecurityManager
     from cloudmesh.core.server import ServerManager
-    servers = ServerManager(SecurityManager()).config.get("servers", {})
+    server_mgr = ServerManager(SecurityManager())
+    known = set(server_mgr.list_servers())
     results = {}
 
     if server_name:
-        if server_name in servers:
-            srv = servers[server_name]
-            out = _run_remote(srv, cmd)
-            results[server_name] = out
+        if server_name in known:
+            try:
+                res = server_mgr.execute(server_name, cmd)
+                results[server_name] = (res.get("stdout") or res.get("stderr") or "").strip()
+            except Exception as exc:
+                results[server_name] = str(exc)
     else:
-        for sname, srv in servers.items():
-            out = _run_remote(srv, cmd)
-            results[sname] = out
+        for sname in server_mgr.list_servers():
+            try:
+                res = server_mgr.execute(sname, cmd)
+                results[sname] = (res.get("stdout") or res.get("stderr") or "").strip()
+            except Exception as exc:
+                results[sname] = str(exc)
 
     return results
 

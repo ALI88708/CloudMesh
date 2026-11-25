@@ -123,9 +123,10 @@ class OsProfile:
         return "uptime -p 2>/dev/null || uptime"
 
     def top_cmd(self, sort_by, limit):
-        flag = "-o %cpu" if sort_by == "cpu" else "-o %mem"
+        safe_limit = max(1, int(limit))
+        flag = "-o pid,%cpu,comm" if sort_by == "cpu" else "-o pid,%mem,comm"
         column = "pcpu" if sort_by == "cpu" else "pmem"
-        return f"ps {flag} --sort=-{column} --no-headers -A | head -n {limit}"
+        return f"ps {flag} --sort=-{column} --no-headers -A | head -n {safe_limit}"
 
     def parse_top(self, raw, sort_by, limit):
         procs = []
@@ -143,8 +144,11 @@ class OsProfile:
 
     def parse_disk_detail(self, raw):
         disks = []
-        for line in (raw or "").strip().split("\n")[1:]:
-            parts = line.split()
+        for line in (raw or "").strip().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.lower().startswith("filesystem"):
+                continue
+            parts = stripped.split()
             if len(parts) >= 6:
                 disks.append(
                     {
@@ -153,7 +157,7 @@ class OsProfile:
                         "used": parts[2],
                         "avail": parts[3],
                         "use%": parts[4],
-                        "mount": parts[5],
+                        "mount": " ".join(parts[5:]),
                     }
                 )
         return disks

@@ -34,15 +34,17 @@ class FileTransfer:
         if remote_path_to is None:
             remote_path_to = os.path.basename(remote_path_from)
 
-        tmp_path = os.path.join(tempfile.gettempdir(), f"cloudmesh_transfer_{os.path.basename(remote_path_from)}")
-
-        self.download(from_server, remote_path_from, tmp_path)
+        fd, tmp_path = tempfile.mkstemp(prefix="cloudmesh_transfer_", suffix=".tmp")
+        os.close(fd)
         try:
+            self.download(from_server, remote_path_from, tmp_path)
             result = self.upload(to_server, tmp_path, remote_path_to)
             return result
         finally:
-            if os.path.exists(tmp_path):
+            try:
                 os.remove(tmp_path)
+            except OSError:
+                pass
 
     def list_remote(self, server_name, remote_path):
         client = self.server_mgr.connect(server_name)
@@ -81,7 +83,11 @@ class FileTransfer:
                     client = self.server_mgr.connect(server_name)
                     # nosec B601 -- the path is passed through shlex.quote, so
                     # shell metacharacters cannot escape into the remote command.
-                    client.exec_command(f"mkdir -p {shlex.quote(remote_dir_path)}")  # nosec B601
+                    _, stdout, _ = client.exec_command(
+                        f"mkdir -p {shlex.quote(remote_dir_path)}"
+                    )  # nosec B601
+                    if hasattr(stdout, "channel"):
+                        stdout.channel.recv_exit_status()
                 except Exception:
                     pass
                 result = self.upload(server_name, local_file, remote_file)

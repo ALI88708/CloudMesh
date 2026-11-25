@@ -1488,9 +1488,12 @@ def cmd_compare(args):
     weight_vals = []
     for name in names:
         m = all_metrics[name]
-        cpu = (m or {}).get("cpu_percent") or "N/A"
-        ram = ((m or {}).get("ram") or {}).get("percent") or "N/A"
-        disk = ((m or {}).get("disk") or {}).get("percent") or "N/A"
+        cpu_raw = (m or {}).get("cpu_percent")
+        ram_raw = ((m or {}).get("ram") or {}).get("percent")
+        disk_raw = ((m or {}).get("disk") or {}).get("percent")
+        cpu = cpu_raw if cpu_raw is not None else "N/A"
+        ram = ram_raw if ram_raw is not None else "N/A"
+        disk = disk_raw if disk_raw is not None else "N/A"
         weight = monitor.calculate_weight(m)
         cpu_vals.append(f"{cpu}%")
         ram_vals.append(f"{ram}%")
@@ -3676,7 +3679,7 @@ def cmd_config(args):
         "node_keys": config_dir / ".node_keys.json",
         "secret_key": config_dir / ".secret.key",
         "relays": config_dir / ".relays.json",
-        "node_relays": config_dir / ".node_relays.json",
+        "node_relay": config_dir / ".node_relay.json",
         "groups": config_dir / "data" / "groups.json",
         "aliases": config_dir / ".aliases.json",
         "templates": config_dir / ".templates.json",
@@ -3693,7 +3696,7 @@ def cmd_config(args):
     }
     private_names = {
         "database", "config", "node_keys", "secret_key",
-        "relays", "node_relays", "acl",
+        "relays", "node_relay", "acl", "plugins",
     }
 
     if args.action == "list":
@@ -4644,8 +4647,8 @@ def cmd_weather(args):
             table.add_row(str(slot["hour"]), cpu_str, ram_str, str(slot["samples"]))
         console.print(table)
         if pred.get("status") == "predicted":
-            next_h = (datetime.now().hour + 1) % 24
-            console.print(f"\n  [cyan]Next hour ({next_h}:00) prediction:[/] CPU {pred['cpu_ema']:.1f}% / RAM {pred['ram_ema']:.1f}%")
+            shown_h = pred.get("hour", (datetime.now().hour + 1) % 24)
+            console.print(f"\n  [cyan]Hour ({shown_h}:00) prediction:[/] CPU {pred['cpu_ema']:.1f}% / RAM {pred['ram_ema']:.1f}%")
         return
 
     all_preds = weather.predict_all(args.hour)
@@ -4655,17 +4658,18 @@ def cmd_weather(args):
 
     table = Table(title="Resource Weather Forecast", box=box.ROUNDED)
     table.add_column("Server", style="bold")
-    table.add_column("Next Hour")
+    table.add_column("Target Hour")
     table.add_column("Predicted CPU")
     table.add_column("Predicted RAM")
     table.add_column("Samples")
-    next_h = (datetime.now().hour + 1) % 24
+    target_h = args.hour if args.hour is not None else (datetime.now().hour + 1) % 24
     for name, pred in all_preds.items():
+        shown_h = pred.get("hour", target_h)
         if pred.get("status") == "predicted":
             cpu_color = "green" if pred["cpu_ema"] < 50 else "yellow" if pred["cpu_ema"] < 80 else "red"
-            table.add_row(name, f"{next_h}:00", f"[{cpu_color}]{pred['cpu_ema']:.1f}%[/]", f"{pred['ram_ema']:.1f}%", str(pred["samples"]))
+            table.add_row(name, f"{shown_h}:00", f"[{cpu_color}]{pred['cpu_ema']:.1f}%[/]", f"{pred['ram_ema']:.1f}%", str(pred["samples"]))
         else:
-            table.add_row(name, f"{next_h}:00", "[dim]no data[/]", "[dim]—[/]", "0")
+            table.add_row(name, f"{shown_h}:00", "[dim]no data[/]", "[dim]—[/]", "0")
     console.print(table)
 
 
@@ -4720,7 +4724,7 @@ def cmd_job_checkpoint(args):
     info = keys[args.name]
     client = NodeClient.from_config(info, name=args.name)
     result = client.check_job(args.job_id)
-    if not result:
+    if not result or result.get("type") == "error" or not result.get("status"):
         console.print("[red]Job not found.[/]")
         return
     jm = JobManager()
@@ -4730,6 +4734,17 @@ def cmd_job_checkpoint(args):
         stderr=result.get("stderr", ""),
         exit_code=result.get("exit_code"),
     )
+    if not cp_result:
+        progress = 100 if result.get("status") == "completed" else 50
+        cp_result = CheckpointManager().save_checkpoint(
+            job_id=args.job_id,
+            command=result.get("command", ""),
+            server=args.name,
+            progress=progress,
+            stdout=result.get("stdout", ""),
+            stderr=result.get("stderr", ""),
+            exit_code=result.get("exit_code"),
+        )
     if cp_result:
         console.print(f"[green]Job '{args.job_id}' checkpointed successfully.[/]")
     else:
@@ -4737,8 +4752,16 @@ def cmd_job_checkpoint(args):
 
 
 def cmd_job_recover(args):
+    keys = _load_node_keys()
+    alive_nodes = set()
+    for node_name, info in keys.items():
+        try:
+            if NodeClient.from_config(info, name=node_name).ping():
+                alive_nodes.add(node_name)
+        except Exception:
+            pass
     jm = JobManager()
-    recoverable = jm.get_recoverable_jobs()
+    recoverable = jm.get_recoverable_jobs(alive_nodes)
     if not recoverable:
         console.print("[dim]No recoverable jobs found.[/]")
         return
@@ -4759,9 +4782,20 @@ def cmd_job_recover(args):
     console.print(table)
     if args.relaunch:
         for cp in recoverable:
-            result = jm.recover_job(cp["job_id"], args.target)
+            target = args.target or next(iter(alive_nodes), None) or cp.get("server", "")
+            result = jm.recover_job(cp["job_id"], target)
             if result:
-                console.print(f"[green]Recovered {cp['job_id']} -> new job {result['new_job_id']} on {result['server']}[/]")
+                remote_id = result["new_job_id"]
+                if target in keys and cp.get("command"):
+                    try:
+                        started = NodeClient.from_config(keys[target], name=target).start_job(
+                            cp["command"]
+                        )
+                        if isinstance(started, dict) and started.get("job_id"):
+                            remote_id = started["job_id"]
+                    except Exception:
+                        pass
+                console.print(f"[green]Recovered {cp['job_id']} -> new job {remote_id} on {result['server']}[/]")
             else:
                 console.print(f"[red]Failed to recover {cp['job_id']}[/]")
 

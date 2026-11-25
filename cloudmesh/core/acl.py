@@ -42,8 +42,14 @@ def _load_acl():
 
 def _save_acl(data):
     os.makedirs(_data_dir(), exist_ok=True)
-    with open(_acl_file(), "w") as f:
+    path = _acl_file()
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
 
 
 def _hash_password(password, salt=None):

@@ -105,7 +105,7 @@ class AlertManager:
                     continue
             for key, timestamp in data.get("last_notified", {}).items():
                 try:
-                    rule_name, server = key.split("|")
+                    rule_name, server = key.rsplit("|", 1)
                     self.storage.set_alert_cooldown(rule_name, server, timestamp)
                 except Exception:
                     ok = False
@@ -223,7 +223,7 @@ class AlertManager:
         errors propagate when a nonzero timestamp is available.
         """
         try:
-            rule_name, server = key.split("|")
+            rule_name, server = key.rsplit("|", 1)
             last = self.storage.get_alert_cooldown(rule_name, server)
         except Exception:
             return True
@@ -277,10 +277,18 @@ class AlertManager:
                         disk = metrics.get("disk") or {}
                         value = disk.get("percent")
                     elif metric_name == "load":
-                        value = metrics.get("load")
+                        raw_load = metrics.get("load")
+                        if isinstance(raw_load, dict):
+                            value = raw_load.get("1m", raw_load.get("load1"))
+                        elif isinstance(raw_load, (list, tuple)) and raw_load:
+                            value = raw_load[0]
+                        else:
+                            value = raw_load
                     elif metric_name == "gpu":
                         gpu = metrics.get("gpu") or {}
-                        value = gpu.get("utilization")
+                        value = gpu.get("utilization_percent")
+                        if value is None:
+                            value = gpu.get("utilization")
 
                     if self._check_condition(value, rule["threshold"], rule["operator"]):
                         severity = _effective_severity(

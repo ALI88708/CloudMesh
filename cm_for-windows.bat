@@ -362,7 +362,7 @@ echo [%date% %time%] Starting update >> "!LOG!"
 
 set BACKUP_DIR=%TEMP%\cloudmesh_backup
 if not exist "!BACKUP_DIR!" mkdir "!BACKUP_DIR!"
-for %%F in (.node_keys.json .secret.key cloudmesh.db config.json .relays.json .node_relays.json) do (
+for %%F in (.node_keys.json .secret.key cloudmesh.db config.json .relays.json .node_relay.json) do (
     if exist "%CLOUDMESH_DIR%\%%F" copy /Y "%CLOUDMESH_DIR%\%%F" "!BACKUP_DIR!\" >nul 2>&1
 )
 if exist "%INSTALL_DIR%\cloudmesh.json" copy /Y "%INSTALL_DIR%\cloudmesh.json" "!BACKUP_DIR!\install_cloudmesh.json" >nul 2>&1
@@ -507,7 +507,7 @@ echo   [3/4] Setting up...
 
 :: Restore config if update
 if exist "!BACKUP_DIR!" (
-    for %%F in (.node_keys.json .secret.key cloudmesh.db config.json .relays.json .node_relays.json) do (
+    for %%F in (.node_keys.json .secret.key cloudmesh.db config.json .relays.json .node_relay.json) do (
         if exist "!BACKUP_DIR!\%%F" copy /Y "!BACKUP_DIR!\%%F" "%CLOUDMESH_DIR%\" >nul 2>&1
     )
     if exist "!BACKUP_DIR!\install_cloudmesh.json" copy /Y "!BACKUP_DIR!\install_cloudmesh.json" "%INSTALL_DIR%\cloudmesh.json" >nul 2>&1

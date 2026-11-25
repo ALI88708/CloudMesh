@@ -1,9 +1,12 @@
 import csv
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
 from .paths import base_dir as default_base_dir
+
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 class HistoryManager:
@@ -13,10 +16,15 @@ class HistoryManager:
             base_dir = default_base_dir()
         self.base_dir = Path(base_dir)
         self.history_dir = self.base_dir / "history"
-        self.history_dir.mkdir(exist_ok=True)
+        self.history_dir.mkdir(parents=True, exist_ok=True)
+
+    def _csv_file(self, server_name):
+        if not isinstance(server_name, str) or not _SAFE_NAME.fullmatch(server_name):
+            raise ValueError(f"Invalid server name for history: {server_name!r}")
+        return self.history_dir / f"{server_name}.csv"
 
     def record_snapshot(self, server_name, metrics):
-        csv_file = self.history_dir / f"{server_name}.csv"
+        csv_file = self._csv_file(server_name)
         file_exists = csv_file.exists()
 
         with open(csv_file, "a", newline="") as f:
@@ -49,12 +57,12 @@ class HistoryManager:
                 continue
 
     def get_history(self, server_name, limit=100):
-        csv_file = self.history_dir / f"{server_name}.csv"
+        csv_file = self._csv_file(server_name)
         if not csv_file.exists():
             return []
 
         rows = []
-        with open(csv_file, "r") as f:
+        with open(csv_file, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 rows.append(row)
@@ -91,11 +99,11 @@ class HistoryManager:
         }
 
     def get_history_file(self, server_name):
-        return self.history_dir / f"{server_name}.csv"
+        return self._csv_file(server_name)
 
     def clear_history(self, server_name=None):
         if server_name:
-            csv_file = self.history_dir / f"{server_name}.csv"
+            csv_file = self._csv_file(server_name)
             if csv_file.exists():
                 csv_file.unlink()
         else:

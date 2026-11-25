@@ -131,21 +131,18 @@ class GroupsManager:
 
     def get_group_devices(self, group_name):
         try:
-            devices = self.storage.get_group_devices(group_name)
-            if devices:
-                return devices
+            groups = self.storage.list_groups()
+            if group_name in groups:
+                return list(groups[group_name])
+            return []
         except Exception:
-            pass
-        return self.config["groups"].get(group_name, [])
+            return self.config["groups"].get(group_name, [])
 
     def list_groups(self):
         try:
-            groups = self.storage.list_groups()
-            if groups:
-                return dict(groups)
+            return dict(self.storage.list_groups())
         except Exception:
-            pass
-        return dict(self.config["groups"])
+            return dict(self.config["groups"])
 
     def rename_group(self, old_name, new_name):
         devices = self.get_group_devices(old_name)

@@ -70,12 +70,28 @@ class ShamirSecretSharing:
         if len(shares) < 2:
             raise ValueError("Need at least 2 shares to reconstruct")
 
-        share_ids = [s[0] for s in shares]
+        share_ids = []
+        decoded_shares = []
+        for share_id, share_b64 in shares:
+            if (
+                not isinstance(share_id, int)
+                or isinstance(share_id, bool)
+                or not 1 <= share_id < _FIELD_PRIME
+            ):
+                raise ValueError("Invalid share ID")
+            share_ids.append(share_id)
+            try:
+                decoded_shares.append(base64.b64decode(share_b64, validate=True))
+            except Exception as exc:
+                raise ValueError("Invalid share data") from exc
+
         if len(share_ids) != len(set(share_ids)):
             raise ValueError("Duplicate share IDs")
 
-        raw_len = len(base64.b64decode(shares[0][1]))
-        if raw_len % 8 != 0:
+        raw_len = len(decoded_shares[0])
+        if raw_len == 0 or raw_len % 8 != 0:
+            raise ValueError("Invalid share data")
+        if any(len(raw) != raw_len for raw in decoded_shares):
             raise ValueError("Invalid share data")
         secret_len = raw_len // 8
 
@@ -83,10 +99,11 @@ class ShamirSecretSharing:
         for byte_idx in range(secret_len):
             x_points = []
             y_values = []
-            for share_id, share_b64 in shares:
-                share_bytes = base64.b64decode(share_b64)
+            for share_id, share_bytes in zip(share_ids, decoded_shares):
                 offset = byte_idx * 8
                 y = int.from_bytes(share_bytes[offset:offset + 8], "big")
+                if y >= _FIELD_PRIME:
+                    raise ValueError("Invalid share data")
                 x_points.append(share_id)
                 y_values.append(y)
 
