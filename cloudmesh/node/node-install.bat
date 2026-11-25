@@ -103,6 +103,7 @@ echo [OK] Dependencies installed
 echo [3/5] Creating installation directory...
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 if not exist "%INSTALL_DIR%\logs" mkdir "%INSTALL_DIR%\logs"
+if not exist "%INSTALL_DIR%\data" mkdir "%INSTALL_DIR%\data"
 
 :: ============================================
 :: 4. Install CloudMesh Node (COMPLETE)
@@ -113,6 +114,9 @@ echo [4/5] Installing CloudMesh Node...
 set NODE_SOURCE=%~dp0cloudmesh_node.py
 if exist "%NODE_SOURCE%" (
     copy /Y "%NODE_SOURCE%" "%INSTALL_DIR%\cloudmesh_node.py" >nul
+    if exist "%~dp0cloudmesh_relay.py" (
+        copy /Y "%~dp0cloudmesh_relay.py" "%INSTALL_DIR%\cloudmesh_relay.py" >nul
+    )
     echo [OK] Node agent installed (with GPU + async jobs)
 ) else (
     echo [ERROR] cloudmesh_node.py not found at %NODE_SOURCE%
@@ -198,6 +202,7 @@ if /i "%START_NOW%"=="y" (
 )
 
 pause
+exit /b 0
 
 :set_path
 :: Helper to refresh PATH

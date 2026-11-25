@@ -2,10 +2,16 @@ import json, os, subprocess, ssl, socket
 from datetime import datetime
 from cloudmesh.core.paths import data_dir
 
-DATA_DIR = str(data_dir())
+_INITIAL_DATA_DIR = str(data_dir())
+DATA_DIR = _INITIAL_DATA_DIR
+
+
+def _data_dir():
+    return DATA_DIR if DATA_DIR != _INITIAL_DATA_DIR else str(data_dir())
+
 
 def _load_config():
-    p = os.path.join(DATA_DIR, "cloudmesh.json")
+    p = os.path.join(_data_dir(), "cloudmesh.json")
     if os.path.exists(p):
         with open(p) as f:
             return json.load(f)
@@ -59,15 +65,16 @@ def check_all_certs(domains):
     return results
 
 def load_domains():
-    p = os.path.join(DATA_DIR, "ssl_domains.json")
+    p = os.path.join(_data_dir(), "ssl_domains.json")
     if os.path.exists(p):
         with open(p) as f:
             return json.load(f)
     return []
 
 def save_domains(domains):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    p = os.path.join(DATA_DIR, "ssl_domains.json")
+    base = _data_dir()
+    os.makedirs(base, exist_ok=True)
+    p = os.path.join(base, "ssl_domains.json")
     with open(p, "w") as f:
         json.dump(domains, f, indent=2)
 

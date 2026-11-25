@@ -438,6 +438,10 @@ do_setup() {
     if [ -f "$NODE_SOURCE" ]; then
         cp "$NODE_SOURCE" "$NODE_DIR/$NODE_SCRIPT"
         chmod +x "$NODE_DIR/$NODE_SCRIPT"
+        if [ -f "$CLOUDMESH_DIR/node/cloudmesh_relay.py" ]; then
+            cp "$CLOUDMESH_DIR/node/cloudmesh_relay.py" "$NODE_DIR/cloudmesh_relay.py"
+            chmod 644 "$NODE_DIR/cloudmesh_relay.py"
+        fi
         log "Node agent installed"
     else
         warn "cloudmesh_node.py not found, skipping node"
@@ -470,17 +474,19 @@ do_setup() {
 #!/bin/bash
 cd "\$(dirname "\$0")"
 BIND_HOST="127.0.0.1"
-for arg in "\$@"; do
-    case "\$arg" in
-        --bind=*) BIND_HOST="\${arg#--bind=}" ;;
-        --bind) shift; BIND_HOST="\$1"; shift ;;
+FORWARD_ARGS=()
+while [ \$# -gt 0 ]; do
+    case "\$1" in
+        --bind=*) BIND_HOST="\${1#--bind=}"; shift ;;
+        --bind) BIND_HOST="\$2"; shift 2 ;;
+        *) FORWARD_ARGS+=("\$1"); shift ;;
     esac
 done
-TLS_ARGS=""
+TLS_ARGS=()
 if [ -f "$TLS_CERT" ] && [ -f "$TLS_KEY" ]; then
-    TLS_ARGS="--tls-cert $TLS_CERT --tls-key $TLS_KEY"
+    TLS_ARGS=(--tls-cert "$TLS_CERT" --tls-key "$TLS_KEY")
 fi
-python3 cloudmesh_node.py start --bind "\$BIND_HOST" \$TLS_ARGS "\$@"
+python3 cloudmesh_node.py start --bind "\$BIND_HOST" "\${TLS_ARGS[@]}" "\${FORWARD_ARGS[@]}"
 SEOF
     chmod +x "$NODE_DIR/start.sh"
 
@@ -697,7 +703,7 @@ while true; do
                 # $INSTALL_DIR/cloudmesh, and an update that only checked the
                 # new path would silently drop the user's keys.
                 saved=0
-                for f in .node_keys.json .secret.key; do
+                for f in .node_keys.json .secret.key cloudmesh.db .relays.json .node_relays.json; do
                     for d in "$CLOUDMESH_DIR" "$LEGACY_CLOUDMESH_DIR"; do
                         if [ -f "$d/$f" ]; then
                             cp -p "$d/$f" "$BACKUP_DIR/"
@@ -714,7 +720,7 @@ while true; do
                 # fetch_payload replaces the whole project dir, so put the
                 # state back. Restoring .secret.key matters most: without it
                 # every Fernet-encrypted password and node key is unreadable.
-                for f in .node_keys.json .secret.key; do
+                for f in .node_keys.json .secret.key cloudmesh.db .relays.json .node_relays.json; do
                     [ -f "$BACKUP_DIR/$f" ] && cp -p "$BACKUP_DIR/$f" "$CLOUDMESH_DIR/" 2>/dev/null
                 done
                 [ -f "$BACKUP_DIR/cloudmesh.json" ] && cp -p "$BACKUP_DIR/cloudmesh.json" "$INSTALL_DIR/" 2>/dev/null

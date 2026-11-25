@@ -4,7 +4,13 @@ from cloudmesh.core.server_config import get_server as _store_server
 from cloudmesh.core.server_config import load_server_config
 from cloudmesh.core.paths import data_dir
 
-DATA_DIR = str(data_dir())
+_INITIAL_DATA_DIR = str(data_dir())
+DATA_DIR = _INITIAL_DATA_DIR
+
+
+def _data_dir():
+    return DATA_DIR if DATA_DIR != _INITIAL_DATA_DIR else str(data_dir())
+
 
 def _load_config():
     return load_server_config()
@@ -16,7 +22,7 @@ def _run_ssh(host, user, key, cmd):
     return run_ssh(host, user, key, cmd)
 
 def _watchers_file():
-    return os.path.join(DATA_DIR, "watchers.json")
+    return os.path.join(_data_dir(), "watchers.json")
 
 def _load_watchers():
     p = _watchers_file()
@@ -26,7 +32,7 @@ def _load_watchers():
     return {"watchers": [], "alerts": []}
 
 def _save_watchers(data):
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(_data_dir(), exist_ok=True)
     with open(_watchers_file(), "w") as f:
         json.dump(data, f, indent=2)
 
@@ -84,20 +90,24 @@ def check_all_watchers():
         else:
             cfg = _load_config()
             status = None
-            for section in ["servers", "nodes"]:
-                for name, srv in cfg.get(section, {}).items():
-                    s = check_process(name, process)
-                    if status is None:
-                        status = {"results": []}
-                    status["results"].append(s)
+            for name in cfg.get("servers", {}):
+                s = check_process(name, process)
+                if status is None:
+                    status = {"results": []}
+                status["results"].append(s)
 
         triggered = False
-        if alert_on == "stop" and status:
-            if isinstance(status, dict) and not status.get("running"):
-                triggered = True
-        elif alert_on == "start" and status:
-            if isinstance(status, dict) and status.get("running"):
-                triggered = True
+        if isinstance(status, dict):
+            if "results" in status:
+                per_server = status["results"]
+                if alert_on == "stop" and per_server:
+                    triggered = any(not r.get("running") for r in per_server)
+                elif alert_on == "start" and per_server:
+                    triggered = any(bool(r.get("running")) for r in per_server)
+            elif alert_on == "stop":
+                triggered = not status.get("running")
+            elif alert_on == "start":
+                triggered = bool(status.get("running"))
 
         if triggered:
             alert = {

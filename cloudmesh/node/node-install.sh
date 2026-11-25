@@ -10,6 +10,22 @@ echo ""
 INSTALL_DIR="$HOME/.cloudmesh-node"
 NODE_SCRIPT="cloudmesh_node.py"
 OS_TYPE="$(uname -s)"
+SOURCE_DIR=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --source-dir)
+            SOURCE_DIR="$2"
+            shift 2
+            ;;
+        --source-dir=*)
+            SOURCE_DIR="${1#--source-dir=}"
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
 
 # ============================================
 # 0. Privilege helper: root, else sudo, else doas
@@ -149,7 +165,8 @@ echo "[4/5] Installing CloudMesh Node..."
 
 # Copy standalone node agent (with GPU + async jobs)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-NODE_SOURCE="$SCRIPT_DIR/cloudmesh_node.py"
+STAGE_DIR="${SOURCE_DIR:-$SCRIPT_DIR}"
+NODE_SOURCE="$STAGE_DIR/cloudmesh_node.py"
 if [ ! -f "$NODE_SOURCE" ]; then
     echo "[ERROR] cloudmesh_node.py not found at $NODE_SOURCE"
     exit 1
@@ -159,7 +176,7 @@ chmod +x "$INSTALL_DIR/$NODE_SCRIPT"
 
 # The agent imports cloudmesh_relay only when relay mode is configured. Copy it
 # when it travels beside the agent; a direct-only install still works without it.
-RELAY_SOURCE="$SCRIPT_DIR/cloudmesh_relay.py"
+RELAY_SOURCE="$STAGE_DIR/cloudmesh_relay.py"
 if [ -f "$RELAY_SOURCE" ]; then
     cp "$RELAY_SOURCE" "$INSTALL_DIR/cloudmesh_relay.py"
     chmod 644 "$INSTALL_DIR/cloudmesh_relay.py"

@@ -1,7 +1,10 @@
+import re
 import shlex
 from cloudmesh.core.ssh_util import run_ssh
 from cloudmesh.core.server_config import get_server as _store_server
 from cloudmesh.core.server_config import load_server_config
+
+_SAFE_RULE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:/%-]+$")
 
 ALLOWED_RULES = {
     "allow", "deny", "reject",
@@ -14,10 +17,15 @@ ALLOWED_RULES = {
 
 
 def _validate_rule(rule):
+    if not isinstance(rule, str) or any(ch in rule for ch in ("\n", "\r", "\x00")):
+        return False, "Malformed rule"
     parts = rule.strip().split()
     base = parts[0].lower() if parts else ""
     if base not in ("allow", "deny", "reject", "limit", "delete", "enable", "disable", "default"):
         return False, f"Unknown action: {base}"
+    for tok in parts:
+        if not _SAFE_RULE_TOKEN_RE.fullmatch(tok):
+            return False, f"Unsafe token in rule: {tok}"
     if base in ("allow", "deny", "reject", "limit"):
         if len(parts) < 2:
             return False, f"{base} requires a target (port/IP)"
@@ -131,7 +139,8 @@ def firewall_add_rule(server_name, rule):
 
     backend = _detect_backend(host, user, key)
     if backend == "ufw":
-        out, rc = _run_ssh(host, user, key, f"ufw {rule}")
+        quoted_args = " ".join(shlex.quote(tok) for tok in rule.strip().split())
+        out, rc = _run_ssh(host, user, key, f"ufw {quoted_args}")
         return f"Rule added: {rule}" if rc == 0 else f"Failed: {out}"
     if backend == "pf":
         pf_rule = _to_pf_rule(rule)
@@ -143,6 +152,13 @@ def firewall_add_rule(server_name, rule):
     return "UFW not found. Install with: sudo apt install ufw"
 
 def firewall_delete_rule(server_name, rule_num):
+    text = str(rule_num).strip()
+    if not text or any(ch in text for ch in ("\n", "\r", "\x00")):
+        return "Invalid rule: malformed delete target"
+    tokens = text.split()
+    if any(not _SAFE_RULE_TOKEN_RE.fullmatch(tok) for tok in tokens):
+        return "Invalid rule: unsafe token in delete target"
+
     srv = _get_server(server_name)
     if not srv:
         return f"Server '{server_name}' not found"
@@ -150,10 +166,10 @@ def firewall_delete_rule(server_name, rule_num):
 
     backend = _detect_backend(host, user, key)
     if backend == "ufw":
-        out, rc = _run_ssh(host, user, key, f"ufw delete {rule_num}")
+        quoted_args = " ".join(shlex.quote(tok) for tok in tokens)
+        out, rc = _run_ssh(host, user, key, f"ufw delete {quoted_args}")
         return f"Rule deleted" if rc == 0 else f"Failed: {out}"
     if backend == "pf":
-        text = str(rule_num).strip()
         pf_rule = text if text.startswith(("pass ", "block ")) else _to_pf_rule(text)
         if pf_rule is None:
             return "Failed: rule must be a pf rule or an allow/deny rule"
@@ -269,6 +285,14 @@ class FirewallManager:
         """Check whether a port is open or closed on the given server."""
         if server is None:
             return "Specify a server with --server"
+        if isinstance(port, bool):
+            return f"Invalid port: {port}"
+        try:
+            port_num = int(port)
+        except (TypeError, ValueError):
+            return f"Invalid port: {port}"
+        if not (1 <= port_num <= 65535):
+            return f"Invalid port: {port}"
         srv = _get_server(server)
         if not srv:
             return f"Server '{server}' not found"
@@ -276,15 +300,15 @@ class FirewallManager:
         backend = _detect_backend(host, user, key)
         if backend == "pf":
             rules = _pf_rules(host, user, key)
-            is_open = any(f"port {port}" in rule for rule in rules)
+            is_open = any(f"port {port_num}" in rule for rule in rules)
         elif backend == "ipfw":
             rules_out, _ = _run_ssh(host, user, key, "ipfw list 2>/dev/null")
-            is_open = any(port in line.split() for line in rules_out.splitlines())
+            is_open = any(str(port_num) in line.split() for line in rules_out.splitlines())
         else:
-            out, rc = _run_ssh(host, user, key, f"ss -tln 2>/dev/null | grep -E ':{port} ' || echo 'closed'")
+            out, rc = _run_ssh(host, user, key, f"ss -tln 2>/dev/null | grep -E ':{port_num} ' || echo 'closed'")
             is_open = "closed" not in out
         state = "open" if is_open else "closed"
-        return f"Port {port} on {server}: {state}"
+        return f"Port {port_num} on {server}: {state}"
 
     def backup(self, server=None, output="firewall_backup.json"):
         """Save the current firewall rules for a server to a JSON file."""

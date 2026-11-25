@@ -2,7 +2,13 @@ import json, os, subprocess
 from cloudmesh.core.ssh_util import run_ssh
 from cloudmesh.core.paths import data_dir
 
-DATA_DIR = str(data_dir())
+_INITIAL_DATA_DIR = str(data_dir())
+DATA_DIR = _INITIAL_DATA_DIR
+
+
+def _data_dir():
+    return DATA_DIR if DATA_DIR != _INITIAL_DATA_DIR else str(data_dir())
+
 
 _PLUGINS_WARNING = (
     "SECURITY WARNING: plugins.json executes arbitrary commands. "
@@ -11,20 +17,21 @@ _PLUGINS_WARNING = (
 )
 
 def _plugins_dir():
-    d = os.path.join(DATA_DIR, "plugins")
+    d = os.path.join(_data_dir(), "plugins")
     os.makedirs(d, exist_ok=True)
     return d
 
 def _plugins_index():
-    p = os.path.join(DATA_DIR, "plugins.json")
+    p = os.path.join(_data_dir(), "plugins.json")
     if os.path.exists(p):
         with open(p) as f:
             return json.load(f)
     return {}
 
 def _save_index(idx):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(os.path.join(DATA_DIR, "plugins.json"), "w") as f:
+    base = _data_dir()
+    os.makedirs(base, exist_ok=True)
+    with open(os.path.join(base, "plugins.json"), "w") as f:
         json.dump(idx, f, indent=2)
 
 def list_plugins():
@@ -95,7 +102,7 @@ def run_plugin(name, server_name=None):
 def _run_remote(srv, cmd):
     host = srv.get("host", "")
     user = srv.get("user", "root")
-    key = srv.get("key", "")
+    key = srv.get("key") or srv.get("key_path") or ""
     out, rc = run_ssh(host, user, key, cmd, timeout=60)
     return out
 

@@ -667,9 +667,13 @@ unique password.
 
 Security patches are applied as version updates:
 
+- **v5.0.0**: mandatory node replay protection by default, SQLite-only server
+  registry, Python 3.12 floor.
+- **v4.5.0**: node protocol replay protection, single-node auth-key rotation,
+  `cm doctor --fix` safe state repairs.
 - **v4.1.2 LTS**: API exec opt-in, per-run API keys, security headers,
   verified GitHub-release updates, `mktemp` database credentials, ledger
-  rotation checkpoint, secret-permission checks, Python 3.12 floor.
+  rotation checkpoint, secret-permission checks, Python 3.11 floor.
 - **v4.0.0**: BSD family support and hardening (internal checkpoint).
 - **v3.5.0**: command-surface and dependency fixes.
 - **v2.0.0**: SPA source IP binding, fail-closed SPA, remote panic rotation,

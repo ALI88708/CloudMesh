@@ -42,12 +42,13 @@ class NodeKeyring:
 
     # -- internal ------------------------------------------------------
     @staticmethod
-    def _to_legacy(row: dict) -> dict:
+    def _to_legacy(row: dict, fallback_key: str = "") -> dict:
         """Return host, port, and key fields plus truthy TLS and CA settings."""
+        auth_key = row.get("auth_key")
         entry = {
             "host": row.get("host"),
             "port": row.get("port", 9999),
-            "key": row.get("auth_key", ""),
+            "key": fallback_key if auth_key is None else auth_key,
         }
         if row.get("tls"):
             entry["tls"] = True
@@ -129,11 +130,16 @@ class NodeKeyring:
 
     def _push_mirror(self) -> None:
         """Refresh changed JSON from stored nodes; leave it intact on read failure."""
+        existing = self._read_json()
         try:
-            rows = {n["name"]: self._to_legacy(n) for n in self.storage.list_nodes()}
+            rows = {}
+            for n in self.storage.list_nodes():
+                prev = existing.get(n["name"])
+                fallback = prev.get("key", "") if isinstance(prev, dict) else ""
+                rows[n["name"]] = self._to_legacy(n, fallback_key=fallback or "")
         except Exception:
             return
-        if rows != self._read_json():
+        if rows != existing:
             self._write_json(rows)
 
     # -- public dict-style API ------------------------------------------
@@ -143,13 +149,19 @@ class NodeKeyring:
         Use SQLite rows when nonempty; otherwise fall back to the JSON mirror,
         including on storage failure. Missing or unreadable JSON yields {}.
         """
+        existing = self._read_json()
         try:
             rows = self.storage.list_nodes()
             if rows:
-                return {n["name"]: self._to_legacy(n) for n in rows}
+                out = {}
+                for n in rows:
+                    prev = existing.get(n["name"])
+                    fallback = prev.get("key", "") if isinstance(prev, dict) else ""
+                    out[n["name"]] = self._to_legacy(n, fallback_key=fallback or "")
+                return out
         except Exception as e:
             logger.warning("NodeKeyring falling back to JSON mirror: %s", e)
-        return self._read_json()
+        return existing
 
     def save(self, keys: Dict) -> None:
         """Reconcile SQLite with a legacy keyring and refresh JSON from storage.

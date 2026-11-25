@@ -31,7 +31,22 @@ if /I "%~1"=="/VERIFYONLY" set "VERIFY_ONLY=1" & shift & goto parse_args
 if /I "%~1"=="/?"        goto usage
 if /I "%~1"=="-h"        goto usage
 if /I "%~1"=="/HELP"     goto usage
-echo /S=DIR "%~1" & set "SOURCE_DIR=%~2" & shift & shift & goto parse_args
+if /I "%~1"=="/S" (
+    if "%~2"=="" (
+        echo Missing directory for /S 1>&2
+        exit /b 2
+    )
+    set "SOURCE_DIR=%~2"
+    shift
+    shift
+    goto parse_args
+)
+set "_ARG=%~1"
+if /I "!_ARG:~0,3!"=="/S=" (
+    set "SOURCE_DIR=!_ARG:~3!"
+    shift
+    goto parse_args
+)
 echo Unknown option: %~1 1>&2
 exit /b 2
 
@@ -347,9 +362,11 @@ echo [%date% %time%] Starting update >> "!LOG!"
 
 set BACKUP_DIR=%TEMP%\cloudmesh_backup
 if not exist "!BACKUP_DIR!" mkdir "!BACKUP_DIR!"
-if exist "%CLOUDMESH_DIR%\.node_keys.json" copy /Y "%CLOUDMESH_DIR%\.node_keys.json" "!BACKUP_DIR!\" >nul 2>&1
-if exist "%INSTALL_DIR%\cloudmesh.json" copy /Y "%INSTALL_DIR%\cloudmesh.json" "!BACKUP_DIR!\" >nul 2>&1
-if exist "%INSTALL_DIR%\config.json" copy /Y "%INSTALL_DIR%\config.json" "!BACKUP_DIR!\" >nul 2>&1
+for %%F in (.node_keys.json .secret.key cloudmesh.db config.json .relays.json .node_relays.json) do (
+    if exist "%CLOUDMESH_DIR%\%%F" copy /Y "%CLOUDMESH_DIR%\%%F" "!BACKUP_DIR!\" >nul 2>&1
+)
+if exist "%INSTALL_DIR%\cloudmesh.json" copy /Y "%INSTALL_DIR%\cloudmesh.json" "!BACKUP_DIR!\install_cloudmesh.json" >nul 2>&1
+if exist "%INSTALL_DIR%\config.json" copy /Y "%INSTALL_DIR%\config.json" "!BACKUP_DIR!\install_config.json" >nul 2>&1
 echo   [OK] Config backed up
 goto :do_download
 
@@ -490,9 +507,11 @@ echo   [3/4] Setting up...
 
 :: Restore config if update
 if exist "!BACKUP_DIR!" (
-    if exist "!BACKUP_DIR!\.node_keys.json" copy /Y "!BACKUP_DIR!\.node_keys.json" "%CLOUDMESH_DIR%\" >nul 2>&1
-    if exist "!BACKUP_DIR!\cloudmesh.json" copy /Y "!BACKUP_DIR!\cloudmesh.json" "%INSTALL_DIR%\" >nul 2>&1
-    if exist "!BACKUP_DIR!\config.json" copy /Y "!BACKUP_DIR!\config.json" "%INSTALL_DIR%\" >nul 2>&1
+    for %%F in (.node_keys.json .secret.key cloudmesh.db config.json .relays.json .node_relays.json) do (
+        if exist "!BACKUP_DIR!\%%F" copy /Y "!BACKUP_DIR!\%%F" "%CLOUDMESH_DIR%\" >nul 2>&1
+    )
+    if exist "!BACKUP_DIR!\install_cloudmesh.json" copy /Y "!BACKUP_DIR!\install_cloudmesh.json" "%INSTALL_DIR%\cloudmesh.json" >nul 2>&1
+    if exist "!BACKUP_DIR!\install_config.json" copy /Y "!BACKUP_DIR!\install_config.json" "%INSTALL_DIR%\config.json" >nul 2>&1
     rmdir /s /q "!BACKUP_DIR!" 2>nul
     echo   [OK] Config restored
 )
@@ -504,6 +523,9 @@ if not "%SKIP_NODE%"=="1" (
     if not exist "%NODE_DIR%\data" mkdir "%NODE_DIR%\data"
     if exist "%CLOUDMESH_DIR%\node\cloudmesh_node.py" (
         copy /Y "%CLOUDMESH_DIR%\node\cloudmesh_node.py" "%NODE_DIR%\cloudmesh_node.py" >nul 2>&1
+        if exist "%CLOUDMESH_DIR%\node\cloudmesh_relay.py" (
+            copy /Y "%CLOUDMESH_DIR%\node\cloudmesh_relay.py" "%NODE_DIR%\cloudmesh_relay.py" >nul 2>&1
+        )
         echo   [OK] Node agent installed
     )
 ) else (

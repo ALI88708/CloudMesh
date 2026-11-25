@@ -5,7 +5,12 @@ from cloudmesh.core.server_config import get_server as _store_server
 from cloudmesh.core.server_config import load_server_config
 from cloudmesh.core.paths import data_dir
 
-DATA_DIR = str(data_dir())
+_INITIAL_DATA_DIR = str(data_dir())
+DATA_DIR = _INITIAL_DATA_DIR
+
+
+def _data_dir():
+    return DATA_DIR if DATA_DIR != _INITIAL_DATA_DIR else str(data_dir())
 
 def _load_config():
     return load_server_config()
@@ -21,7 +26,7 @@ def _profile_for(server):
     return get_profile(info.get("os_type"))
 
 def _history_file():
-    return os.path.join(DATA_DIR, "resource_history.json")
+    return os.path.join(_data_dir(), "resource_history.json")
 
 def _load_history():
     p = _history_file()
@@ -31,7 +36,7 @@ def _load_history():
     return {}
 
 def _save_history(data):
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(_data_dir(), exist_ok=True)
     with open(_history_file(), "w") as f:
         json.dump(data, f, indent=2)
 
@@ -120,7 +125,8 @@ def clear_history(server_name=None):
 
 # === Auto-record background recording ===
 
-_AUTO_PID_FILE = os.path.join(DATA_DIR, ".reshistory_auto.pid")
+def _auto_pid_file():
+    return os.path.join(_data_dir(), ".reshistory_auto.pid")
 
 
 def _auto_loop(interval):
@@ -133,13 +139,14 @@ def _auto_loop(interval):
 
 
 def start_auto(interval=60):
-    if auto_status().get("running"):
-        return f"Auto-recording already running (PID {auto_status().get('pid')})"
+    status = auto_status()
+    if status.get("running"):
+        return f"Auto-recording already running (PID {status.get('pid')})"
     import subprocess
     import sys
     pkg_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     code = (
-        "import sys; sys.path.insert(0, '%s'); "
+        "import sys; sys.path.insert(0, %r); "
         "from cloudmesh.core.reshistory import _auto_loop; "
         "_auto_loop(%d)" % (pkg_root, int(interval))
     )
@@ -150,16 +157,17 @@ def start_auto(interval=60):
         stderr=subprocess.DEVNULL,
         creationflags=flags,
     )
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(_AUTO_PID_FILE, "w") as f:
+    os.makedirs(_data_dir(), exist_ok=True)
+    with open(_auto_pid_file(), "w") as f:
         f.write(str(proc.pid))
     return f"Auto-recording started (PID {proc.pid}, every {interval}s)"
 
 
 def auto_status():
-    if not os.path.exists(_AUTO_PID_FILE):
+    pid_file = _auto_pid_file()
+    if not os.path.exists(pid_file):
         return {"running": False, "pid": None}
-    with open(_AUTO_PID_FILE) as f:
+    with open(pid_file) as f:
         pid = f.read().strip()
     if not pid:
         return {"running": False, "pid": None}
@@ -168,7 +176,7 @@ def auto_status():
         return {"running": True, "pid": int(pid)}
     except (OSError, ProcessLookupError, ValueError):
         try:
-            os.remove(_AUTO_PID_FILE)
+            os.remove(pid_file)
         except OSError:
             pass
         return {"running": False, "pid": None}
@@ -184,7 +192,7 @@ def stop_auto():
     except OSError:
         pass
     try:
-        os.remove(_AUTO_PID_FILE)
+        os.remove(_auto_pid_file())
     except OSError:
         pass
     return f"Auto-recording stopped (PID {pid})"

@@ -218,10 +218,17 @@ class DockerManager:
             return msg
         host, user, key = srv.get("host", ""), srv.get("user", "root"), srv.get("key", "")
         if action == "down":
-            return docker_action(server, "compose_down")
+            cmd = (
+                f"cd {shlex.quote(path)} && (docker compose down 2>/dev/null "
+                "|| docker-compose down 2>/dev/null)"
+            )
+            out, rc = _run_ssh(host, user, key, cmd)
+            return "Compose stopped" if rc == 0 else f"Failed: {out}"
+        if action != "up":
+            return f"Unknown compose action: {action}"
         cmd = (
-            f"cd {shlex.quote(path)} && docker compose up -d 2>/dev/null "
-            "|| docker-compose up -d 2>/dev/null"
+            f"cd {shlex.quote(path)} && (docker compose up -d 2>/dev/null "
+            "|| docker-compose up -d 2>/dev/null)"
         )
         out, rc = _run_ssh(host, user, key, cmd)
         return "Compose started" if rc == 0 else f"Failed: {out}"

@@ -228,7 +228,10 @@ def db_check_all(db_type="mysql", host="127.0.0.1", port=None, user="root", pass
     for section in ["servers", "nodes"]:
         for name, srv in cfg.get(section, {}).items():
             status = db_status(name, db_type, host, port, user, password)
-            failed = status.startswith("Database status failed (exit code ")
+            failed = (
+                status.startswith("Database status failed (exit code ")
+                or status == f"Server '{name}' not found"
+            )
             results.append({
                 "server": name,
                 "status": "unreachable" if failed or not status else "ok",
