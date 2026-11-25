@@ -159,7 +159,7 @@ CloudMesh is a **command-line tool** that connects multiple servers and devices 
 **Core concept:** You have a **Controller** (your laptop) and one or more **Nodes** (cloud servers, VPS, Raspberry Pis, anything running Python). The controller talks to nodes via SSH or a lightweight TCP agent.
 
 **Key facts:**
-- Written in pure Python (3.11+)
+- Written in pure Python (3.12+)
 - 286 CLI commands
 - Works on Windows and Linux
 - Zero web interface — pure terminal
@@ -248,7 +248,7 @@ When you install a node agent, here is what gets placed on the remote server:
 ### Method 1: GitHub release wheel (Recommended)
 
 ```bash
-pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.5.0/cloudmesh-4.5.0-py3-none-any.whl
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v5.0.0/cloudmesh-5.0.0-py3-none-any.whl
 cm --help
 ```
 

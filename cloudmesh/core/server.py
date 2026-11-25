@@ -14,11 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 class ServerManager:
-    """Manage servers with SQLite as the source of truth.
+    """Manage servers with SQLite as the only server registry.
 
-    Server records live in StorageManager (encrypted secrets). The legacy
-    JSON config is kept as a compatible mirror so older readers keep working,
-    and any legacy JSON servers are imported once into SQLite on init.
+    CloudMesh 5 imports a legacy JSON `servers` mapping once and then removes
+    it. Other configuration remains in `config.json`; server records never do.
     """
 
     _LEGACY_FIELDS = ("host", "user", "port", "key_path", "password", "status", "os_type")
@@ -26,34 +25,27 @@ class ServerManager:
     def __init__(self, security_manager, storage=None):
         self.security = security_manager
         self.config = self.security.load_config()
-        if "servers" not in self.config:
-            self.config["servers"] = {}
         if storage is None:
             storage = StorageManager(self.security.base_dir)
         self.storage = storage
         self._connections = {}
-        # Fleet commands update status and persist config from several worker
-        # threads at once; serialize the shared mutation and the JSON dump.
         self._state_lock = threading.RLock()
-        self._import_legacy_servers()
+        if self._import_legacy_servers():
+            self._drop_legacy_registry()
 
     def _import_legacy_servers(self):
-        """Import JSON-config servers into SQLite once (guarded by a marker).
+        """Import JSON servers once and report whether SQLite is authoritative.
 
-        An empty servers table is a valid state (e.g. after restoring a
-        backup with no servers), so the persistent marker — not table
-        emptiness — decides whether the legacy import runs. When the marker
-        is present, SQLite is authoritative and the JSON mirror is repaired
-        from it instead. On any incomplete import the marker is left unset
-        and the mirror untouched so the JSON source stays intact.
+        The JSON copy is removed only after a complete import or when the
+        persistent marker already exists. A failed import leaves it intact so
+        a database problem cannot destroy the only remaining server list.
         """
         try:
             if self.storage.legacy_imported("servers"):
-                self._push_mirror_from_storage()
-                return
+                return True
         except Exception:
-            return
-        ok = True
+            return False
+
         for name, info in list(self.config.get("servers", {}).items()):
             if not isinstance(info, dict):
                 continue
@@ -68,92 +60,57 @@ class ServerManager:
                 ):
                     raise RuntimeError("storage rejected server")
             except Exception:
-                ok = False
-                continue
-        if not ok:
-            logger.warning("Servers import incomplete; marker left unset")
-            return
+                logger.warning("Servers import incomplete; legacy JSON retained")
+                return False
         try:
             self.storage.mark_legacy_imported("servers")
         except Exception:
-            pass
-        self._push_mirror_from_storage()
+            return False
+        return True
 
-    def _push_mirror_from_storage(self):
-        """Repair the JSON mirror from SQLite (SQLite wins)."""
-        try:
-            rows = {
-                s["name"]: {k: s.get(k) for k in self._LEGACY_FIELDS}
-                for s in self.storage.list_servers()
-            }
-        except Exception:
+    def _drop_legacy_registry(self):
+        """Remove the migrated JSON server mapping, keeping other settings."""
+        if "servers" not in self.config:
             return
-        if rows != self.config.get("servers", {}):
-            self.config["servers"] = rows
-            try:
-                self._save()
-            except Exception:
-                pass
-
-    def _save(self):
-        with self._state_lock:
-            self.security.save_config(self.config)
-
-    def _mirror_to_config(self, name, info):
-        self.config.setdefault("servers", {})[name] = {
-            k: info.get(k) for k in self._LEGACY_FIELDS
-        }
+        self.config.pop("servers")
+        self.security.save_config(self.config)
 
     def add_server(self, name, host, user, port=22, key_path=None, password=None):
-        if self.storage.get_server(name) is not None or name in self.config["servers"]:
+        if self.storage.get_server(name) is not None:
             raise ValueError(f"Server '{name}' already exists")
-        server_info = {
-            "host": host,
-            "user": user,
-            "port": port,
-            "key_path": str(key_path) if key_path else None,
-            "password": password,
-            "status": "unknown",
-            "os_type": "linux",
-        }
         if not self.storage.add_server(
-            name=name, host=host, user=user, port=port,
-            key_path=server_info["key_path"], password=password,
+            name=name,
+            host=host,
+            user=user,
+            port=port,
+            key_path=str(key_path) if key_path else None,
+            password=password,
         ):
             raise ValueError(f"Server '{name}' already exists")
-        self._mirror_to_config(name, server_info)
-        self._save()
 
     def remove_server(self, name):
-        if self.storage.get_server(name) is None and name not in self.config["servers"]:
+        if self.storage.get_server(name) is None:
             raise ValueError(f"Server '{name}' not found")
         self.disconnect(name)
         self.storage.remove_server(name)
-        self.config["servers"].pop(name, None)
-        self._save()
 
     def list_servers(self):
         try:
-            names = [s["name"] for s in self.storage.list_servers()]
-            if names:
-                return names
+            return [s["name"] for s in self.storage.list_servers()]
         except Exception:
-            pass
-        return list(self.config["servers"].keys())
+            return []
 
     def get_server_info(self, name):
         try:
             info = self.storage.get_server(name)
         except Exception:
             info = None
-        if info is not None:
-            legacy = {k: info.get(k) for k in self._LEGACY_FIELDS}
-            if legacy.get("port") is None:
-                legacy["port"] = 22
-            return legacy
-        if name not in self.config["servers"]:
+        if info is None:
             raise ValueError(f"Server '{name}' not found")
-        return self.config["servers"][name]
+        legacy = {k: info.get(k) for k in self._LEGACY_FIELDS}
+        if legacy.get("port") is None:
+            legacy["port"] = 22
+        return legacy
 
     def _set_status(self, name, status):
         with self._state_lock:
@@ -161,20 +118,6 @@ class ServerManager:
                 self.storage.update_server_status(name, status)
             except Exception:
                 pass
-            self._ensure_mirror(name)
-            if name in self.config["servers"]:
-                self.config["servers"][name]["status"] = status
-
-    def _ensure_mirror(self, name):
-        """Create the JSON mirror entry from SQLite if missing."""
-        if name in self.config["servers"]:
-            return
-        try:
-            info = self.storage.get_server(name)
-        except Exception:
-            info = None
-        if info is not None:
-            self._mirror_to_config(name, {k: info.get(k) for k in self._LEGACY_FIELDS})
 
     def connect(self, name):
         if name in self._connections:
@@ -214,7 +157,6 @@ class ServerManager:
         client.connect(**connect_kwargs)
         self._connections[name] = client
         self._set_status(name, "connected")
-        self._save()
         return client
 
     def disconnect(self, name):
@@ -278,19 +220,15 @@ class ServerManager:
             result = self.execute(name, "echo connected")
             if result["exit_code"] == 0 and result["stdout"] == "connected":
                 self._set_status(name, "connected")
-                self._save()
                 return True, "Connection successful"
         except paramiko.AuthenticationException:
             self._set_status(name, "auth_failed")
-            self._save()
             return False, "Authentication failed"
         except paramiko.SSHException as e:
             self._set_status(name, "error")
-            self._save()
             return False, f"SSH error: {e}"
         except Exception as e:
             self._set_status(name, "error")
-            self._save()
             return False, f"Error: {e}"
         return False, "Unknown error"
 
@@ -312,10 +250,6 @@ class ServerManager:
                 self.storage.update_server_os_type(name, os_type)
             except Exception:
                 pass
-            self._ensure_mirror(name)
-            if name in self.config["servers"]:
-                self.config["servers"][name]["os_type"] = os_type
-            self._save()
             return os_type
         except Exception:
             return "unknown"

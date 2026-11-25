@@ -4,13 +4,12 @@ CloudMesh `4.1.2` is the first published 4.x release and the supported
 Long-Term Support (LTS) artifact. This policy defines what the LTS promise
 covers, how patches are released, and what is deliberately out of scope.
 
-> **`4.5.0` is the current release on the feature line, not an LTS line.** The
-> `4.5.x` series adds node-protocol replay protection and single-node key
-> rotation on top of the `4.4.x` fleet execution work; this policy continues to
-> cover `4.1.x` only. Feature work lands in `4.5.x`, and security fixes still
-> go to both lines.
+> **`5.0.0` is the current release, not an LTS line.** It requires Python 3.12,
+> makes SQLite the only server registry, and enables replay protection by
+> default. This policy continues to cover `4.1.x` only; feature work lands in
+> `5.x`, and security fixes still go to both lines.
 >
-> **`4.4.1` remains the previous feature-line release.** It is not an LTS line
+> **`4.5.0` remains the previous feature-line release.** It is not an LTS line
 > either, and the support window below remains scoped to `4.1.x`.
 
 ## Support window
@@ -30,7 +29,7 @@ separately; it does not extend this one silently.
 
 ## Supported platforms
 
-- **Python:** 3.11, 3.12, and 3.13.
+- **Python:** 3.12 and 3.13 for CloudMesh 5.x; 4.1.x LTS retains 3.11 support.
 - **Controller:** Windows, Linux, FreeBSD, OpenBSD, and NetBSD.
 - **Node agent:** Linux and the BSD family.
 - **REST API:** Loopback only (`127.0.0.1`). Remote access is through an SSH
@@ -38,7 +37,8 @@ separately; it does not extend this one silently.
 
 Python 3.10 reached end of life in October 2026. Supporting it for the full
 LTS window would promise security patches for an interpreter that no longer
-receives them, so `4.1.2` requires Python 3.11 or newer.
+receives them, so `4.1.2` requires Python 3.11 or newer. CloudMesh 5.x requires
+Python 3.12 or newer.
 
 ## Release channel
 

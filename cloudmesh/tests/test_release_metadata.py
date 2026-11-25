@@ -33,7 +33,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
-RELEASE = "4.5.0"
+RELEASE = "5.0.0"
 
 _H2 = re.compile(r"^##\s+\[([^\]]+)\]", re.M)
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\b")
@@ -50,30 +50,30 @@ def _declared_version() -> str:
     return declared.group(1)
 
 
-def test_the_python_floor_is_3_11():
+def test_the_python_floor_is_3_12():
     pyproject = _read("pyproject.toml")
-    assert re.search(r'^requires-python\s*=\s*">=3\.11"', pyproject, re.M)
-    assert "Programming Language :: Python :: 3.10" not in pyproject
-    assert "Programming Language :: Python :: 3.11" in pyproject
+    assert re.search(r'^requires-python\s*=\s*">=3\.12"', pyproject, re.M)
+    assert "Programming Language :: Python :: 3.11" not in pyproject
+    assert "Programming Language :: Python :: 3.12" in pyproject
 
 
-def test_the_readme_python_badge_is_3_11():
+def test_the_readme_python_badge_is_3_12():
     readme = _read("README.md")
-    assert "Python-3.11" in readme
-    assert "Python-3.10" not in readme
+    assert "Python-3.12" in readme
+    assert "Python-3.11" not in readme
 
 
-def test_the_site_python_floor_is_3_11():
+def test_the_site_python_floor_is_3_12():
     site = _read("site/index.html")
-    assert "Python</strong> 3.11+" in site
-    assert "PYTHON 3.11+" in site
-    assert "3.10+" not in site
+    assert "Python</strong> 3.12+" in site
+    assert "PYTHON 3.12+" in site
+    assert "3.11+" not in site
 
 
-def test_ci_matrix_drops_python_3_10():
+def test_ci_matrix_drops_python_3_11():
     workflow = _read(".github/workflows/ci.yml")
-    assert '"3.10"' not in workflow
-    assert '"3.11"' in workflow
+    assert '"3.11"' not in workflow
+    assert '"3.12"' in workflow
 
 
 def test_the_bsd_gate_runs_on_the_branches_that_carry_released_code():
@@ -111,13 +111,13 @@ def test_the_bsd_e2e_script_does_not_hardcode_a_version():
 def test_the_lts_policy_names_the_support_window():
     policy = _read("docs/LTS.md")
     assert "2027-10-20" in policy
-    assert "3.11" in policy
+    assert "3.12" in policy
     assert "P0" in policy and "P1" in policy
 
 
 def test_the_upgrade_guide_names_the_breaking_changes():
     guide = _read("docs/UPGRADING.md")
-    for token in ("3.4.0", "4.1.2", "--enable-exec", "3.11", "SHA256SUMS"):
+    for token in ("3.4.0", "4.1.2", "--enable-exec", "3.12", "SHA256SUMS"):
         assert token in guide
 
 

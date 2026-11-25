@@ -4,6 +4,25 @@ All notable changes to CloudMesh are documented in this file.
 
 The format follows the [SemVer](https://semver.org/) versioning scheme implemented by **MRSX PRO**.
 
+## [5.0.0] - 2026-11-25 — SQLite registry and secure node defaults
+
+### Changed (breaking)
+
+- **Python 3.12 or newer is required.** Python 3.11 is no longer supported;
+  the CI matrix now covers 3.12 and 3.13.
+- **The server registry is SQLite-only.** A legacy JSON `servers` mapping is
+  imported once and removed after a complete import. Server operations no
+  longer write a JSON mirror or fall back to it when SQLite is unavailable.
+  Other configuration and migration-only legacy readers are unaffected.
+- **Node replay protection is enabled by default.** New agents reject 4.x
+  requests without a nonce and timestamp. During a rolling upgrade only,
+  `cloudmesh_node.py start --allow-legacy` restores the 4.x compatibility mode.
+
+### Fixed
+
+- Doctor storage checks now inspect `CLOUDMESH_DIR` instead of the source
+  directory, so the SQLite registry row reports the configured database.
+
 ## [4.5.0] - 2026-11-24 — Node protocol replay protection
 
 ### Added

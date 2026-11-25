@@ -76,12 +76,17 @@ state is recorded here:
   carries a nonce and a timestamp. The node rejects requests older than 60
   seconds and any nonce it has already seen, using the same
   authenticated-only, oldest-first cache rule as SPA. Legacy clients without
-  these fields still work by default; `cloudmesh_node.py start
-  --require-nonce` rejects them once every controller is upgraded.
+  these fields still work by default in 4.5.x. CloudMesh 5.0.0 makes replay
+  protection mandatory; `cloudmesh_node.py start --allow-legacy` is the
+  temporary migration escape hatch.
 - **Single-node key rotation (`4.5.0`).** `cm node rotate-key -n NAME` rotates
   one node's auth key without touching the Fernet key, so stored server
   passwords stay decryptable. Unconfirmed rotations are queued in
   `.panic_pending.json` exactly like a fleet-wide rotation.
+
+- **SQLite-only server registry (`5.0.0`).** The legacy JSON `servers` mapping
+  is imported once and removed. Fleet operations no longer rewrite that mirror,
+  and SQLite failures never fall back to stale JSON.
 
 Shared auth keys per node remain; TLS is still recommended on any untrusted
 network.

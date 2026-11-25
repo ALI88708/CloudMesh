@@ -99,11 +99,11 @@ def test_legacy_import_runs_once_and_empty_stays_empty(tmp_path):
     security, storage = _managers(tmp_path)
     ServerManager(security, storage)  # marker set on empty state
     cfg = security.load_config()
-    cfg["servers"]["sneaky"] = {"host": "1.2.3.4", "user": "root"}
+    cfg["servers"] = {"sneaky": {"host": "1.2.3.4", "user": "root"}}
     security.save_config(cfg)
     fresh = ServerManager(security, storage)
     assert "sneaky" not in fresh.list_servers()
-    assert security.load_config().get("servers", {}) == {}
+    assert "servers" not in security.load_config()
 
 
 def test_restore_empty_backup_does_not_resurrect(tmp_path):
@@ -123,9 +123,9 @@ def test_restore_empty_backup_does_not_resurrect(tmp_path):
     fresh_gm = GroupsManager(security, storage)
     assert fresh_mgr.list_servers() == []
     assert fresh_gm.list_groups() == {}
-    # JSON mirrors repaired from SQLite (no stale resurrection data).
+    # The server registry is gone; the group mirror is repaired from SQLite.
     disk = security.load_config()
-    assert disk.get("servers", {}) == {}
+    assert "servers" not in disk
     assert disk.get("groups", {}) == {}
 
 

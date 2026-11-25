@@ -14,12 +14,12 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 #### Made By MRSX PRO
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](License)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20BSD-blue?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
 [![Commands](https://img.shields.io/badge/Commands-301-orange?style=for-the-badge)](https://github.com/ALI88708/CloudMesh)
-[![Version](https://img.shields.io/badge/Version-4.5.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
-[![Tests](https://img.shields.io/badge/Tests-1347-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
+[![Version](https://img.shields.io/badge/Version-5.0.0-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/releases)
+[![Tests](https://img.shields.io/badge/Tests-1355-brightgreen?style=for-the-badge)](https://github.com/ALI88708/CloudMesh/actions)
 [![Website](https://img.shields.io/badge/Website-GitHub%20Pages-20d7e8?style=for-the-badge)](https://ALI88708.github.io/CloudMesh/)
 [![Stars](https://img.shields.io/github/stars/ALI88708/CloudMesh?style=for-the-badge&color=yellow)](https://github.com/ALI88708/CloudMesh/stargazers)
 [![Forks](https://img.shields.io/github/forks/ALI88708/CloudMesh?style=for-the-badge&color=blue)](https://github.com/ALI88708/CloudMesh/network/members)
@@ -32,7 +32,7 @@ Monitor, manage, and distribute workloads from a single terminal.
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/ALI88708/CloudMesh/actions)
 [![Coverage](https://img.shields.io/badge/coverage-on_Ci%2FCD-blue?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Lint](https://img.shields.io/badge/linting-ok-green?style=flat-square)](https://github.com/ALI88708/CloudMesh/actions)
 [![Deps](https://img.shields.io/badge/dependencies-verified-green?style=flat-square)](cloudmesh/requirements.txt)
 
@@ -86,9 +86,9 @@ The Releases section reads published releases from the GitHub Releases API, so r
 ## Quick Start
 
 ### GitHub release (Recommended)
-Download [Python](https://www.python.org/) 3.11+ for Linux or Windows, then install the verified release wheel:
+Download [Python](https://www.python.org/) 3.12+ for Linux or Windows, then install the verified release wheel:
 ```bash
-pip install https://github.com/ALI88708/CloudMesh/releases/download/v4.5.0/cloudmesh-4.5.0-py3-none-any.whl
+pip install https://github.com/ALI88708/CloudMesh/releases/download/v5.0.0/cloudmesh-5.0.0-py3-none-any.whl
 cm --help
 ```
 
@@ -276,7 +276,13 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 
 ## Changelog - All Versions
 
-### v4.5.0 (Latest)
+### v5.0.0 (Latest)
+
+- **Python 3.12+:** Python 3.11 is no longer supported; CI now tests 3.12 and 3.13.
+- **SQLite-only server registry:** the legacy JSON `servers` mapping is imported once and removed. SQLite is authoritative and there is no JSON fallback or mirror.
+- **Replay protection by default:** new node agents reject 4.x requests without a nonce and timestamp. Start with `--allow-legacy` only during migration.
+
+### v4.5.0
 
 - **Node replay protection:** every controller request carries a nonce and a timestamp, and the node rejects stale requests and reused nonces. Legacy clients keep working until you start the agent with `--require-nonce`.
 - **Single-node key rotation:** `cm node rotate-key -n NAME` rotates one node without a full panic, so stored server passwords stay decryptable.
@@ -408,7 +414,7 @@ CloudMesh follows [Semantic Versioning](https://semver.org/):
 - **DDoS Protection**: REST API has built-in rate limiting (30 req/min), connection limits (5 per IP, 100 total), IP auto-banning (5 failures = 5min ban), packet validation, and slowloris guard.
 
 #### CI/CD
-- GitHub Actions CI: runs on Python 3.11-3.13
+- GitHub Actions CI: runs on Python 3.12-3.13
 - 58 security tests all passing
 
 ---
@@ -983,7 +989,7 @@ curl -H "X-Api-Key: YOUR_KEY" http://127.0.0.1:8080/api/servers
 
 | Option | What it does |
 |--------|-------------|
-| **GitHub release wheel** | Install the verified `cloudmesh-4.5.0-py3-none-any.whl` from GitHub Releases |
+| **GitHub release wheel** | Install the verified `cloudmesh-5.0.0-py3-none-any.whl` from GitHub Releases |
 | **Fresh Install** | Download installer, double-click, done |
 | **BSD installer** | `sh cm_for-bsd.sh --yes` on FreeBSD, OpenBSD and NetBSD |
 | **Update** | `cm update` in a checkout, or `cm update --pip` for a verified release wheel |
@@ -1022,6 +1028,7 @@ python3 cloudmesh_node.py start --tls-cert cert.pem --tls-key key.pem  # Enable 
 python3 cloudmesh_node.py start --spa                              # Enable Ghost Ports (SPA)
 python3 cloudmesh_node.py start --spa --spa-port 9998               # Custom UDP port
 python3 cloudmesh_node.py start --spa --spa-window 10               # TCP open window in seconds
+python3 cloudmesh_node.py start --allow-legacy                      # Temporary 4.x compatibility (insecure)
 ```
 TLS requires both `--tls-cert` and `--tls-key`; the node refuses partial TLS configuration instead of starting without encryption.
 

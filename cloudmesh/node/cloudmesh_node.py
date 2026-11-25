@@ -939,7 +939,7 @@ class NodeAgent:
     def __init__(self, port=DEFAULT_PORT, auth_key=None, bind_host="0.0.0.0",  # nosec B104 -- node agent must be reachable by design; every request is auth-gated
                  tls_cert=None, tls_key=None,
                  spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW,
-                 relay_config=None, relay_only=False, require_nonce=False):
+                 relay_config=None, relay_only=False, require_nonce=True):
         """Initialize the node agent's listener, job store, and DDoS protection.
 
         Use `auth_key` when nonempty, otherwise read or create the persistent
@@ -1629,7 +1629,7 @@ def _is_running(pid):
 
 def cmd_start(port=DEFAULT_PORT, bind_host="0.0.0.0",  # nosec B104 -- default bind only; --bind overrides it, and requests are auth-gated
               tls_cert=None, tls_key=None, spa=False, spa_port=DEFAULT_SPA_PORT, spa_window=DEFAULT_SPA_WINDOW,
-              relay_config=None, relay_only=False, require_nonce=False):
+              relay_config=None, relay_only=False, require_nonce=True):
     """Run the node agent in the foreground unless its recorded PID is alive.
 
     Pass listener, TLS, SPA, and relay settings to NodeAgent; `spa_window` is
@@ -1722,8 +1722,8 @@ def main():
                          help="Node relay sidecar written by `cm node relay enable`")
     start_p.add_argument("--relay-only", action="store_true",
                          help="Keep the inbound TCP listener closed and serve only through the relay")
-    start_p.add_argument("--require-nonce", action="store_true",
-                         help="Reject requests without replay protection (legacy clients stop working)")
+    start_p.add_argument("--allow-legacy", action="store_true",
+                         help="Accept 4.x requests without replay protection (insecure; migration only)")
     sub.add_parser("stop")
     sub.add_parser("status")
     sub.add_parser("relay", add_help=False)
@@ -1742,7 +1742,7 @@ def main():
         cmd_start(port=args.port, bind_host=args.bind, tls_cert=args.tls_cert, tls_key=args.tls_key,
                   spa=args.spa, spa_port=args.spa_port, spa_window=args.spa_window,
                   relay_config=relay_config, relay_only=args.relay_only,
-                  require_nonce=args.require_nonce)
+                  require_nonce=not args.allow_legacy)
     elif args.command == "stop":
         cmd_stop()
     elif args.command == "status":

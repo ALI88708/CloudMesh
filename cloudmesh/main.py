@@ -2671,6 +2671,17 @@ def _certificate_row(label, path):
     return (label, True, f"{path} valid for {days_left} day(s)")
 
 
+def _server_registry_check(security_manager, storage_manager):
+    """Return whether the v5 SQLite-only server-registry invariant holds."""
+    config = security_manager.load_config()
+    legacy = config.get("servers") or {}
+    database_servers = {s["name"] for s in storage_manager.list_servers()}
+    detail = f"sqlite={len(database_servers)} legacy-json={len(legacy)}"
+    if legacy:
+        return False, f"legacy JSON server registry still present ({detail})"
+    return True, f"SQLite only ({detail})"
+
+
 def _doctor_repairs(base, data_dir):
     """Apply the repairs `cm doctor --fix` is allowed to make.
 
@@ -3016,8 +3027,11 @@ def cmd_doctor(args):
     # === Storage backend health (SQLite source of truth) ===
     try:
         from cloudmesh.core.storage import StorageManager
-        _sm = StorageManager(base)
-        _db = base / "cloudmesh.db"
+        # Storage lives in the configured data directory, not in the source
+        # tree named by --base-dir. The two differ whenever CLOUDMESH_DIR is set.
+        _storage_dir = resolve_base_dir()
+        _sm = StorageManager(_storage_dir)
+        _db = _storage_dir / "cloudmesh.db"
         if _db.exists():
             checks.append(("Storage: database", True, "cloudmesh.db present"))
         else:
@@ -3028,14 +3042,15 @@ def cmd_doctor(args):
                        f"{len(_markers)}/{len(_marker_kinds)} types imported"))
         try:
             from cloudmesh.core.security import SecurityManager as _SecurityManager
-            _cfg = _SecurityManager().load_config()
-            _json_servers = set((_cfg.get("servers", {}) or {}).keys())
-            _db_servers = {s["name"] for s in _sm.list_servers()}
-            checks.append(("Storage: servers mirror", _json_servers == _db_servers,
-                           f"json={len(_json_servers)} sqlite={len(_db_servers)}"))
+            _registry_ok, _registry_detail = _server_registry_check(
+                _SecurityManager(), _sm
+            )
+            checks.append((
+                "Storage: server registry", _registry_ok, _registry_detail
+            ))
             # Read the JSON mirror file directly: _load_node_keys() may
             # return SQLite data, which would compare SQLite with itself.
-            _mirror_file = base / ".node_keys.json"
+            _mirror_file = _storage_dir / ".node_keys.json"
             try:
                 _json_nodes = set(json.loads(_mirror_file.read_text()).keys()) \
                     if _mirror_file.exists() else set()

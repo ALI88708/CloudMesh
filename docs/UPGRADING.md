@@ -75,7 +75,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 ## What changes
 
-### Python 3.11+
+### Python 3.12+ (CloudMesh 5.x)
 
 Python 3.10 is end-of-life and is not supported by the LTS line. Upgrade the
 interpreter before upgrading CloudMesh.
@@ -317,6 +317,58 @@ modes, and a request rejected as stale does not consume its nonce.
 uses the existing authenticated `rotate_key` action, but only for the named
 node and without rotating the Fernet key. `cm doctor --fix` is opt-in and
 always writes a `.bak` copy before resetting a corrupt state file.
+
+## Upgrading to 5.0.0 (breaking changes)
+
+CloudMesh 5.0.0 deliberately breaks three 4.x behaviors. Back up first:
+
+```bash
+cm config export --output ./cloudmesh-backup-4.x
+cm storage backup
+```
+
+### Python 3.12 is required
+
+Install Python 3.12 or 3.13 before installing the wheel. Python 3.11 is
+refused by `Requires-Python`; the 4.1.x LTS line retains its existing Python
+3.11 support.
+
+### The JSON server registry is removed
+
+On first startup, CloudMesh imports the legacy `config.json` `servers` mapping
+into `cloudmesh.db` and then removes that mapping. After a successful import,
+SQLite is the only server registry: status changes, OS detection, and fleet
+connections never rewrite the JSON copy, and a database failure does not fall
+back to stale JSON.
+
+An incomplete import leaves the legacy JSON in place so it cannot be lost.
+Other configuration stays in `config.json`, and the read-only legacy adapter
+for `data/cloudmesh.json` remains available to older feature modules.
+
+Verify the migration before deleting your backup:
+
+```bash
+cm server list
+cm migrate --verify
+cm doctor
+```
+
+The doctor row is now `Storage: server registry` and fails if a legacy JSON
+server mapping is still present.
+
+### Replay protection is mandatory on new agents
+
+A 5.0.0 agent rejects 4.x requests without a nonce and timestamp. Upgrade the
+controller and every agent together where possible. For a rolling upgrade only,
+start an agent with the explicit compatibility escape hatch:
+
+```bash
+python3 cloudmesh_node.py start --allow-legacy
+```
+
+This restores the insecure 4.x behavior. Remove the flag after every
+controller is on 5.0.0. The 4.5.0 `--require-nonce` flag has been replaced by
+this secure default.
 
 ## Getting help
 

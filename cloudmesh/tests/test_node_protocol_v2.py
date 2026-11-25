@@ -27,7 +27,7 @@ from core.node_client import NodeClient
 from core.panic import PanicManager
 
 
-def _agent(require_nonce=False):
+def _agent(require_nonce=True):
     """Build an agent without touching its on-disk state."""
     agent = cloudmesh_node.NodeAgent.__new__(cloudmesh_node.NodeAgent)
     agent.require_nonce = require_nonce
@@ -81,22 +81,21 @@ def test_a_fresh_nonce_after_a_stale_one_still_works():
     assert agent._check_request_replay(_request()) is None
 
 
-def test_legacy_clients_without_a_nonce_still_work_by_default():
-    """Older controllers stay compatible until the operator opts into strict."""
+def test_legacy_clients_are_rejected_by_default_in_v5():
+    """CloudMesh 5 makes replay protection mandatory on new agents."""
     agent = _agent()
-    legacy = {"action": "ping", "auth": "k"}
-
-    assert agent._check_request_replay(legacy) is None
-
-
-def test_strict_mode_rejects_requests_without_replay_protection():
-    """`--require-nonce` closes the legacy hole once every client is new."""
-    agent = _agent(require_nonce=True)
 
     error = agent._check_request_replay({"action": "ping", "auth": "k"})
 
     assert error is not None
     assert "nonce" in error.lower()
+
+
+def test_allow_legacy_restores_the_4_x_compatibility_mode():
+    """`--allow-legacy` is the explicit migration escape hatch."""
+    agent = _agent(require_nonce=False)
+
+    assert agent._check_request_replay({"action": "ping", "auth": "k"}) is None
 
 
 def test_partial_replay_fields_are_rejected():
@@ -116,6 +115,24 @@ def test_nonce_cache_evicts_oldest_first():
     assert len(agent._request_nonces) == 10000
     assert "n0" not in agent._request_nonces
     assert "n10000" in agent._request_nonces
+
+
+def test_v5_start_requires_nonces_unless_allow_legacy_is_passed(monkeypatch):
+    """The agent CLI exposes the migration escape hatch explicitly."""
+    calls = []
+    monkeypatch.setattr(
+        cloudmesh_node, "cmd_start", lambda **kwargs: calls.append(kwargs)
+    )
+
+    monkeypatch.setattr(sys, "argv", ["cloudmesh_node.py", "start"])
+    cloudmesh_node.main()
+    monkeypatch.setattr(
+        sys, "argv", ["cloudmesh_node.py", "start", "--allow-legacy"]
+    )
+    cloudmesh_node.main()
+
+    assert calls[0]["require_nonce"] is True
+    assert calls[1]["require_nonce"] is False
 
 
 # --- controller stamping ----------------------------------------------------

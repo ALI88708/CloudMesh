@@ -493,7 +493,11 @@ class TestNodeAuth:
         import socket, json
 
         correct_key = "valid_secret_key"
-        node = NodeAgent(port=0, auth_key=correct_key, bind_host="127.0.0.1")
+        # This test targets authentication, not the v5 replay-protected protocol.
+        node = NodeAgent(
+            port=0, auth_key=correct_key, bind_host="127.0.0.1",
+            require_nonce=False,
+        )
 
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

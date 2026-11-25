@@ -16,13 +16,13 @@ This document describes what security measures exist in the codebase — not wha
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| 4.5.x   | Yes | Current feature line; latest patch is **4.5.0** |
-| 4.4.x   | Yes | Previous feature line; security fixes only |
-| 4.3.x   | Yes | Security fixes only |
+| 5.0.x   | Yes | Current major line; latest patch is **5.0.0** |
+| 4.5.x   | Yes | Previous feature line; security fixes only |
+| 4.4.x   | Yes | Security fixes only |
 | 4.1.x   | Yes | LTS; security fixes until **2027-10-20** |
-| 4.0.x   | No | Internal checkpoint; never published |
-| 3.4.x   | No | Upgrade to 4.5.0 or 4.1.2 (LTS) |
-| < 3.4   | No | Upgrade to 4.5.0 or 4.1.2 (LTS) |
+| 4.0.x–4.3.x | No | Upgrade to 5.0.0 or 4.1.2 (LTS) |
+| 3.4.x   | No | Upgrade to 5.0.0 or 4.1.2 (LTS) |
+| < 3.4   | No | Upgrade to 5.0.0 or 4.1.2 (LTS) |
 
 CloudMesh is distributed through GitHub Releases. The `cloudmesh` name on
 PyPI belongs to a different project; do not install it from PyPI.
@@ -669,7 +669,7 @@ Security patches are applied as version updates:
 
 - **v4.1.2 LTS**: API exec opt-in, per-run API keys, security headers,
   verified GitHub-release updates, `mktemp` database credentials, ledger
-  rotation checkpoint, secret-permission checks, Python 3.11 floor.
+  rotation checkpoint, secret-permission checks, Python 3.12 floor.
 - **v4.0.0**: BSD family support and hardening (internal checkpoint).
 - **v3.5.0**: command-surface and dependency fixes.
 - **v2.0.0**: SPA source IP binding, fail-closed SPA, remote panic rotation,
